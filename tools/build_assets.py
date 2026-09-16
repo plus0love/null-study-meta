@@ -1,0 +1,303 @@
+"""타일 아틀라스 + 캐릭터 스프라이트 빌드.
+
+입력:
+  tools/raw/kenney_roguelike_indoors/Tilesheets/roguelikeIndoor_transparent.png  (CC0, 16px + 1px 여백)
+  tools/raw/oga_zelda/gfx/character.png                                          (CC0, 16x32 4방향 걷기)
+출력:
+  public/assets/tiles.png   32px 타일 아틀라스 (16px 논리 → 2배 확대, nearest)
+  public/assets/tiles.json  오브젝트 이름 → {w,h,layer,solid,top,tiles[[idx..]..],anim}
+  public/assets/player.png  32x64 프레임, 4열(걷기) x 4행(down,right,up,left)
+  public/assets/player.json
+  tools/out/preview.png     오브젝트 미리보기 (검수용)
+
+실행: python tools/build_assets.py
+"""
+import json
+import os
+import sys
+from itertools import combinations
+
+from PIL import Image, ImageDraw
+
+sys.path.insert(0, os.path.dirname(__file__))
+import props as P  # noqa: E402
+import props_room as R  # noqa: E402
+from pixel import Canvas  # noqa: E402
+from recolor import recolor  # noqa: E402
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+RAW = os.path.join(ROOT, "tools", "raw")
+OUT = os.path.join(ROOT, "public", "assets")
+PREVIEW_DIR = os.path.join(ROOT, "tools", "out")
+T = 16
+SCALE = 2
+COLUMNS = 16
+
+KENNEY = Image.open(os.path.join(RAW, "kenney_roguelike_indoors", "Tilesheets", "roguelikeIndoor_transparent.png")).convert("RGBA")
+ZELDA_CHAR = Image.open(os.path.join(RAW, "oga_zelda", "gfx", "character.png")).convert("RGBA")
+
+
+def K(c, r, w=1, h=1, variant=None):
+    """Kenney 시트에서 (c,r) 부터 w x h 타일을 잘라 리컬러한 Canvas."""
+    out = Canvas(w * T, h * T)
+    for dy in range(h):
+        for dx in range(w):
+            x, y = (c + dx) * 17, (r + dy) * 17
+            out.paste(KENNEY.crop((x, y, x + T, y + T)), dx * T, dy * T)
+    out.im = recolor(out.im, variant)
+    out.px_ = out.im.load()
+    return out
+
+
+def stacked(top, bottom):
+    c = Canvas(T, 2 * T)
+    c.blit(top, 0, 0)
+    c.blit(bottom, 0, T)
+    return c
+
+
+def over(bg, fg):
+    c = Canvas(bg.w, bg.h)
+    c.blit(bg, 0, 0)
+    c.blit(fg, 0, 0)
+    return c
+
+
+# ── 오브젝트 레지스트리 ─────────────────────────────────────────────────
+OBJECTS = {}
+
+
+def add(name, cv, layer="furniture", solid=True, top=0, anim=None, seats=None, door=False):
+    """seats: [(dx, dy, facing)] — 해당 셀은 통과 가능 + 앉기 가능."""
+    w, h = cv.w // T, cv.h // T
+    OBJECTS[name] = dict(img=cv.im, w=w, h=h, layer=layer, solid=solid, top=top, anim=anim, seats=seats or [], door=door)
+
+
+def build_objects():
+    wf = P.wall_face_block
+
+    # 바닥 (floor 레이어, 통과 가능)
+    add("floor_wood_0", P.floor_wood(0), "floor", False)
+    add("floor_wood_1", P.floor_wood(1), "floor", False)
+    add("floor_wood_2", P.floor_wood(2), "floor", False)
+    add("facade", R.facade(), "floor", True)
+    add("paver_0", R.paver(0), "floor", False)
+    add("paver_1", R.paver(1), "floor", False)
+    add("kerb", R.kerb(), "floor", False)
+    add("grass_0", R.grass_strip(0), "floor", True)
+    add("grass_1", R.grass_strip(1), "floor", True)
+    # 러그
+    add("rug_lounge", R.rug_pattern(11, 3), "floor", False)
+    add("rug_pouf", R.rug_pattern(7, 5, base="#e0cfae", border="#c6ad86", accent="#d0bb94"), "floor", False)
+    add("rug_coffee", R.rug_pattern(4, 2, base="#c9a98b", border="#b08d6e", accent="#bd9d7e"), "floor", False)
+    add("rug_study", R.rug_pattern(4, 5, base="#ddd0b8", border="#c4b08f", accent="#cfc0a3"), "floor", False)
+    add("rug_corridor", R.rug_pattern(3, 10, base="#dccab0", border="#c0a988", accent="#cdb99c"), "floor", False)
+    add("rug_meeting", R.rug_pattern(7, 9, base="#e3d3b3", border="#cbb28b", accent="#d3bd97"), "floor", False)
+    add("doormat_big", R.doormat_big(), "floor", False)
+
+    # 벽
+    add("wall_top", P.wall_top())
+    add("wall_l", P.wall_side("l"))
+    add("wall_r", P.wall_side("r"))
+    add("wall_face", wf(1))
+    add("wall_picture_a", over(wf(1), stacked(K(16, 12), Canvas(T, T))))
+    add("wall_picture_b", over(wf(1), stacked(K(17, 12), Canvas(T, T))))
+    add("wall_picture_c", over(wf(1), stacked(K(18, 12), Canvas(T, T))))
+    add("wall_shelf", over(wf(1), stacked(Canvas(T, T), K(19, 17))))
+    add("wall_lamp", R.wall_spot())
+
+    # 창문 (4타일 높이, 깜빡임 2프레임)
+    for kind in ("l", "m", "r"):
+        for lamp in (False, True):
+            if lamp and kind != "m":
+                continue
+            base = f"window_{kind}" + ("_lamp" if lamp else "")
+            seeds = range(4) if kind == "m" else [7 if kind == "l" else 11]
+            for s in seeds:
+                nm = f"{base}_{s}" if kind == "m" else base
+                sd = s + (50 if lamp else 0)
+                add(nm + "_b", R.window_tall(kind, lamp, True, seed=sd))
+                add(nm, R.window_tall(kind, lamp, False, seed=sd), anim=nm + "_b")
+
+    # 상단 벽 보드류
+    add("chalkboard_big", R.chalkboard_big())
+    add("cabinet_printer", R.cabinet_printer())
+    add("board_focus_tall", R.board_focus_tall())
+    add("bookshelf_big", R.bookshelf_big())
+    add("music_panel", R.music_panel())
+
+    # 라운지
+    add("sofa_wide", R.sofa_wide(), seats=[(2, 1, "down"), (3, 1, "down"), (4, 1, "down"), (5, 1, "down")])
+    add("round_table", R.round_table())
+    add("standing_lamp", P.standing_lamp(), top=1)
+    add("dog", R.dog())
+
+    # 카페 코너
+    add("menu_board_cream", R.menu_board_cream())
+    add("counter_a", K(0, 12, variant="counter"))
+    add("counter_b", K(1, 12, variant="counter"))
+    add("counter_c", K(2, 12, variant="counter"))
+    add("counter_plates", K(4, 12, variant="counter"))
+    add("counter_jars", K(5, 12, variant="counter"))
+    add("coffee_machine", P.coffee_machine())
+    add("display_case", R.display_case())
+    add("shelf_narrow_a", R.shelf_narrow(2, 1))
+    add("shelf_narrow_b", R.shelf_narrow(2, 2))
+    add("shelf_narrow_c", R.shelf_narrow(2, 3))
+    add("ladder_shelf", R.ladder_shelf())
+
+    # 푸프 / 작은 테이블
+    add("pouf_cream", R.pouf("#e6cfa8", "#c9ae83", "#f4e3c6"), solid=False, seats=[(0, 0, "down")])
+    add("pouf_green", R.pouf("#4f6a45", "#3b5234", "#6b8a5e"), solid=False, seats=[(0, 0, "down")])
+    add("side_table_round", R.side_table_round())
+
+    # 스터디룸
+    add("desk_monitor", R.desk_monitor())
+    add("nightstand", R.nightstand())
+    add("study_panel_1", R.study_panel("STUDY 1", light_side="r"))
+    add("study_panel_2", R.study_panel("STUDY 2", light_side="l"))
+    add("glass_door_l", R.glass_door_wide("l"), solid=False, door=True)
+    add("glass_door_r", R.glass_door_wide("r"), solid=False, door=True)
+    for n in (2, 3, 4):
+        for combo in combinations("NSEW", n):
+            key = "".join(d for d in "NSEW" if d in combo)
+            add(f"glass_{key}", P.glass_tile(key))
+
+    # 회의 구역
+    add("whiteboard_big", R.whiteboard_big())
+    add("big_table_v", R.big_table_v())
+    add("chair_s", K(0, 2, variant="chair"), solid=False, seats=[(0, 0, "down")])
+    add("chair_n", K(1, 2, variant="chair"), solid=False, seats=[(0, 0, "up")])
+    add("chair_e", K(2, 2, variant="chair"), solid=False, seats=[(0, 0, "right")])
+    add("chair_w", K(3, 2, variant="chair"), solid=False, seats=[(0, 0, "left")])
+
+    # 화분
+    add("plant_small_a", K(16, 0))
+    add("plant_small_b", K(17, 0))
+    for s in range(4):
+        add(f"plant_tall_{s}", P.plant_tall(seed=s), top=1)
+    add("plant_hanging", P.plant_hanging(), "top", False)
+
+    # 입구 / 실외
+    add("entrance_wide", R.entrance_wide())
+    add("bollard", R.bollard(), top=1)
+    add("hedge_0", R.hedge(0))
+    add("hedge_1", R.hedge(1))
+    add("hedge_flower_0", R.hedge_flower(2))
+    add("hedge_flower_1", R.hedge_flower(3))
+    add("bench", R.bench())
+    add("sign_left", R.sign_outdoor(["SAME", "PLACE", "BRIGHTER", "US"], arrow="heart"))
+    add("sign_right", R.sign_outdoor(["GOOD", "IDEAS", "START", "HERE"], arrow="right"))
+
+
+# ── 아틀라스 패킹 ──────────────────────────────────────────────────────
+def build_atlas():
+    tiles = []  # 16px PIL 이미지 목록 (index = 아틀라스 인덱스)
+    meta = {}
+    for name, o in OBJECTS.items():
+        grid = []
+        for ty in range(o["h"]):
+            row = []
+            for tx in range(o["w"]):
+                tile = o["img"].crop((tx * T, ty * T, tx * T + T, ty * T + T))
+                row.append(len(tiles))
+                tiles.append(tile)
+            grid.append(row)
+        meta[name] = dict(w=o["w"], h=o["h"], layer=o["layer"], solid=o["solid"], top=o["top"], tiles=grid)
+        if o["anim"]:
+            meta[name]["anim"] = o["anim"]
+        if o["seats"]:
+            meta[name]["seats"] = [dict(dx=dx, dy=dy, facing=f) for dx, dy, f in o["seats"]]
+        if o["door"]:
+            meta[name]["door"] = True
+    rows = (len(tiles) + COLUMNS - 1) // COLUMNS
+    atlas = Image.new("RGBA", (COLUMNS * T, rows * T), (0, 0, 0, 0))
+    for i, tile in enumerate(tiles):
+        atlas.alpha_composite(tile, ((i % COLUMNS) * T, (i // COLUMNS) * T))
+    atlas = atlas.resize((atlas.width * SCALE, atlas.height * SCALE), Image.NEAREST)
+    os.makedirs(OUT, exist_ok=True)
+    atlas.save(os.path.join(OUT, "tiles.png"), optimize=True)
+    # anim 을 타일 인덱스 쌍으로도 풀어둔다 (클라이언트 편의)
+    anim_tiles = {}
+    for name, m in meta.items():
+        if "anim" in m:
+            other = meta[m["anim"]]
+            for ty in range(m["h"]):
+                for tx in range(m["w"]):
+                    anim_tiles[str(m["tiles"][ty][tx])] = other["tiles"][ty][tx]
+    data = dict(tileSize=T * SCALE, columns=COLUMNS, count=len(tiles), image="tiles.png", objects=meta, animTiles=anim_tiles)
+    with open(os.path.join(OUT, "tiles.json"), "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
+    print(f"atlas: {len(tiles)} tiles, {atlas.size}, {len(meta)} objects")
+    return meta
+
+
+def build_preview():
+    os.makedirs(PREVIEW_DIR, exist_ok=True)
+    items = list(OBJECTS.items())
+    cell_w, cell_h = 9 * T * SCALE + 8, 3 * T * SCALE + 22
+    cols = 8
+    rows = (len(items) + cols - 1) // cols
+    im = Image.new("RGBA", (cols * cell_w, rows * cell_h), (60, 58, 66, 255))
+    d = ImageDraw.Draw(im)
+    for i, (name, o) in enumerate(items):
+        x, y = (i % cols) * cell_w, (i // cols) * cell_h
+        img = o["img"].resize((o["img"].width * SCALE, o["img"].height * SCALE), Image.NEAREST)
+        # 바닥 위에 올려서 보이게
+        floor = OBJECTS["floor_wood_0"]["img"].resize((T * SCALE, T * SCALE), Image.NEAREST)
+        for fy in range(0, img.height, T * SCALE):
+            for fx in range(0, img.width, T * SCALE):
+                im.alpha_composite(floor, (x + 4 + fx, y + 4 + fy))
+        im.alpha_composite(img, (x + 4, y + 4))
+        d.text((x + 4, y + cell_h - 16), name, fill=(255, 240, 200, 255))
+    im.save(os.path.join(PREVIEW_DIR, "preview.png"))
+
+
+# ── 캐릭터 ────────────────────────────────────────────────────────────
+CHAR_MAP = {
+    # 머리: 갈색 → 진한 흑발
+    (0x43, 0x2e, 0x27): (0x2b, 0x25, 0x30),
+    (0x6a, 0x48, 0x34): (0x3d, 0x35, 0x40),
+    # 셔츠: 빨강 → 흰색 (목업의 흰 셔츠)
+    (0xc4, 0x3c, 0x3c): (0xf1, 0xee, 0xe8),
+    (0x88, 0x2e, 0x2e): (0xc9, 0xc4, 0xbb),
+    (0x68, 0x1c, 0x1c): (0xa9, 0xa3, 0x9a),
+    # 바지: 청바지 톤 유지하되 살짝 밝게
+    (0x65, 0x65, 0x9b): (0x6d, 0x7f, 0xa8),
+}
+
+
+def build_player():
+    """Zelda-like character.png 의 걷기 4행(각 4프레임, 16x32) 추출 → 2배."""
+    src = ZELDA_CHAR
+    frames_w, frames_h = 16, 32
+    order = ["down", "right", "up", "left"]  # 원본 행 순서 (프리뷰로 확인)
+    sheet = Image.new("RGBA", (4 * frames_w, 4 * frames_h), (0, 0, 0, 0))
+    px = src.load()
+    for row in range(4):
+        for col in range(4):
+            fr = src.crop((col * frames_w, row * frames_h, col * frames_w + frames_w, row * frames_h + frames_h))
+            sheet.alpha_composite(fr, (col * frames_w, row * frames_h))
+    # 리컬러
+    out = Image.new("RGBA", sheet.size)
+    sp, op = sheet.load(), out.load()
+    for y in range(sheet.height):
+        for x in range(sheet.width):
+            r, g, b, a = sp[x, y]
+            op[x, y] = CHAR_MAP.get((r, g, b), (r, g, b)) + (a,)
+    out = out.resize((out.width * SCALE, out.height * SCALE), Image.NEAREST)
+    out.save(os.path.join(OUT, "player.png"), optimize=True)
+    with open(os.path.join(OUT, "player.json"), "w", encoding="utf-8") as f:
+        json.dump(dict(frameWidth=frames_w * SCALE, frameHeight=frames_h * SCALE, framesPerRow=4, rows={d: i for i, d in enumerate(order)}), f)
+    print("player:", out.size)
+
+
+def main():
+    build_objects()
+    build_atlas()
+    build_preview()
+    build_player()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,9 @@
+node_modules/
+.env
+*.log
+.DS_Store
+Thumbs.db
+tools/raw/
+tools/out/
+screenshots/*
+!screenshots/compare.png

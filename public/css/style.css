@@ -1,0 +1,70 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: #14111a;
+  color: #f1e6d2;
+  font-family: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  overflow: hidden;
+}
+
+#game {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#game canvas {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+#hud {
+  position: fixed;
+  top: 12px;
+  left: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: none;
+  z-index: 10;
+}
+
+#room-name {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: rgba(24, 20, 30, 0.7);
+  border: 1px solid rgba(255, 184, 92, 0.35);
+  box-shadow: 0 0 12px rgba(255, 184, 92, 0.15);
+  color: #ffe0ad;
+  backdrop-filter: blur(4px);
+}
+
+#hint {
+  font-size: 12px;
+  color: rgba(241, 230, 210, 0.75);
+  padding: 2px 4px;
+}
+
+#loading {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: #ffe0ad;
+  background: #14111a;
+  z-index: 20;
+  transition: opacity 0.4s ease;
+}
+
+#loading.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
