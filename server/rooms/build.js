@@ -4,6 +4,8 @@
  * public/assets/tiles.json 의 오브젝트 정의(크기·레이어·충돌·의자·문)를 읽어
  * 레이어별 2D 배열(floor / furniture / top) + collision + seats + doors 를 만든다.
  * 레이어 값은 아틀라스 타일 인덱스, 빈 칸은 -1.
+ * 3단계 추가: windowDay 레이어(낮 창문, 클라이언트가 시간대에 따라 알파를 조절), windows(하늘 사각형),
+ * zones(유리 스터디룸 영역: 밝은 조명 + 유리 틴트), screens(좌석과 연결된 모니터/노트북 화면), interactables(커피머신·음악 패널).
  */
 const path = require('node:path');
 
@@ -22,12 +24,16 @@ class RoomBuilder {
     this.name = name;
     this.width = width;
     this.height = height;
-    this.layers = { floor: grid(width, height, -1), furniture: grid(width, height, -1), top: grid(width, height, -1) };
+    this.layers = { floor: grid(width, height, -1), furniture: grid(width, height, -1), top: grid(width, height, -1), windowDay: grid(width, height, -1) };
     this.collision = grid(width, height, false);
     this.seats = [];
     this.doors = [];
     this.lights = [];
     this.labels = [];
+    this.windows = [];
+    this.zones = [];
+    this.screens = [];
+    this.interactables = [];
     this.spawn = { x: 0, y: 0 };
     this.placed = [];
   }
@@ -67,6 +73,7 @@ class RoomBuilder {
   /**
    * 오브젝트 배치. top 행은 top 레이어(통과 가능), 나머지는 오브젝트 레이어.
    * 의자/문 셀은 통과 가능. opts.solid 로 충돌을 강제할 수 있다.
+   * opts.layer 를 주면 그 레이어에만 타일을 쓰고 충돌·좌석·문은 건드리지 않는다 (낮 창문 등 겹침용).
    */
   place(name, x, y, opts = {}) {
     const o = this.obj(name);
@@ -77,6 +84,10 @@ class RoomBuilder {
         const ty = y + dy;
         if (!this.inBounds(tx, ty)) throw new Error(`${name} 이(가) 맵 밖: (${tx},${ty})`);
         const idx = o.tiles[dy][dx];
+        if (opts.layer) {
+          this.layers[opts.layer][ty][tx] = idx;
+          continue;
+        }
         const isTop = dy < (o.top || 0) || o.layer === 'top';
         const layer = isTop ? 'top' : o.layer;
         this.layers[layer][ty][tx] = idx;
@@ -125,6 +136,36 @@ class RoomBuilder {
     return this;
   }
 
+  /** 창밖 하늘 사각형 (타일 단위, h 는 소수 가능) — 클라이언트가 시간대 그라데이션을 그린다 */
+  window(x, y, w, h) {
+    this.windows.push({ x: Math.round(x * TILE), y: Math.round(y * TILE), w: Math.round(w * TILE), h: Math.round(h * TILE) });
+    return this;
+  }
+
+  /** 유리 스터디룸 등 구역 (타일 단위, 포함 범위). kind 'glass': 밝은 조명 + 옅은 하늘빛 틴트 + 사선 반사 */
+  zone(id, x0, y0, x1, y1, opts = {}) {
+    this.zones.push({ id, kind: opts.kind || 'glass', x: x0 * TILE, y: y0 * TILE, w: (x1 - x0 + 1) * TILE, h: (y1 - y0 + 1) * TILE, bright: opts.bright ?? 0.6 });
+    return this;
+  }
+
+  /**
+   * 좌석에 연결된 화면 (모니터/노트북). 좌석이 점유되면 클라이언트가 화면을 켠다.
+   * (seatX, seatY) 는 좌석 타일, rect 는 논리 픽셀(16px 타일 기준) 좌표 → 월드 픽셀로 변환.
+   */
+  screen(seatX, seatY, { x, y, w, h, kind = 'monitor' }) {
+    const seat = this.seats.find((s) => s.x === seatX && s.y === seatY);
+    if (!seat) throw new Error(`화면을 연결할 좌석이 없음: (${seatX},${seatY})`);
+    const k = TILE / 16;
+    this.screens.push({ seatId: seat.id, kind, x: Math.round(x * k), y: Math.round(y * k), w: Math.round(w * k), h: Math.round(h * k) });
+    return this;
+  }
+
+  /** E 키 상호작용 지점 (커피머신 앞 등). (x, y) 는 발 위치 기준 타일 좌표(소수 가능). */
+  interactable(id, kind, x, y, opts = {}) {
+    this.interactables.push({ id, kind, x: Math.round(x * TILE), y: Math.round(y * TILE), hint: opts.hint || '', range: opts.range || 56 });
+    return this;
+  }
+
   setSpawn(x, y) {
     this.spawn = { x: Math.round((x + 0.5) * TILE), y: Math.round((y + 1) * TILE) };
     return this;
@@ -148,6 +189,10 @@ class RoomBuilder {
       doors: this.doors,
       lights: this.lights,
       labels: this.labels,
+      windows: this.windows,
+      zones: this.zones,
+      screens: this.screens,
+      interactables: this.interactables,
       spawn: this.spawn,
     };
   }
@@ -167,4 +212,8 @@ function doorAt(room, tx, ty) {
   return room.doors.find((d) => d.x === tx && d.y === ty) || null;
 }
 
-module.exports = { RoomBuilder, TILES, TILE, FACING_DELTA, isBlocked, seatAt, doorAt };
+function interactableById(room, id) {
+  return (room.interactables || []).find((i) => i.id === id) || null;
+}
+
+module.exports = { RoomBuilder, TILES, TILE, FACING_DELTA, isBlocked, seatAt, doorAt, interactableById };

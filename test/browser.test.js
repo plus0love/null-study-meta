@@ -2,7 +2,8 @@
 /**
  * 헤드리스 브라우저 2탭 E2E (puppeteer-core + 로컬 Chrome).
  *  - 탭 A 는 서버에 직접, 탭 B 는 300ms 지연 프록시를 거쳐 접속한다.
- *  - 입장 → 서로의 아바타 표시 → 키보드 이동(서버 거부 없음, 상대 화면에 같은 위치) → 채팅 → E키 착석 → 재접속.
+ *  - 입장 → 서로의 아바타 표시 → 키보드 이동(서버 거부 없음, 상대 화면에 같은 위치) → 채팅 → E키 착석 → 강아지 → 재접속.
+ *  - 3단계: 책상 착석 시 모니터 켜짐(두 탭 동기화), 커피머신 앞 E → ☕ 휴식, 시간대 고정(낮/노을/밤), 시스템 메시지 ×N 합치기.
  * Chrome 이 없으면 건너뛴다 (CHROME_PATH 로 지정 가능).
  */
 const test = require('node:test');
@@ -157,6 +158,61 @@ test('브라우저 2탭 (B 는 300ms 지연): 입장·이동 유지·채팅·착
   const dogA = await a.evaluate(() => { const n = window.NSM.scene.npcs.get('dog'); return { x: n.x, y: n.y, state: n.state }; });
   const dogB = await b.evaluate(() => { const n = window.NSM.scene.npcs.get('dog'); return { x: n.x, y: n.y, state: n.state }; });
   assert.deepEqual(dogA, dogB, '두 탭이 같은 강아지 위치/상태');
+
+  // 3단계 ① 모니터: B 를 서버에서 스터디룸 책상 의자 옆으로 옮겨 앉히면(소켓 sit) 두 탭 모두 그 모니터가 켜지고, 일어나면 꺼진다
+  const monitor = room.screens.find((s) => s.kind === 'monitor');
+  const deskSeat = room.seats.find((s) => s.id === monitor.seatId);
+  const pb = srv.world.players.get(idB);
+  pb.x = (deskSeat.x + 0.5) * T;
+  pb.y = (deskSeat.y + 1) * T;
+  await b.evaluate((x, y) => window.NSM.scene.me.setPosition(x, y), pb.x, pb.y);
+  assert.equal((await b.evaluate((id) => window.NSM.net.sit(id), deskSeat.id)).ok, true);
+  const screenOn = (seatId) => (page) => page.waitForFunction((id) => { const s = window.NSM.scene.screenStates().find((q) => q.seatId === id); return s && s.on && s.alpha > 0.9; }, { timeout: 5000 }, seatId);
+  await screenOn(deskSeat.id)(a);
+  await screenOn(deskSeat.id)(b);
+  const others = await a.evaluate(() => window.NSM.scene.screenStates().filter((s) => s.on).length);
+  assert.equal(others, 1, '앉은 자리의 화면만 켜진다');
+  await b.evaluate(() => window.NSM.net.stand());
+  await a.waitForFunction((id) => { const s = window.NSM.scene.screenStates().find((q) => q.seatId === id); return s && !s.on && s.alpha < 0.05; }, { timeout: 5000 }, deskSeat.id);
+
+  // 3단계 ② 커피: A 가 커피머신 앞까지 걸어가 E → "☕ 휴식", B 멤버 목록에도 반영. 다시 E → 휴식
+  const coffee = room.interactables.find((i) => i.id === 'coffee');
+  const cur3 = await a.evaluate(feetTile);
+  const toCoffee = pathTo(room, cur3.tx, cur3.ty, (x, y) => Math.hypot((x + 0.5) * T - coffee.x, (y + 1) * T - coffee.y) <= 20);
+  assert.ok(toCoffee && toCoffee.length, '커피머신까지 경로가 있어야 함');
+  await walk(a, toCoffee);
+  await a.waitForFunction(() => document.getElementById('sit-hint').textContent.includes('커피 마시기') && !window.NSM.scene.me.walking, { timeout: 5000 });
+  await a.keyboard.press('KeyE');
+  await a.waitForFunction(() => window.NSM.ui.status === 'coffee', { timeout: 5000 });
+  assert.match(await a.$eval('#btn-status', (el) => el.textContent), /☕ 휴식 중/);
+  await b.waitForFunction((id) => window.NSM.scene.remotes.get(id).avatar.status === 'coffee', { timeout: 5000 }, idA);
+  assert.match(await b.$eval('#members-list', (el) => el.textContent), /브라우저A.*☕ 휴식 중/s);
+  await a.keyboard.press('KeyE');
+  await a.waitForFunction(() => window.NSM.ui.status === 'rest', { timeout: 5000 });
+
+  // 3단계 ③ 시간대: 시각을 고정하면 낮/노을/밤 단계와 낮 창문 레이어 알파·어둠 강도가 바뀐다. '항상 밤' 이면 낮에도 밤
+  const daylight = async (h) => a.evaluate((h) => {
+    const s = window.NSM.scene;
+    s.setClockOverride(h);
+    return { phase: s.phase, dayAlpha: s.layers.windowDay.alpha, darkness: s.ambient.darkness, stars: s.skies[0].stars.alpha };
+  }, h);
+  const noon = await daylight(12);
+  const dusk = await daylight(18);
+  const night = await daylight(23);
+  assert.equal(noon.phase, 'day');
+  assert.equal(dusk.phase, 'sunset');
+  assert.equal(night.phase, 'night');
+  assert.ok(noon.dayAlpha === 1 && night.dayAlpha === 0 && dusk.dayAlpha > 0 && dusk.dayAlpha < 1, JSON.stringify({ noon, dusk, night }));
+  assert.ok(noon.darkness < dusk.darkness && dusk.darkness < night.darkness);
+  assert.ok(noon.stars === 0 && night.stars === 1);
+  await a.evaluate(() => { window.NSM.scene.setClockOverride(12); window.NSM.scene.setAlwaysNight(true); });
+  assert.equal(await a.evaluate(() => window.NSM.scene.phase), 'night');
+  await a.evaluate(() => { window.NSM.scene.setAlwaysNight(false); window.NSM.scene.setClockOverride(null); });
+
+  // 3단계 ④ 시스템 메시지 합치기: 같은 메시지가 연속이면 ×N
+  await a.evaluate(() => { window.NSM.ui.addChat({ system: true, text: '테스트 알림' }); window.NSM.ui.addChat({ system: true, text: '테스트 알림' }); window.NSM.ui.addChat({ system: true, text: '테스트 알림' }); });
+  const sys = await a.$$eval('#chat-log .chat-msg.system', (els) => els.filter((e) => e.dataset.base === '테스트 알림').map((e) => e.textContent));
+  assert.deepEqual(sys, ['테스트 알림×3']);
 
   // 재접속: B 의 소켓을 강제로 끊으면 배너가 뜨고, 같은 토큰으로 이어받아 A 화면에서 사라지지 않는다
   const tokenB = await b.evaluate(() => localStorage.getItem('nsm.token'));

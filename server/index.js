@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Express 서버: 정적 파일(public/) + /healthz + 방 데이터(JSON) + Socket.io (server/socket.js).
+ * Express 서버: 정적 파일(public/) + /healthz + 방 데이터(JSON) + 유튜브 oEmbed 프록시 + Socket.io (server/socket.js).
  */
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -21,10 +21,49 @@ function assetVersion() {
 }
 const ASSET_VERSION = assetVersion();
 
-/** ctx: { store, world } — world 는 소켓을 붙인 뒤 채워진다 */
+const OEMBED_TTL_MS = 10 * 60 * 1000;
+const YT_HOSTS = new Set(['www.youtube.com', 'youtube.com', 'm.youtube.com', 'youtu.be', 'music.youtube.com']);
+
+/**
+ * 유튜브 oEmbed 프록시: 브라우저에서 직접 부르면 CORS 에 막히므로 서버가 대신 제목만 가져온다.
+ * fetcher 를 바꿔치기할 수 있어 테스트는 실제 네트워크를 쓰지 않는다. 10분 캐시.
+ */
+async function fetchOembedTitle(url, fetcher, cache) {
+  let u;
+  try { u = new URL(url); } catch (_) { return { ok: false, error: 'invalid_url' }; }
+  if (!YT_HOSTS.has(u.hostname)) return { ok: false, error: 'not_youtube' };
+  const key = u.href;
+  const hit = cache.get(key);
+  if (hit && hit.until > Date.now()) return hit.value;
+  const target = `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(u.href)}`;
+  let value;
+  try {
+    const res = await fetcher(target, { signal: AbortSignal.timeout(4000) });
+    if (!res.ok) value = { ok: false, error: `upstream_${res.status}` };
+    else {
+      const j = await res.json();
+      value = { ok: true, title: String(j.title || '').slice(0, 120), author: String(j.author_name || '').slice(0, 80) };
+    }
+  } catch (err) {
+    value = { ok: false, error: 'upstream_failed' };
+  }
+  cache.set(key, { value, until: Date.now() + OEMBED_TTL_MS });
+  if (cache.size > 500) cache.delete(cache.keys().next().value);
+  return value;
+}
+
+/** ctx: { store, world, fetch? } — world 는 소켓을 붙인 뒤 채워진다 */
 function createApp(ctx) {
   const app = express();
   app.disable('x-powered-by');
+  const oembedCache = new Map();
+
+  app.get('/api/oembed', async (req, res) => {
+    const url = typeof req.query.url === 'string' ? req.query.url : '';
+    const out = await fetchOembedTitle(url, ctx.fetch || globalThis.fetch, oembedCache);
+    res.set('Cache-Control', 'no-cache');
+    res.status(out.ok ? 200 : 400).json(out);
+  });
 
   app.get('/healthz', (_req, res) => {
     res.json({ ok: true, store: ctx.store.kind, uptime: Math.round(process.uptime()), node: process.version, players: ctx.world ? ctx.world.connectedCount : 0 });
@@ -44,10 +83,10 @@ function createApp(ctx) {
 /**
  * opts.world: World 옵션 (테스트용 — graceMs, pomodoro: { focusMs, breakMs })
  */
-async function startServer({ port = Number(process.env.PORT) || 3000, env = process.env, log = console, world: worldOpts = {} } = {}) {
+async function startServer({ port = Number(process.env.PORT) || 3000, env = process.env, log = console, world: worldOpts = {}, fetch: fetcher = null } = {}) {
   const store = await createStore(env, log);
   // Socket.io 는 기존 request 리스너를 감싸므로 Express 를 먼저 붙이고 나서 attach 한다
-  const ctx = { store, world: null };
+  const ctx = { store, world: null, fetch: fetcher };
   const app = createApp(ctx);
   const server = http.createServer(app);
   const { io, world } = attachSocket(server, { room: getStudyRoom(), world: worldOpts, log });
@@ -75,4 +114,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createApp, startServer };
+module.exports = { createApp, startServer, fetchOembedTitle };

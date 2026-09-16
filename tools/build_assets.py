@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import props as P  # noqa: E402
 import props_room as R  # noqa: E402
 import props_v2 as V  # noqa: E402
+import props_v3 as G  # noqa: E402
 from pixel import Canvas  # noqa: E402
 from recolor import recolor  # noqa: E402
 
@@ -89,7 +90,7 @@ def build_objects():
     add("grass_0", R.grass_strip(0), "floor", True)
     add("grass_1", R.grass_strip(1), "floor", True)
     # 러그 (테두리 + 패턴)
-    add("rug_lounge", V.rug_fancy(11, 4, pattern="grid"), "floor", False)
+    add("rug_lounge", V.rug_fancy(12, 4, pattern="grid"), "floor", False)
     add("rug_pouf", V.rug_fancy(7, 6, base="#e0cfae", border="#b08a63", border2="#cdb38b", pattern="diamond", accent="#cbb58f"), "floor", False)
     add("rug_coffee", V.rug_fancy(4, 2, base="#c9a98b", border="#8f6a4c", border2="#b8967a", pattern="dots", accent="#bd9d7e"), "floor", False)
     add("rug_study", V.rug_fancy(5, 6, base="#ddd0b8", border="#b39470", border2="#cbb694", pattern="dots", accent="#cfc0a3"), "floor", False)
@@ -110,12 +111,15 @@ def build_objects():
     add("wall_shelf", over(wf(1), stacked(Canvas(T, T), K(19, 17))))
     add("wall_lamp", R.wall_spot())
     add("wall_clock", V.wall_clock())
+    add("wall_shelf_b", G.wall_shelf_b())
 
-    # 창문 (5타일 높이, 3프레임 깜빡임: 이름_f0 → _f1 → _f2 → _f0)
+    # 창문 (5타일 높이, 3프레임 깜빡임: 이름_f0 → _f1 → _f2 → _f0) + 낮 버전(이름_day, 애니 없음)
+    # 하늘은 투명 — 클라이언트가 room.windows 에 시간대별 그라데이션을 깐다
     def window_set(base, kind, lamp, seed):
         names = [f"{base}_f{f}" for f in range(3)]
         for f in range(3):
             add(names[f], V.window_big(kind, lamp, frame=f, seed=seed), anim=names[(f + 1) % 3])
+        add(f"{base}_day", V.window_big(kind, lamp, frame=0, seed=seed, day=True))
 
     window_set("window_l", "l", False, 7)
     window_set("window_r", "r", False, 11)
@@ -159,14 +163,16 @@ def build_objects():
     add("desk_wide", V.desk_wide())
     add("desk_return", V.desk_return())
     add("nightstand", R.nightstand())
-    add("study_panel_1", V.study_panel_blank(light_side="r"))
-    add("study_panel_2", V.study_panel_blank(light_side="l"))
-    add("glass_door_l", R.glass_door_wide("l"), solid=False, door=True)
-    add("glass_door_r", R.glass_door_wide("r"), solid=False, door=True)
-    for n in (2, 3, 4):
+    # 유리 파티션: 두께감 있는 차콜 기둥(gpost_*) + 반투명 유리 판(glass_NS/EW) + 열린 문 자리(door_open)
+    add("study_panel_1", G.sliding_door_panel("r"))  # 슬라이딩 문 패널 2x4 (통로가 오른쪽)
+    add("study_panel_2", G.sliding_door_panel("l"))
+    add("door_open", G.door_open(), solid=False, door=True)
+    add("glass_NS", G.glass_pane("NS"))
+    add("glass_EW", G.glass_pane("EW"))
+    for n in (1, 2, 3, 4):
         for combo in combinations("NSEW", n):
             key = "".join(d for d in "NSEW" if d in combo)
-            add(f"glass_{key}", P.glass_tile(key))
+            add(f"gpost_{key}", G.glass_post(key))
 
     # 회의 구역 / 의자
     add("whiteboard_big", V.whiteboard_blank())
@@ -187,6 +193,7 @@ def build_objects():
 
     # 자잘한 소품
     add("coat_rack", V.coat_rack(), top=1)
+    add("cabinet_small", G.cabinet_small())
     add("trash_bin", V.trash_bin())
     add("water_dispenser", V.water_dispenser(), top=1)
 

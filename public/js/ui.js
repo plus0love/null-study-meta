@@ -1,19 +1,25 @@
+/* global Music */
 /**
  * HUD + 사이드바 (DOM). 게임 씬/네트워크와는 콜백(this.on*)으로만 연결한다.
- *  - 좌상단: 방 이름 + 인원   우상단: 설정·멤버·알림·나가기 (팝오버)
- *  - 사이드바: 미니맵 · 오늘의 할 일(localStorage) · 뽀모도로(원형 게이지) · 채팅
- *  - 좌하단: 이모지 바(1~6) · 상태 토글 · 앉기 힌트
+ *  - 좌상단: 방 이름 + 인원 + (뽀모도로 진행 중) 남은 시간 배지   우상단: 설정·멤버·알림·♪·나가기 (팝오버)
+ *  - 사이드바: 미니맵 · 오늘의 할 일(localStorage) · 뽀모도로(원형 게이지) · 유튜브(IFrame API, 접기) · 채팅
+ *  - 좌하단: 이모지 바(1~6) · 상태 토글 · E 힌트(앉기/쓰다듬기/커피 마시기/음악 듣기)
  *  - 입장 모달, 재접속 배너
+ *  - 설정: 아바타 · 닉네임 · 강아지 이름 · 항상 밤 · 알림 소리 · 브라우저 알림 허용
  */
 (function () {
   'use strict';
 
   const $ = (id) => document.getElementById(id);
   const AVATAR_COLORS = ['#f1eee8', '#ffc46e', '#a8c496', '#96b4dc'];
-  const STATUS_LABEL = { study: '공부 중', rest: '휴식 중' };
-  const STATUS_ICON = { study: 'i-book', rest: 'i-coffee' };
+  const STATUS_LABEL = { study: '공부 중', rest: '휴식 중', coffee: '☕ 휴식 중' };
+  const STATUS_ICON = { study: 'i-book', rest: 'i-leaf', coffee: 'i-coffee' };
+  const HINT_LABEL = { sit: '앉기', stand: '일어나기', pet: '쓰다듬기', coffee: '커피 마시기', music: '음악 듣기' };
   const TODO_KEY = 'nsm.todos';
+  const LS_NIGHT = 'nsm.alwaysNight';
+  const LS_RECENT = 'nsm.music.recent';
   const MINIMAP_SCALE = 7; // 타일당 px (46x34 → 322x238)
+  const YT_API = 'https://www.youtube.com/iframe_api';
 
   function el(tag, attrs = {}, children = []) {
     const n = document.createElement(tag);
@@ -63,9 +69,18 @@
       this.onLeave = () => {};
       this.onRename = () => {};
       this.onNpcName = () => {};
+      this.onAlwaysNight = () => {};
+      this.onSound = () => {};
+      this.onNotifyPerm = () => {};
+      this.onListening = () => {};
+      this.onUse = () => {};
+
+      // 유튜브 카드 상태
+      this.yt = { player: null, ready: false, apiPromise: null, current: null, userPlayed: false, title: '', playing: false };
 
       this.bindHud();
       this.bindSidebar();
+      this.bindMusic();
       this.buildMinimapBase();
       this.renderTodos();
       setInterval(() => this.tickPomodoro(), 250);
@@ -76,6 +91,7 @@
       $('room-name').textContent = this.room.name;
       const pops = { settings: $('pop-settings'), members: $('pop-members'), notify: $('pop-notify') };
       const btns = { settings: $('btn-settings'), members: $('btn-members'), notify: $('btn-notify') };
+      $('btn-music').addEventListener('click', () => this.toggleMusic());
       const toggle = (name) => {
         const open = pops[name].hidden;
         for (const k of Object.keys(pops)) {
@@ -104,6 +120,13 @@
       });
       $('npc-name').addEventListener('keydown', (e) => e.stopPropagation());
       this.buildSwatches($('settings-avatars'), (i) => { this.setAvatar(i); this.onAvatar(i); });
+      // 항상 밤 / 알림 소리 / 브라우저 알림
+      const night = $('opt-night');
+      night.checked = this.loadFlag(LS_NIGHT, false);
+      night.addEventListener('change', () => { this.saveFlag(LS_NIGHT, night.checked); this.onAlwaysNight(night.checked); });
+      const sound = $('opt-sound');
+      sound.addEventListener('change', () => this.onSound(sound.checked));
+      $('btn-notify-perm').addEventListener('click', () => this.onNotifyPerm());
 
       // 좌하단: 이모지 바 + 상태 토글
       const bar = $('emoji-bar');
@@ -141,17 +164,41 @@
     setStatus(status) {
       this.status = status;
       const b = $('btn-status');
-      b.classList.remove('study', 'rest');
+      b.classList.remove('study', 'rest', 'coffee');
       b.classList.add(status);
       b.querySelector('span').textContent = STATUS_LABEL[status] || status;
       b.querySelector('use').setAttribute('href', `#${STATUS_ICON[status] || 'i-coffee'}`);
     }
 
     setSitHint(mode) {
-      // mode: null | 'sit' | 'stand' | 'pet'
+      // mode: null | 'sit' | 'stand' | 'pet' | 'coffee' | 'music'
       const h = $('sit-hint');
       h.hidden = !mode;
-      if (mode) h.querySelector('span').textContent = { sit: '앉기', stand: '일어나기', pet: '쓰다듬기' }[mode] || mode;
+      if (mode) h.querySelector('span').textContent = HINT_LABEL[mode] || mode;
+    }
+
+    get alwaysNight() {
+      return $('opt-night').checked;
+    }
+
+    setSoundEnabled(on) {
+      $('opt-sound').checked = Boolean(on);
+    }
+
+    /** 브라우저 알림 권한 상태를 설정 버튼에 표시 */
+    setNotifyPermission(state) {
+      const b = $('btn-notify-perm');
+      const label = { granted: '허용됨', denied: '차단됨 (브라우저 설정)', unsupported: '지원 안 함' }[state];
+      b.textContent = label || '브라우저 알림 허용';
+      b.disabled = state !== 'default';
+    }
+
+    loadFlag(key, def) {
+      try { const v = localStorage.getItem(key); return v === null ? def : v === '1'; } catch (_) { return def; }
+    }
+
+    saveFlag(key, v) {
+      try { localStorage.setItem(key, v ? '1' : '0'); } catch (_) { /* ignore */ }
     }
 
     /** 설정 팝오버의 강아지 이름 (입력 중이면 덮어쓰지 않는다) */
@@ -198,9 +245,12 @@
       $('members-count').textContent = `${arr.length}명`;
       for (const p of arr) {
         const chip = el('span', { class: `status-chip ${p.status}`, text: STATUS_LABEL[p.status] || '' });
+        const name = el('span', { class: 'name', text: p.nickname + (p.listening ? ' ♪' : '') + (p.id === this.selfId ? ' (나)' : '') + (p.connected === false ? ' · 연결 끊김' : '') });
+        const body = el('div', { class: 'member-body' }, [name]);
+        if (p.listening) body.appendChild(el('span', { class: 'listening', text: `듣는 중: ${p.listening}` }));
         const li = el('li', { class: `${p.id === this.selfId ? 'me' : ''} ${p.connected === false ? 'offline' : ''}` }, [
           svgIcon(STATUS_ICON[p.status] || 'i-coffee'),
-          el('span', { text: p.nickname + (p.id === this.selfId ? ' (나)' : '') + (p.connected === false ? ' · 연결 끊김' : '') }),
+          body,
           chip,
         ]);
         list.appendChild(li);
@@ -305,6 +355,7 @@
       const s = this.pomodoro;
       const ring = $('pomo-ring');
       const gauge = ring.closest('.gauge');
+      const badge = $('pomo-badge');
       const CIRC = 2 * Math.PI * 52;
       if (!s || !s.running) {
         const total = s ? s.focusMs : 25 * 60 * 1000;
@@ -312,6 +363,7 @@
         $('pomo-phase').textContent = '대기 중';
         ring.style.strokeDashoffset = String(CIRC);
         gauge.classList.remove('break');
+        badge.hidden = true;
         return;
       }
       const total = s.phase === 'focus' ? s.focusMs : s.breakMs;
@@ -320,15 +372,35 @@
       $('pomo-phase').textContent = s.phase === 'focus' ? '집중' : '휴식';
       ring.style.strokeDashoffset = String(CIRC * (1 - Math.min(1, remain / total)) );
       gauge.classList.toggle('break', s.phase === 'break');
+      // 좌상단 배지: 진행 중일 때만 남은 시간
+      badge.hidden = false;
+      badge.classList.toggle('break', s.phase === 'break');
+      badge.querySelector('span').textContent = `${s.phase === 'focus' ? '📖' : '☕'} ${fmt(remain)}`;
     }
 
-    /** msg: { nickname, text(HTML 이스케이프됨), ts, self?: boolean, system?: boolean } */
+    /**
+     * msg: { nickname, text(HTML 이스케이프됨), ts, self?: boolean, system?: boolean }
+     * 시스템 메시지(입장·쓰다듬기 등)는 회색 작은 글씨. 직전 시스템 메시지와 같으면 새 줄 대신 "×N" 으로 합친다.
+     */
     addChat(msg) {
       const log = $('chat-log');
       const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
       let node;
-      if (msg.system) node = el('div', { class: 'chat-msg system', text: msg.text });
-      else {
+      if (msg.system) {
+        const last = log.lastElementChild;
+        if (last && last.classList.contains('system') && last.dataset.base === msg.text) {
+          const n = Number(last.dataset.n || 1) + 1;
+          last.dataset.n = String(n);
+          last.textContent = '';
+          last.appendChild(document.createTextNode(msg.text));
+          last.appendChild(el('span', { class: 'count', text: `×${n}` }));
+          if (atBottom) log.scrollTop = log.scrollHeight;
+          return;
+        }
+        node = el('div', { class: 'chat-msg system', text: msg.text });
+        node.dataset.base = msg.text;
+        node.dataset.n = '1';
+      } else {
         node = el('div', { class: `chat-msg ${msg.self ? 'me' : ''}` });
         node.appendChild(el('span', { class: 'when', text: hhmm(msg.ts) }));
         node.appendChild(el('span', { class: 'who', text: msg.nickname }));
@@ -342,6 +414,188 @@
 
     static unescape(s) {
       return String(s).replace(/&(amp|lt|gt|quot|#39);/g, (m, k) => ({ amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'" }[k]));
+    }
+
+    // ── 유튜브 카드 (IFrame API, 소리는 본인에게만) ──────────────────
+    bindMusic() {
+      const card = $('card-music');
+      $('music-form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const input = $('music-url');
+        const entry = Music.parseYoutube(input.value);
+        if (!entry) {
+          $('music-error').hidden = false;
+          return;
+        }
+        $('music-error').hidden = true;
+        input.value = '';
+        this.loadMusic(entry, { autoplay: this.yt.userPlayed });
+      });
+      $('music-url').addEventListener('keydown', (e) => { if (e.key === 'Escape') e.target.blur(); e.stopPropagation(); });
+      $('music-play').addEventListener('click', () => this.playMusic());
+      $('music-pause').addEventListener('click', () => this.pauseMusic());
+      $('music-collapse').addEventListener('click', () => this.setMusicCollapsed(!card.classList.contains('collapsed')));
+      $('music-close').addEventListener('click', () => this.toggleMusic(false));
+      this.renderRecent();
+    }
+
+    get musicOpen() {
+      return !$('card-music').hidden;
+    }
+
+    /** ♪ 버튼 / 패널 앞 E: 카드 열기·닫기 (닫아도 재생은 유지되지 않는다 — 플레이어를 정지한다) */
+    toggleMusic(force) {
+      const card = $('card-music');
+      const open = force === undefined ? card.hidden : Boolean(force);
+      card.hidden = !open;
+      $('btn-music').classList.toggle('active', open);
+      if (open) {
+        this.setMusicCollapsed(false);
+        if (!this.yt.current && this.loadRecent()[0]) this.loadMusic(this.loadRecent()[0], { autoplay: false });
+        setTimeout(() => $('music-url').focus(), 50);
+      } else this.pauseMusic();
+    }
+
+    openMusic() {
+      this.toggleMusic(true);
+    }
+
+    setMusicCollapsed(on) {
+      const card = $('card-music');
+      card.classList.toggle('collapsed', on);
+      $('music-collapse').setAttribute('title', on ? '펼치기' : '접기');
+    }
+
+    loadRecent() {
+      try { return JSON.parse(localStorage.getItem(LS_RECENT) || '[]'); } catch (_) { return []; }
+    }
+
+    saveRecent(list) {
+      try { localStorage.setItem(LS_RECENT, JSON.stringify(list)); } catch (_) { /* ignore */ }
+    }
+
+    renderRecent() {
+      const ul = $('music-recent');
+      ul.innerHTML = '';
+      const list = this.loadRecent();
+      if (!list.length) {
+        ul.appendChild(el('li', { class: 'empty', text: '최근 재생한 영상이 여기에 남아요 (5개).' }));
+        return;
+      }
+      for (const e of list) {
+        const label = e.title || (e.videoId ? `영상 ${e.videoId}` : `재생목록 ${e.listId}`);
+        ul.appendChild(el('li', { class: this.yt.current && Music.keyOf(this.yt.current) === Music.keyOf(e) ? 'active' : '' }, [
+          svgIcon('i-music'),
+          el('button', { class: 'text', type: 'button', text: label, title: label, onclick: () => this.loadMusic(e, { autoplay: this.yt.userPlayed }) }),
+        ]));
+      }
+    }
+
+    /** IFrame API 스크립트는 카드를 처음 쓸 때만 불러온다 */
+    loadYoutubeApi() {
+      if (window.YT && window.YT.Player) return Promise.resolve(window.YT);
+      if (this.yt.apiPromise) return this.yt.apiPromise;
+      this.yt.apiPromise = new Promise((resolve, reject) => {
+        const prev = window.onYouTubeIframeAPIReady;
+        window.onYouTubeIframeAPIReady = () => { if (prev) prev(); resolve(window.YT); };
+        const sc = document.createElement('script');
+        sc.src = YT_API;
+        sc.async = true;
+        sc.onerror = () => { this.yt.apiPromise = null; reject(new Error('유튜브 API 를 불러오지 못했어요.')); };
+        document.head.appendChild(sc);
+        setTimeout(() => { if (!(window.YT && window.YT.Player)) { this.yt.apiPromise = null; reject(new Error('유튜브 API 응답 없음')); } }, 12000);
+      });
+      return this.yt.apiPromise;
+    }
+
+    /** 영상/재생목록 로드. autoplay 는 사용자가 이 세션에서 재생 버튼을 누른 뒤에만 true */
+    async loadMusic(entry, { autoplay = false } = {}) {
+      const yt = this.yt;
+      yt.current = { videoId: entry.videoId || null, listId: entry.listId || null, title: entry.title || '' };
+      yt.title = entry.title || '';
+      this.setMusicTitle(yt.title || '불러오는 중…');
+      this.saveRecent(Music.pushRecent(this.loadRecent(), yt.current));
+      this.renderRecent();
+      this.fetchTitle(yt.current);
+      try {
+        await this.loadYoutubeApi();
+      } catch (err) {
+        $('music-error').textContent = err.message;
+        $('music-error').hidden = false;
+        return;
+      }
+      const cur = yt.current;
+      if (!yt.player) {
+        yt.ready = false;
+        const playerVars = { rel: 0, modestbranding: 1, playsinline: 1, autoplay: 0 };
+        if (cur.listId) { playerVars.listType = 'playlist'; playerVars.list = cur.listId; }
+        yt.player = new window.YT.Player('yt-player', {
+          width: '100%',
+          height: '100%',
+          videoId: cur.videoId || undefined,
+          playerVars,
+          events: {
+            onReady: () => { yt.ready = true; if (autoplay) this.playMusic(); },
+            onStateChange: (e) => this.onPlayerState(e.data),
+            onError: () => { $('music-error').textContent = '이 영상은 재생할 수 없어요.'; $('music-error').hidden = false; },
+          },
+        });
+        return;
+      }
+      if (!yt.ready) return;
+      if (cur.listId) {
+        if (autoplay) yt.player.loadPlaylist({ listType: 'playlist', list: cur.listId });
+        else yt.player.cuePlaylist({ listType: 'playlist', list: cur.listId });
+      } else if (autoplay) yt.player.loadVideoById(cur.videoId);
+      else yt.player.cueVideoById(cur.videoId);
+    }
+
+    /** 제목은 서버 oEmbed 프록시로 (실패하면 플레이어의 getVideoData 로 대체) */
+    async fetchTitle(entry) {
+      if (!entry.videoId) return;
+      try {
+        const r = await fetch(`/api/oembed?url=${encodeURIComponent(Music.canonicalUrl({ videoId: entry.videoId }))}`);
+        const j = await r.json();
+        if (j.ok && j.title && this.yt.current && this.yt.current.videoId === entry.videoId) this.applyTitle(j.title);
+      } catch (_) { /* 플레이어 제목으로 대체 */ }
+    }
+
+    applyTitle(title) {
+      const yt = this.yt;
+      yt.title = title;
+      yt.current.title = title;
+      this.setMusicTitle(title);
+      this.saveRecent(Music.pushRecent(this.loadRecent(), yt.current));
+      this.renderRecent();
+      if (yt.playing) this.onListening(title);
+    }
+
+    setMusicTitle(t) {
+      $('music-title').textContent = t;
+    }
+
+    playMusic() {
+      const yt = this.yt;
+      yt.userPlayed = true;
+      if (yt.player && yt.ready) yt.player.playVideo();
+    }
+
+    pauseMusic() {
+      const yt = this.yt;
+      if (yt.player && yt.ready) { try { yt.player.pauseVideo(); } catch (_) { /* ignore */ } }
+    }
+
+    onPlayerState(state) {
+      const YT = window.YT;
+      const yt = this.yt;
+      const playing = YT && state === YT.PlayerState.PLAYING;
+      if (playing && !yt.title) {
+        try { const d = yt.player.getVideoData(); if (d && d.title) this.applyTitle(d.title); } catch (_) { /* ignore */ }
+      }
+      if (playing === yt.playing) return;
+      yt.playing = playing;
+      $('card-music').classList.toggle('playing', playing);
+      this.onListening(playing ? (yt.title || '유튜브') : null);
     }
 
     // ── 미니맵 ───────────────────────────────────────────────────────

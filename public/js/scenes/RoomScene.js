@@ -1,12 +1,20 @@
-/* global Phaser */
+/* global Phaser, Daylight */
 /**
  * 방 씬: 서버에서 받은 방 데이터(레이어별 타일 배열)를 타일맵으로 그리고,
  * 내 아바타(입력·충돌·20Hz 전송·서버 보정)와 다른 접속자 아바타(스냅샷 선형 보간)를 그린다.
  * 닉네임·상태 아이콘·채팅 말풍선·이모지는 아바타 머리 위에 붙는다. 조명/비네팅 포함.
  *
  * 외부 연결은 scene.hooks 콜백으로만 한다 (main.js 가 채움):
- *   onMove(payload) · onSit(seatId) · onStand() · onPet(npcId) · onInteract('sit'|'pet'|null) · onEmojiKey(i) · onChatKey() · onPositions(map)
+ *   onMove(payload) · onSit(seatId) · onStand() · onPet(npcId) · onUse(kind, id) · onInteract('sit'|'pet'|'coffee'|'music'|null)
+ *   onEmojiKey(i) · onChatKey() · onPositions(map)
  * 강아지 NPC(서버가 행동 결정)는 npc:update 스냅샷을 100ms 늦게 선형 보간해 그린다.
+ *
+ * 3단계 연출:
+ *  - 창밖 하늘: room.windows 사각형에 시간대(daylight.js) 그라데이션 + 별. 낮 창문 타일(windowDay 레이어)은 알파로 교차.
+ *  - 유리 스터디룸(room.zones): 어둠 레이어를 더 지워 밝게 + 옅은 하늘빛 틴트 + 창가 쪽 사선 반사.
+ *  - 화면(room.screens): 연결된 좌석이 점유되면 모니터/노트북이 켜진다 (서버 좌석 상태 기준).
+ *  - 상호작용 지점(room.interactables): 커피머신·음악 패널 앞에서 E.
+ *  - 뽀모도로 전환: flashLights() — 창문·펜던트가 1초 밝아졌다 돌아온다.
  */
 (function () {
   'use strict';
@@ -17,7 +25,7 @@
   const SIT_RANGE = 56; // px, 서버 SIT_RANGE_PX 와 동일
   const CORRECT_RATE = 10; // 서버 보정 시 초당 수렴 비율
   const FONTS = { hand: '"Gaegu", "Nanum Pen Script", cursive', sans: '"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif' };
-  const STATUS_EMOJI = { study: '📖', rest: '☕' };
+  const STATUS_EMOJI = { study: '📖', rest: '🌿', coffee: '☕' }; // coffee: 커피머신 앞 E → 컵 든 모양
   // 셔츠 색 변형 (player.png 의 셔츠 3톤을 바꿔 아바타 텍스처를 만든다)
   const SHIRT_SRC = [[241, 238, 232], [201, 196, 187], [169, 163, 154]];
   const SHIRT_VARIANTS = [
@@ -27,7 +35,8 @@
     [[150, 180, 220], [104, 134, 184], [78, 104, 150]], // 블루
   ];
 
-  const DEPTH = { shadow: 9, avatar: 10, label: 25, bubble: 26 };
+  const DEPTH = { sky: 0.5, stars: 0.6, windowDay: 1.5, zone: 2, screen: 2.5, shadow: 9, avatar: 10, label: 25, bubble: 26, darkness: 30, glow: 31 };
+  const DAYLIGHT_TICK = 1000; // ms — 시간대 가중치 재계산 주기
 
   // ── 아바타 (내 것/원격 공용 표시 요소) ────────────────────────────────
   class Avatar {
@@ -39,6 +48,7 @@
       this.facing = p.facing || 'down';
       this.status = p.status || 'rest';
       this.seated = Boolean(p.seatId);
+      this.listening = Boolean(p.listening);
       this.x = p.x;
       this.y = p.y;
       this.walking = false;
@@ -46,7 +56,7 @@
       this.sprite = scene.add.sprite(p.x, p.y, scene.texKey(this.avatar), scene.idleFrame('down')).setOrigin(0.5, 1);
       this.shadow = scene.add.ellipse(p.x, p.y - 2, 22, 8, 0x000000, 0.28).setDepth(DEPTH.shadow);
       // 닉네임은 발 아래, 상태 아이콘은 머리 위 오른쪽, 채팅/이모지는 머리 위
-      this.name = scene.add.text(p.x, p.y + 3, p.nickname, {
+      this.name = scene.add.text(p.x, p.y + 3, this.labelText(), {
         fontFamily: FONTS.sans, fontSize: '11px', fontStyle: 'bold', color: '#f1e6d2',
         stroke: '#14111a', strokeThickness: 3, resolution: ZOOM,
       }).setOrigin(0.5, 0).setDepth(DEPTH.label);
@@ -125,6 +135,16 @@
     setStatus(s) {
       this.status = s;
       this.statusBubble.bubbleText.setText(STATUS_EMOJI[s] || '•');
+    }
+
+    labelText() {
+      return this.listening ? `${this.nickname} ♪` : this.nickname;
+    }
+
+    /** 유튜브 재생 중이면 닉네임 옆에 ♪ */
+    setListening(on) {
+      this.listening = Boolean(on);
+      this.name.setText(this.labelText());
     }
 
     setAvatar(i) {
@@ -306,9 +326,18 @@
       this.playerMeta = data.player;
       this.dogMeta = data.dog;
       this.onReady = data.onReady || (() => {});
-      this.hooks = { onMove() {}, onSit() {}, onStand() {}, onPet() {}, onInteract() {}, onEmojiKey() {}, onChatKey() {}, onPositions() {} };
+      this.hooks = { onMove() {}, onSit() {}, onStand() {}, onPet() {}, onUse() {}, onInteract() {}, onEmojiKey() {}, onChatKey() {}, onPositions() {} };
       this.npcs = new Map();
       this.nearNpc = null;
+      this.nearItem = null; // 가까운 상호작용 지점 (커피머신·음악 패널)
+      this.screens = []; // { def, rect, line, glow, on }
+      this.skies = [];
+      this.zoneFx = [];
+      this.clockOverride = null; // 스크린샷/테스트용 시각 고정 (시)
+      this.alwaysNight = false;
+      this.daylightAcc = DAYLIGHT_TICK;
+      this.weights = null;
+      this.fx = { flash: 0 };
       this.config = { speed: 150, feetW: 18, feetH: 10 };
       this.me = null;
       this.remotes = new Map();
@@ -340,13 +369,17 @@
       this.mapH = room.height * T;
 
       this.buildLayers();
+      this.buildSky();
+      this.buildZones();
       this.buildLabels();
       this.buildLightTextures();
       this.buildAvatarTextures();
       this.buildDogAnims();
       this.buildLighting();
+      this.buildScreens();
       this.syncVignette();
       this.setupWindowTwinkle();
+      this.applyDaylight(this.currentWeights());
 
       // 카메라 2배 줌 → 타일은 정수 배로 또렷하고, 텍스트는 고해상도로 그려진다. 캔버스는 사이드바를 뺀 영역에 꽉 찬다(RESIZE).
       const cam = this.cameras.main;
@@ -385,9 +418,11 @@
       this.correction = null;
       this.nearSeat = null;
       this.nearNpc = null;
+      this.nearItem = null;
       this.hooks.onInteract(null);
       for (const p of ack.players) this.addRemote(p);
       for (const n of ack.npcs || []) this.upsertNpc(n);
+      this.syncScreens();
       const cam = this.cameras.main;
       cam.startFollow(this.me.sprite, true, 0.15, 0.15);
       cam.centerOn(this.me.x, this.me.y);
@@ -415,6 +450,9 @@
       if (!r) return;
       r.avatar.destroy();
       this.remotes.delete(id);
+      // 앉은 채로 나간 사람의 자리는 비운다 (화면도 꺼진다)
+      for (const [seatId, owner] of Object.entries(this.seatOwners)) if (owner === id) delete this.seatOwners[seatId];
+      this.syncScreens();
     }
 
     avatarOf(id) {
@@ -447,15 +485,22 @@
       a.setFacing(d.facing);
       a.setSeated(true);
       a.setStatus(d.status);
+      this.syncScreens();
     }
 
     onStood(d) {
       for (const [seatId, owner] of Object.entries(this.seatOwners)) if (owner === d.id) delete this.seatOwners[seatId];
+      this.syncScreens();
       const a = this.avatarOf(d.id);
       if (!a) return;
       a.setSeated(false);
       a.setStatus(d.status);
       if (a === this.me) this.lastSent = null;
+    }
+
+    onListening(d) {
+      const a = this.avatarOf(d.id);
+      if (a) a.setListening(d.listening);
     }
 
     onStatus(d) {
@@ -524,6 +569,35 @@
       return dn < ds;
     }
 
+    // ── 상호작용 지점 (커피머신 앞 · 음악 패널 앞) ───────────────────
+    findNearItem() {
+      if (!this.me) return null;
+      let best = null;
+      let bestD = Infinity;
+      for (const it of this.room.interactables || []) {
+        const d = Math.hypot(it.x - this.me.x, it.y - this.me.y);
+        if (d <= (it.range || SIT_RANGE) && d < bestD) {
+          bestD = d;
+          best = it;
+        }
+      }
+      return best;
+    }
+
+    /** E 키 대상: 좌석·강아지·상호작용 지점 중 가장 가까운 것 → { kind, target } | null */
+    pickTarget() {
+      const me = this.me;
+      if (!me) return null;
+      const T = this.T;
+      const cands = [];
+      if (this.nearSeat) cands.push({ kind: 'sit', target: this.nearSeat, d: Math.hypot((this.nearSeat.x + 0.5) * T - me.x, (this.nearSeat.y + 1) * T - me.y) });
+      if (this.nearNpc) cands.push({ kind: 'pet', target: this.nearNpc, d: Math.hypot(this.nearNpc.x - me.x, this.nearNpc.y - me.y) });
+      if (this.nearItem) cands.push({ kind: this.nearItem.kind, target: this.nearItem, d: Math.hypot(this.nearItem.x - me.x, this.nearItem.y - me.y) });
+      if (!cands.length) return null;
+      cands.sort((a, b) => a.d - b.d);
+      return cands[0];
+    }
+
     buildDogAnims() {
       const meta = this.dogMeta;
       const per = meta.framesPerRow;
@@ -557,14 +631,21 @@
 
     toggleSeat() {
       if (!this.me) return;
-      if (this.me.seated) this.hooks.onStand();
-      else if (this.nearNpc && (!this.nearSeat || this.npcCloser())) this.hooks.onPet(this.nearNpc.id);
-      else if (this.nearSeat && !this.sitPending) {
+      if (this.me.seated) return this.hooks.onStand();
+      const pick = this.pickTarget();
+      if (!pick) return;
+      if (pick.kind === 'pet') return this.hooks.onPet(pick.target.id);
+      if (pick.kind === 'sit') {
+        if (this.sitPending) return;
         // 앉기 요청 전에 마지막 위치를 보내고, 응답이 올 때까지는 위치 전송을 멈춘다 (착석 뒤 도착한 move 가 거부되지 않도록)
         this.flushMove(false);
         this.sitPending = true;
-        Promise.resolve(this.hooks.onSit(this.nearSeat.id)).finally(() => { this.sitPending = false; });
+        Promise.resolve(this.hooks.onSit(pick.target.id)).finally(() => { this.sitPending = false; });
+        return;
       }
+      // 커피머신·음악 패널: 서버가 거리를 확인하므로 마지막 위치를 먼저 보낸다
+      this.flushMove(false);
+      this.hooks.onUse(pick.kind, pick.target.id);
     }
 
     /** 현재 위치/방향이 마지막 전송과 다르면 즉시 보낸다 */
@@ -589,15 +670,23 @@
           this.seatAcc = 0;
           const s = this.me.seated ? null : this.findNearSeat();
           const n = this.me.seated ? null : this.findNearNpc();
-          if ((s && s.id) !== (this.nearSeat && this.nearSeat.id) || (n && n.id) !== (this.nearNpc && this.nearNpc.id)) {
+          const it = this.me.seated ? null : this.findNearItem();
+          if ((s && s.id) !== (this.nearSeat && this.nearSeat.id) || (n && n.id) !== (this.nearNpc && this.nearNpc.id) || (it && it.id) !== (this.nearItem && this.nearItem.id)) {
             this.nearSeat = s;
             this.nearNpc = n;
-            this.hooks.onInteract(n && (!s || this.npcCloser()) ? 'pet' : s ? 'sit' : null);
+            this.nearItem = it;
+            const pick = this.pickTarget();
+            this.hooks.onInteract(pick ? pick.kind : null);
           }
         }
       }
       this.updateRemotes();
       for (const n of this.npcs.values()) n.update();
+      this.daylightAcc += delta;
+      if (this.daylightAcc >= DAYLIGHT_TICK) {
+        this.daylightAcc = 0;
+        this.applyDaylight(this.currentWeights());
+      }
       this.posAcc += delta;
       if (this.posAcc >= 100) {
         this.posAcc = 0;
@@ -699,13 +788,154 @@
       const tileset = map.addTilesetImage('tiles', 'tiles', T, T, 0, 0);
       this.map = map;
       this.layers = {};
-      const depths = { floor: 0, furniture: 1, top: 20 };
-      for (const name of ['floor', 'furniture', 'top']) {
+      const depths = { floor: 0, furniture: 1, windowDay: DEPTH.windowDay, top: 20 };
+      for (const name of ['floor', 'furniture', 'windowDay', 'top']) {
+        if (!room.layers[name]) continue;
         const layer = map.createBlankLayer(name, tileset, 0, 0);
         layer.putTilesAt(room.layers[name], 0, 0);
         layer.setDepth(depths[name]);
         this.layers[name] = layer;
       }
+      if (this.layers.windowDay) this.layers.windowDay.setAlpha(0);
+    }
+
+    // ── 창밖 하늘 (시간대 그라데이션 + 별) ─────────────────────────
+    buildSky() {
+      this.skies = [];
+      (this.room.windows || []).forEach((w, i) => {
+        const key = `sky-${i}`;
+        if (this.textures.exists(key)) this.textures.remove(key);
+        const tex = this.textures.createCanvas(key, w.w, w.h);
+        const img = this.add.image(w.x, w.y, key).setOrigin(0, 0).setDepth(DEPTH.sky);
+        // 별: 결정적 위치(창마다 고정), 밤에만 보인다
+        const stars = this.add.graphics().setDepth(DEPTH.stars);
+        let seed = 17 + i * 31;
+        const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+        for (let k = 0; k < 26; k++) {
+          const sx = w.x + 4 + rnd() * (w.w - 8);
+          const sy = w.y + 4 + rnd() * (w.h * 0.45);
+          stars.fillStyle(rnd() < 0.3 ? 0xdfe6f5 : 0xb9c4dd, 0.6 + rnd() * 0.4);
+          stars.fillRect(Math.round(sx), Math.round(sy), 2, 2);
+        }
+        this.skies.push({ def: w, tex, img, stars });
+      });
+    }
+
+    paintSky(weights) {
+      const stops = Daylight.skyStops(weights);
+      for (const s of this.skies) {
+        const ctx = s.tex.getContext();
+        const g = ctx.createLinearGradient(0, 0, 0, s.def.h);
+        stops.forEach((c, i) => g.addColorStop(i / (stops.length - 1), c));
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, s.def.w, s.def.h);
+        s.tex.refresh();
+        s.stars.setAlpha(weights.night);
+      }
+    }
+
+    // ── 유리 스터디룸 구역: 틴트 + 창가 쪽 사선 반사 (밝기는 buildLighting 에서) ──
+    buildZones() {
+      this.zoneFx = [];
+      for (const z of this.room.zones || []) {
+        if (z.kind !== 'glass') continue;
+        const tint = this.add.rectangle(z.x, z.y, z.w, z.h, 0xcfe8f5, 0.07).setOrigin(0, 0).setDepth(DEPTH.zone);
+        const g = this.add.graphics().setDepth(DEPTH.zone);
+        // 창(위쪽)에서 들어온 빛이 유리에 비친 한 줄: 왼쪽 위 → 오른쪽 아래 사선 띠
+        g.fillStyle(0xffffff, 0.06);
+        g.fillPoints([
+          { x: z.x + z.w * 0.12, y: z.y }, { x: z.x + z.w * 0.24, y: z.y },
+          { x: z.x + z.w * 0.66, y: z.y + z.h * 0.58 }, { x: z.x + z.w * 0.54, y: z.y + z.h * 0.58 },
+        ], true);
+        g.lineStyle(1, 0xffffff, 0.12);
+        g.lineBetween(z.x + z.w * 0.27, z.y, z.x + z.w * 0.69, z.y + z.h * 0.58);
+        this.zoneFx.push({ def: z, tint, g });
+      }
+    }
+
+    // ── 화면 (좌석 점유 시 모니터/노트북 켜짐) ─────────────────────
+    buildScreens() {
+      this.screens = [];
+      for (const def of this.room.screens || []) {
+        const rect = this.add.rectangle(def.x, def.y, def.w, def.h, 0xd9eeff, 1).setOrigin(0, 0).setDepth(DEPTH.screen).setAlpha(0);
+        const line = this.add.rectangle(def.x + 2, def.y + Math.floor(def.h / 2), Math.max(2, def.w - 6), 2, 0xa9d6f2, 1).setOrigin(0, 0).setDepth(DEPTH.screen).setAlpha(0);
+        const glow = this.add.image(def.x + def.w / 2, def.y + def.h / 2 + 4, 'glow-cool')
+          .setScale((def.w * 3.2) / 256)
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setDepth(DEPTH.glow)
+          .setAlpha(0);
+        this.screens.push({ def, rect, line, glow, on: false });
+      }
+    }
+
+    /** 서버 좌석 상태(seatOwners) 기준으로 화면 on/off 동기화 */
+    syncScreens() {
+      for (const s of this.screens) {
+        const on = Boolean(this.seatOwners[s.def.seatId]);
+        if (on === s.on) continue;
+        s.on = on;
+        this.tweens.killTweensOf([s.rect, s.line, s.glow]);
+        this.tweens.add({ targets: [s.rect, s.line], alpha: on ? 0.95 : 0, duration: on ? 220 : 350, ease: 'Sine.easeOut' });
+        this.tweens.add({ targets: s.glow, alpha: on ? 0.55 : 0, duration: on ? 400 : 350, ease: 'Sine.easeOut' });
+      }
+    }
+
+    screenStates() {
+      return this.screens.map((s) => ({ seatId: s.def.seatId, kind: s.def.kind, on: s.on, alpha: s.rect.alpha }));
+    }
+
+    // ── 시간대 ─────────────────────────────────────────────────────
+    currentWeights() {
+      if (this.alwaysNight) return { day: 0, sunset: 0, night: 1 };
+      const hour = this.clockOverride !== null ? this.clockOverride : Daylight.hourOf(new Date());
+      return Daylight.weightsAt(hour);
+    }
+
+    /** 설정 '항상 밤' */
+    setAlwaysNight(on) {
+      this.alwaysNight = Boolean(on);
+      this.applyDaylight(this.currentWeights(), true);
+    }
+
+    /** 스크린샷/테스트용: 시각(시, 소수) 고정. null 이면 실제 시각 */
+    setClockOverride(hour) {
+      this.clockOverride = hour === null || hour === undefined ? null : Number(hour);
+      this.applyDaylight(this.currentWeights(), true);
+    }
+
+    applyDaylight(w, force = false) {
+      const prev = this.weights;
+      if (!force && prev && Math.abs(prev.day - w.day) < 0.004 && Math.abs(prev.sunset - w.sunset) < 0.004 && Math.abs(prev.night - w.night) < 0.004) return;
+      this.weights = w;
+      this.paintSky(w);
+      const amb = Daylight.ambient(w);
+      this.ambient = amb;
+      if (this.layers.windowDay) this.layers.windowDay.setAlpha(amb.dayLayer);
+      if (this.darkness) this.renderDarkness(amb.darkness);
+      this.glowScale = amb.glow;
+      this.syncGlows();
+    }
+
+    /** 현재 시간대 이름 (디버그/테스트) */
+    get phase() {
+      return this.weights ? Daylight.phaseOf(this.weights) : 'night';
+    }
+
+    /** 뽀모도로 전환: 창문·펜던트가 1초 밝아졌다 돌아온다 */
+    flashLights() {
+      if (this.flashTween) this.flashTween.stop();
+      this.fx.flash = 0;
+      this.flashTween = this.tweens.add({
+        targets: this.fx, flash: 1, duration: 300, yoyo: true, hold: 200, ease: 'Sine.easeOut',
+        onUpdate: () => this.syncGlows(),
+        onComplete: () => { this.fx.flash = 0; this.syncGlows(); },
+      });
+    }
+
+    syncGlows() {
+      const k = (this.glowScale || 1) * (1 + this.fx.flash * 1.4);
+      for (const g of this.glows || []) g.setAlpha(g.baseAlpha * k);
+      if (this.windowFlash) this.windowFlash.setAlpha(this.fx.flash * 0.35);
     }
 
     // ── 보드/표지판 글자 (웹폰트) ───────────────────────────────────
@@ -826,37 +1056,66 @@
         [0.7, 'rgba(255,140,60,0.1)'],
         [1, 'rgba(255,140,60,0)'],
       ]);
+      // 모니터 글로우 (푸른빛)
+      mk('glow-cool', 256, [
+        [0, 'rgba(210,235,255,0.9)'],
+        [0.3, 'rgba(160,205,255,0.4)'],
+        [0.7, 'rgba(120,170,255,0.08)'],
+        [1, 'rgba(120,170,255,0)'],
+      ]);
     }
 
     buildLighting() {
       const lights = this.room.lights || [];
-      // 1) 어두운 베이스 (RenderTexture) 에서 조명 위치를 지운다
-      const rt = this.add.renderTexture(0, 0, this.mapW, this.mapH).setOrigin(0, 0).setDepth(30);
-      rt.fill(0x0d0912, 0.2);
-      const stamp = this.make.image({ key: 'lightmask', add: false });
-      for (const l of lights) {
-        stamp.setScale((l.r * 2.8) / 256).setAlpha(Math.min(1, l.intensity + 0.45));
-        rt.erase(stamp, l.x, l.y);
-      }
-      this.darkness = rt;
+      // 1) 어두운 베이스 (RenderTexture) 에서 조명 위치와 유리 스터디룸 구역을 지운다. 시간대에 따라 다시 그린다.
+      this.darkness = this.add.renderTexture(0, 0, this.mapW, this.mapH).setOrigin(0, 0).setDepth(DEPTH.darkness);
+      this.lightStamp = this.make.image({ key: 'lightmask', add: false });
+      this.zoneStamps = (this.room.zones || []).map((z) => {
+        // 부드러운 테두리: 바깥(연하게) + 안쪽(진하게) 둥근 사각형 두 겹
+        const g = this.make.graphics({ add: false });
+        g.fillStyle(0xffffff, z.bright * 0.45);
+        g.fillRoundedRect(0, 0, z.w + 24, z.h + 24, 18);
+        g.fillStyle(0xffffff, z.bright);
+        g.fillRoundedRect(12, 12, z.w, z.h, 12);
+        return { z, g };
+      });
+      this.renderDarkness((this.ambient && this.ambient.darkness) || 0.2);
 
-      // 2) 앰버 글로우 (가산)
+      // 2) 앰버 글로우 (가산) — baseAlpha 에 시간대 배율(glowScale)과 뽀모도로 플래시를 곱한다
       this.glows = [];
+      this.glowScale = (this.ambient && this.ambient.glow) || 1;
       for (const l of lights) {
         const g = this.add.image(l.x, l.y, 'glow')
           .setScale((l.r * 2.2) / 256)
-          .setAlpha(l.intensity * 0.5)
           .setBlendMode(Phaser.BlendModes.ADD)
-          .setDepth(31);
+          .setDepth(DEPTH.glow);
+        g.baseAlpha = l.intensity * 0.5;
+        g.setAlpha(g.baseAlpha * this.glowScale);
         this.glows.push(g);
         this.tweens.add({
           targets: g,
-          alpha: { from: l.intensity * 0.4, to: l.intensity * 0.55 },
+          baseAlpha: { from: l.intensity * 0.4, to: l.intensity * 0.55 },
           duration: 1200 + Math.random() * 1200,
           yoyo: true,
           repeat: -1,
           ease: 'Sine.easeInOut',
+          onUpdate: () => g.setAlpha(g.baseAlpha * (this.glowScale || 1) * (1 + this.fx.flash * 1.4)),
         });
+      }
+      // 3) 뽀모도로 플래시용 창문 오버레이 (평소엔 투명)
+      const win = (this.room.windows || [])[0];
+      if (win) this.windowFlash = this.add.rectangle(win.x, win.y, win.w, win.h + 16, 0xfff1d0, 1).setOrigin(0, 0).setBlendMode(Phaser.BlendModes.ADD).setDepth(DEPTH.glow).setAlpha(0);
+    }
+
+    /** 어둠 레이어 다시 칠하기 (시간대가 바뀔 때만 — 1초에 한 번 이하) */
+    renderDarkness(alpha) {
+      const rt = this.darkness;
+      rt.clear();
+      rt.fill(0x0d0912, alpha);
+      for (const { z, g } of this.zoneStamps) rt.erase(g, z.x - 12, z.y - 12);
+      for (const l of this.room.lights || []) {
+        this.lightStamp.setScale((l.r * 2.8) / 256).setAlpha(Math.min(1, l.intensity + 0.45));
+        rt.erase(this.lightStamp, l.x, l.y);
       }
     }
 

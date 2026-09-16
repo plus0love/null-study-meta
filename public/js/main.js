@@ -1,4 +1,4 @@
-/* global Phaser, RoomScene, Net, UI */
+/* global Phaser, RoomScene, Net, UI, FX */
 /**
  * 부트스트랩: 방 데이터 / 아틀라스 메타 / 아바타 메타를 받아 Phaser 게임을 만들고,
  * 소켓(Net) · HUD/사이드바(UI) · 씬(RoomScene) 을 서로 연결한다.
@@ -41,6 +41,7 @@
 
   const net = new Net();
   const ui = new UI({ room, serverNow: () => net.serverNow() });
+  const sound = new FX.Sound();
 
   const game = new Phaser.Game({
     type: Phaser.AUTO,
@@ -65,6 +66,10 @@
   scene.hooks.onStand = () => net.stand().catch(() => {});
   scene.hooks.onInteract = (mode) => ui.setSitHint(mode || (scene.me && scene.me.seated ? 'stand' : null));
   scene.hooks.onPet = (id) => net.petNpc(id).catch(() => {}); // 쿨다운/거리 거부는 조용히 무시
+  scene.hooks.onUse = (kind, id) => {
+    if (kind === 'music') return ui.openMusic(); // 소리는 본인에게만 → 서버는 모른다
+    net.interact(id).then((r) => { if (!r.ok && r.error === 'too_far') ui.notify('조금 더 가까이 가 주세요.'); }).catch(() => {});
+  };
   scene.hooks.onEmojiKey = (i) => net.emoji(i).catch(() => {});
   scene.hooks.onChatKey = () => ui.focusChat();
   scene.hooks.onPositions = (map) => ui.drawMinimap(map);
@@ -83,7 +88,11 @@
   ui.onEmoji = (i) => net.emoji(i).catch(() => {});
   ui.onToggleStatus = () => net.setStatus(ui.status === 'study' ? 'rest' : 'study').catch(() => {});
   ui.onAvatar = (i) => net.setAvatar(i).catch(() => {});
-  ui.onPomodoro = (action) => (action === 'start' ? net.pomodoroStart() : net.pomodoroStop()).catch(() => {});
+  ui.onPomodoro = (action) => {
+    // 시작 버튼(사용자 제스처)에서 브라우저 알림 권한을 한 번 물어본다
+    if (action === 'start' && FX.Notify.permission() === 'default') FX.Notify.request().then((st) => ui.setNotifyPermission(st));
+    return (action === 'start' ? net.pomodoroStart() : net.pomodoroStop()).catch(() => {});
+  };
   ui.onLeave = async () => {
     await net.leave();
     scene.clearSession();
@@ -94,6 +103,14 @@
   };
   ui.onRename = () => ui.onLeave();
   ui.onNpcName = (name) => net.setNpcName('dog', name).then((r) => { if (!r.ok) ui.notify(r.error || '이름을 바꾸지 못했어요.'); }).catch(() => {});
+  ui.onListening = (title) => net.setListening(title).catch(() => {});
+  // 설정: 항상 밤 / 알림 소리 / 브라우저 알림
+  scene.setAlwaysNight(ui.alwaysNight);
+  ui.onAlwaysNight = (on) => scene.setAlwaysNight(on);
+  ui.setSoundEnabled(sound.enabled);
+  ui.onSound = (on) => sound.setEnabled(on);
+  ui.setNotifyPermission(FX.Notify.permission());
+  ui.onNotifyPerm = () => FX.Notify.request().then((st) => ui.setNotifyPermission(st));
 
   // ── 네트워크 → 씬/UI ───────────────────────────────────────────
   const applySession = (ack) => {
@@ -159,6 +176,10 @@
     scene.onAvatar(d);
     ui.upsertPlayer({ id: d.id, avatar: d.avatar });
   });
+  net.on('playerListening', (d) => {
+    scene.onListening(d);
+    ui.upsertPlayer({ id: d.id, listening: d.listening });
+  });
   net.on('playerEmoji', (d) => scene.onEmoji(d));
   net.on('chat', (d) => {
     if (d.system) return ui.addChat({ system: true, text: d.text });
@@ -174,7 +195,14 @@
     if (!prev) return;
     if (snap.running && !prev.running) ui.notify(`${snap.startedBy || '누군가'} 님이 뽀모도로를 시작했어요.`);
     else if (!snap.running && prev.running) ui.notify(`${snap.startedBy || '누군가'} 님이 뽀모도로를 정지했어요.`);
-    else if (snap.running && snap.phase !== prev.phase) ui.notify(snap.phase === 'break' ? '휴식 시간이에요 ☕ (5분)' : '다시 집중할 시간이에요 📖 (25분)');
+    else if (snap.running && snap.phase !== prev.phase) {
+      // 집중 ↔ 휴식 전환: 알림음 + 창문·펜던트 플래시 + 브라우저 알림(권한 있을 때)
+      const isBreak = snap.phase === 'break';
+      ui.notify(isBreak ? '휴식 시간이에요 ☕ (5분)' : '다시 집중할 시간이에요 📖 (25분)');
+      sound.chime(isBreak ? 'break' : 'focus');
+      scene.flashLights();
+      FX.Notify.show(isBreak ? '휴식 시간이에요 ☕' : '다시 집중할 시간이에요 📖', isBreak ? '5분 쉬고 와요.' : '25분 집중!');
+    }
   });
 
   // 30초마다 서버 시각 재동기화 (뽀모도로 게이지)
@@ -202,5 +230,5 @@
   }
 
   // 디버그/테스트용 전역 핸들
-  window.NSM = { game, room, net, ui, scene };
+  window.NSM = { game, room, net, ui, scene, sound };
 })();

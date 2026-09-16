@@ -9,7 +9,8 @@ from props import (GLASS_FRAME, GLASS_FRAME_HI, INK, LEAF, LEAF_HI, LEAF_LT, MET
 from props_room import (CUSHION, CUSHION_DK, CUSHION_HI, DARK_PANEL, MONITOR, PANEL_FRAME, SCREEN, SOFA, SOFA_DK,
                         SOFA_HI, dog)
 
-PLANK_TONES = [("#9a715c", "#a57b66", "#87614d"), ("#946c58", "#9f7662", "#815c49"), ("#a0775f", "#ab826b", "#8c6650")]
+# 3단계: 채도를 조금 낮추고 한 톤 깊은 따뜻한 갈색 (목업의 바닥 톤에 맞춤)
+PLANK_TONES = [("#86624f", "#907059", "#725241"), ("#805d4b", "#8a6a55", "#6c4e3e"), ("#8b6752", "#957560", "#775644")]
 
 
 # ── 바닥 / 벽 ─────────────────────────────────────────────────────────
@@ -106,18 +107,20 @@ def rug_fancy(w, h, base="#e3d3b3", border="#b98f6a", border2="#d2b590", pattern
 _SKY5 = ["#141a30", "#171e38", "#1b2442", "#202b4d", "#263457", "#2d3e63", "#35496f", "#3f557c", "#4a6189", "#566d94"]
 
 
-def window_big(kind, lamp=False, frame=0, seed=0):
-    """80px(5타일) 높이 창문. frame 0/1/2 는 창 불빛 깜빡임 프레임."""
+# 낮 건물 톤 (밝은 회청색) — 하늘은 타일에 굽지 않고 클라이언트가 시간대별 그라데이션으로 그린다 (public/js/daylight.js)
+_DAY_LAYERS = [("#8fa3c2", "#7b8fae", "#66799a")]
+
+
+def window_big(kind, lamp=False, frame=0, seed=0, day=False):
+    """80px(5타일) 높이 창문. frame 0/1/2 는 창 불빛 깜빡임 프레임. day=True 면 낮 건물(밝음, 불빛 적음, 애니 없음).
+    하늘 영역(y 0..71)은 투명 — 클라이언트가 room.windows 사각형에 하늘 그라데이션을 깔고 그 위에 이 타일을 올린다."""
     rnd = random.Random(seed)
     c = canvas(1, 5)
     H = 80
     sky_h = 72
-    for y in range(H):
-        idx = min(len(_SKY5) - 1, int((y / sky_h) * len(_SKY5)))
-        c.hline(0, 15, y, _SKY5[idx])
-    for _ in range(5):
-        c.px(rnd.randint(1, 14), rnd.randint(3, 26), rnd.choice(["#dfe6f5", "#b9c4dd"]))
     layers = [("#2a355a", 16, 30, 0.0), ("#1a213d", 24, 42, 0.25), ("#0e1226", 10, 34, 0.4)]
+    if day:
+        layers = [(_DAY_LAYERS[0][i], hmin, hmax, litp) for i, (_c, hmin, hmax, litp) in enumerate(layers)]
     base = 71
     lit = {0: [], 1: [], 2: []}
     for col, hmin, hmax, litp in layers:
@@ -126,18 +129,27 @@ def window_big(kind, lamp=False, frame=0, seed=0):
             w = rnd.choice([2, 3, 3, 4, 5])
             h = rnd.randint(hmin, hmax)
             c.rect(max(0, x), base - h, w, h, col)
-            c.hline(max(0, x), min(15, x + w - 1), base - h, "#ffffff10")
+            c.hline(max(0, x), min(15, x + w - 1), base - h, "#ffffff10" if not day else "#ffffff40")
             if litp:
                 for yy in range(base - h + 2, base - 1, 2):
                     for xx in range(x, x + w, 2):
                         if 0 <= xx < 16 and rnd.random() < litp:
                             lit[rnd.choice([0, 0, 1, 2])].append((xx, yy))
             x += w
-    for lx, ly in lit[0]:
-        if (lx * 7 + ly * 3 + frame) % 9 != 0:
-            c.px(lx, ly, "#f4d98c")
-    for lx, ly in lit[(frame % 2) + 1]:
-        c.px(lx, ly, rnd.choice(["#ffe7a8", "#f7c56f"]))
+    if day:
+        # 낮: 창은 어두운 유리, 불 켜진 창은 드물게
+        for k in (0, 1, 2):
+            for lx, ly in lit[k]:
+                c.px(lx, ly, "#56698a")
+        for i, (lx, ly) in enumerate(lit[0]):
+            if (lx * 7 + ly * 3) % 11 == 0:
+                c.px(lx, ly, "#f4e2b0")
+    else:
+        for lx, ly in lit[0]:
+            if (lx * 7 + ly * 3 + frame) % 9 != 0:
+                c.px(lx, ly, "#f4d98c")
+        for lx, ly in lit[(frame % 2) + 1]:
+            c.px(lx, ly, rnd.choice(["#ffe7a8", "#f7c56f"]))
     # 창틀
     c.rect(0, 0, 16, 3, GLASS_FRAME)
     c.vline(0, 0, sky_h - 1, GLASS_FRAME_HI)

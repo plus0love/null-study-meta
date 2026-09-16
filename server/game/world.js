@@ -2,7 +2,8 @@
 /**
  * 방 하나의 실시간 상태 (소켓과 무관한 순수 로직).
  *  - 플레이어 입장/퇴장, 닉네임 중복 처리, 세션 토큰으로 재접속
- *  - 이동 검증(예산 방식), 좌석 점유, 상태(공부/휴식), 채팅 검증, 뽀모도로
+ *  - 이동 검증(예산 방식), 좌석 점유, 상태(공부/휴식/☕휴식), 채팅 검증, 뽀모도로
+ *  - 상호작용 지점(커피머신 앞 E → 'coffee' 상태), 듣는 중(유튜브 제목) 표시
  * 이벤트: 'playerLeft' (유예 시간이 지나 정리될 때), 'pomodoro' (상태 변화),
  *         'npcUpdate' (NPC 스냅샷, 10Hz), 'npcPet' ({ npc, by, nickname }), 'npcName' ({ npc, name })
  */
@@ -14,11 +15,13 @@ const { SPEED, FEET_W, FEET_H, applyMove, maxBudget, canStand } = require('./mov
 const { sanitizeChat, createRateLimiter, MAX_LEN: CHAT_MAX } = require('./chat');
 const { Pomodoro } = require('./pomodoro');
 const { DogNpc } = require('./npc');
-const { FACING_DELTA } = require('../rooms/build');
+const { FACING_DELTA, interactableById } = require('../rooms/build');
 
 const GRACE_MS = 30 * 1000; // 연결 끊김 후 플레이어를 유지하는 시간
 const SIT_RANGE_PX = 56; // 좌석 중심까지 이 거리 안이어야 앉을 수 있다 (대각선 인접 포함)
-const STATUSES = ['study', 'rest'];
+const STATUSES = ['study', 'rest', 'coffee']; // coffee = 커피머신 앞에서 E ("☕ 휴식"). 수동 토글은 study/rest 만
+const MANUAL_STATUSES = ['study', 'rest'];
+const LISTENING_MAX = 80;
 const EMOJIS = ['👋', '😊', '👍', '❤️', '😂', '🔥'];
 const AVATAR_COUNT = 4;
 const FACINGS = Object.keys(FACING_DELTA);
@@ -65,7 +68,7 @@ class World extends EventEmitter {
 
   /** 다른 클라이언트에 보내는 공개 정보 */
   publicPlayer(p) {
-    return { id: p.id, nickname: p.nickname, avatar: p.avatar, x: p.x, y: p.y, facing: p.facing, moving: p.moving, status: p.status, seatId: p.seatId, connected: p.connected };
+    return { id: p.id, nickname: p.nickname, avatar: p.avatar, x: p.x, y: p.y, facing: p.facing, moving: p.moving, status: p.status, seatId: p.seatId, connected: p.connected, listening: p.listening || null };
   }
 
   listPlayers() {
@@ -112,6 +115,7 @@ class World extends EventEmitter {
       status: 'rest',
       prevStatus: 'rest',
       seatId: null,
+      listening: null, // 유튜브 카드에서 재생 중인 영상 제목 (본인만 소리, 남들에겐 ♪ 표시)
       connected: true,
       disconnectedAt: null,
       budget: maxBudget(),
@@ -185,7 +189,8 @@ class World extends EventEmitter {
     player.y = c.y;
     player.facing = seat.facing;
     player.moving = false;
-    player.prevStatus = player.status;
+    // 커피(☕ 휴식) 중에 앉으면 공부 중 → 일어날 때는 커피가 아니라 휴식으로
+    player.prevStatus = player.status === 'coffee' ? 'rest' : player.status;
     player.status = 'study';
     return { ok: true, seat };
   }
@@ -207,10 +212,42 @@ class World extends EventEmitter {
 
   // ── 상태 / 채팅 / 이모지 ────────────────────────────────────────────
   setStatus(player, status) {
-    if (!STATUSES.includes(status)) return { ok: false, error: 'invalid' };
+    if (!MANUAL_STATUSES.includes(status)) return { ok: false, error: 'invalid' };
     player.status = status;
     player.prevStatus = status;
     return { ok: true };
+  }
+
+  /**
+   * 상호작용 지점 (room.interactables) 에서 E: 거리 검사 후 종류별 효과.
+   *  - coffee: 앉아 있지 않으면 'coffee' 상태 (☕ 휴식). 이미 커피 중이면 휴식으로 되돌린다.
+   *  - music: 클라이언트 전용(유튜브 카드) — 서버는 거리만 확인한다.
+   * @returns {{ ok: true, kind, status? } | { ok: false, error }}
+   */
+  interact(player, id) {
+    const it = interactableById(this.room, id);
+    if (!it) return { ok: false, error: 'no_interactable' };
+    if (Math.hypot(it.x - player.x, it.y - player.y) > it.range) return { ok: false, error: 'too_far' };
+    if (it.kind === 'coffee') {
+      if (player.seatId) return { ok: false, error: 'seated' };
+      player.status = player.status === 'coffee' ? 'rest' : 'coffee';
+      player.prevStatus = player.status;
+      return { ok: true, kind: it.kind, status: player.status };
+    }
+    return { ok: true, kind: it.kind };
+  }
+
+  /** 듣는 중 표시: 제목(≤80자, 제어문자 제거) 또는 null */
+  setListening(player, title) {
+    if (title === null || title === undefined || title === '') {
+      player.listening = null;
+      return { ok: true, listening: null };
+    }
+    if (typeof title !== 'string') return { ok: false, error: 'invalid' };
+    // eslint-disable-next-line no-control-regex
+    const clean = title.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, LISTENING_MAX);
+    player.listening = clean || null;
+    return { ok: true, listening: player.listening };
   }
 
   setAvatar(player, avatar) {
@@ -245,4 +282,4 @@ class World extends EventEmitter {
   }
 }
 
-module.exports = { World, GRACE_MS, SIT_RANGE_PX, EMOJIS, STATUSES, AVATAR_COUNT, seatCenter };
+module.exports = { World, GRACE_MS, SIT_RANGE_PX, EMOJIS, STATUSES, MANUAL_STATUSES, AVATAR_COUNT, LISTENING_MAX, seatCenter };

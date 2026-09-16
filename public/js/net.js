@@ -11,7 +11,7 @@
   const FORWARD = [
     'playerJoined', 'playerLeft', 'playerMoved', 'move:correct', 'playerSat', 'playerStood', 'playerStatus',
     'playerAvatar', 'playerEmoji', 'chat', 'pomodoro', 'roomCount', 'playerDisconnected', 'playerReconnected',
-    'npc:update', 'npc:pet', 'npc:name',
+    'npc:update', 'npc:pet', 'npc:name', 'playerListening',
   ];
 
   class Net {
@@ -136,6 +136,8 @@
     chat(text) { return this.ask('chat', { text }); }
     emoji(index) { return this.ask('emoji', { index }); }
     petNpc(id) { return this.ask('npc:pet', { id }); }
+    interact(id) { return this.ask('interact', { id }); }
+    setListening(title) { return this.ask('listening', { title: title || null }); }
     setNpcName(id, name) { return this.ask('npc:name', { id, name }); }
     pomodoroStart() { return this.ask('pomodoro:start', {}); }
     pomodoroStop() { return this.ask('pomodoro:stop', {}); }

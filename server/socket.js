@@ -5,6 +5,8 @@
  *   move      { x, y, facing, moving }       → 다른 사람에게 playerMoved. 거부 시 본인에게만 move:correct { x, y, reason }
  *   sit       { seatId } / stand             → ack { ok, error? }, 모두에게 playerSat / playerStood
  *   status    { status: 'study'|'rest' }     → 모두에게 playerStatus
+ *   interact  { id }                         → ack { ok, kind, status?, error? }. coffee 면 모두에게 playerStatus (status 'coffee')
+ *   listening { title|null }                 → 모두에게 playerListening { id, listening }
  *   avatar    { avatar }                     → 모두에게 playerAvatar
  *   chat      { text }                       → ack { ok, error? }, 모두에게 chat { id, nickname, text, ts }
  *   emoji     { index }                      → 모두에게 playerEmoji { id, emoji }
@@ -105,6 +107,18 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, log = console }
       if (!res.ok) return ack(res);
       ack({ ok: true });
       io.emit('playerStatus', { id: player.id, status: player.status });
+    }));
+
+    socket.on('interact', requirePlayer((payload, ack) => {
+      const res = world.interact(player, payload && payload.id);
+      ack(res);
+      if (res.ok && res.status) io.emit('playerStatus', { id: player.id, status: player.status });
+    }));
+
+    socket.on('listening', requirePlayer((payload, ack) => {
+      const res = world.setListening(player, payload ? payload.title : null);
+      ack(res);
+      if (res.ok) io.emit('playerListening', { id: player.id, listening: player.listening });
     }));
 
     socket.on('avatar', requirePlayer((payload, ack) => {
