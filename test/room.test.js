@@ -115,3 +115,28 @@ test('조명 목록이 있고 픽셀 좌표가 맵 안', () => {
     assert.ok(l.r > 0);
   }
 });
+
+test('보드/표지판 라벨은 웹폰트용 데이터로 내려간다 (타일에 굽지 않음)', () => {
+  assert.ok(room.labels.length >= 10);
+  const texts = room.labels.map((l) => l.text).join('|');
+  for (const t of ['Good', 'Study', 'FOCUS', 'Music', 'COFFEE', '수빈s ROOM', '선아s ROOM', 'Small Steps', 'WELCOME']) assert.match(texts, new RegExp(t));
+  for (const l of room.labels) {
+    assert.ok(['hand', 'sans'].includes(l.font));
+    assert.ok(l.x >= 0 && l.x <= room.width * 32 && l.y >= 0 && l.y <= room.height * 32);
+  }
+});
+
+test('식물이 30개 이상, 창문은 3프레임 애니메이션', () => {
+  const { objects, animTiles } = TILES;
+  const plantTiles = new Set();
+  for (const [name, o] of Object.entries(objects)) {
+    if (/^(plant_|wall_vine)/.test(name)) plantTiles.add(o.tiles[o.h - 1][0]);
+  }
+  let plants = 0;
+  for (const layer of ['furniture', 'top']) for (const row of room.layers[layer]) for (const idx of row) if (plantTiles.has(idx)) plants++;
+  assert.ok(plants >= 30, `식물 ${plants}개`);
+  const f0 = objects.window_l_f0.tiles[0][0];
+  const f1 = animTiles[String(f0)];
+  const f2 = animTiles[String(f1)];
+  assert.equal(animTiles[String(f2)], f0);
+});

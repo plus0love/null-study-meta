@@ -22,6 +22,7 @@ from PIL import Image, ImageDraw
 sys.path.insert(0, os.path.dirname(__file__))
 import props as P  # noqa: E402
 import props_room as R  # noqa: E402
+import props_v2 as V  # noqa: E402
 from pixel import Canvas  # noqa: E402
 from recolor import recolor  # noqa: E402
 
@@ -74,28 +75,29 @@ def add(name, cv, layer="furniture", solid=True, top=0, anim=None, seats=None, d
 
 
 def build_objects():
-    wf = P.wall_face_block
+    wf = V.wall_block
 
-    # 바닥 (floor 레이어, 통과 가능)
-    add("floor_wood_0", P.floor_wood(0), "floor", False)
-    add("floor_wood_1", P.floor_wood(1), "floor", False)
-    add("floor_wood_2", P.floor_wood(2), "floor", False)
+    # 바닥 (floor 레이어) — 널빤지 3톤 x 이음새 유무
+    for v in range(3):
+        add(f"floor_{v}", V.floor_plank(v), "floor", False)
+        add(f"floor_{v}_seam", V.floor_plank(v, seam=[4, 11, 7][v]), "floor", False)
+        add(f"floor_{v}_shadow", V.floor_shadow(V.floor_plank(v), "N"), "floor", False)
     add("facade", R.facade(), "floor", True)
     add("paver_0", R.paver(0), "floor", False)
     add("paver_1", R.paver(1), "floor", False)
     add("kerb", R.kerb(), "floor", False)
     add("grass_0", R.grass_strip(0), "floor", True)
     add("grass_1", R.grass_strip(1), "floor", True)
-    # 러그
-    add("rug_lounge", R.rug_pattern(11, 3), "floor", False)
-    add("rug_pouf", R.rug_pattern(7, 5, base="#e0cfae", border="#c6ad86", accent="#d0bb94"), "floor", False)
-    add("rug_coffee", R.rug_pattern(4, 2, base="#c9a98b", border="#b08d6e", accent="#bd9d7e"), "floor", False)
-    add("rug_study", R.rug_pattern(4, 5, base="#ddd0b8", border="#c4b08f", accent="#cfc0a3"), "floor", False)
-    add("rug_corridor", R.rug_pattern(3, 10, base="#dccab0", border="#c0a988", accent="#cdb99c"), "floor", False)
-    add("rug_meeting", R.rug_pattern(7, 9, base="#e3d3b3", border="#cbb28b", accent="#d3bd97"), "floor", False)
-    add("doormat_big", R.doormat_big(), "floor", False)
+    # 러그 (테두리 + 패턴)
+    add("rug_lounge", V.rug_fancy(11, 4, pattern="grid"), "floor", False)
+    add("rug_pouf", V.rug_fancy(7, 6, base="#e0cfae", border="#b08a63", border2="#cdb38b", pattern="diamond", accent="#cbb58f"), "floor", False)
+    add("rug_coffee", V.rug_fancy(4, 2, base="#c9a98b", border="#8f6a4c", border2="#b8967a", pattern="dots", accent="#bd9d7e"), "floor", False)
+    add("rug_study", V.rug_fancy(5, 6, base="#ddd0b8", border="#b39470", border2="#cbb694", pattern="dots", accent="#cfc0a3"), "floor", False)
+    add("rug_corridor", V.rug_fancy(3, 10, base="#dccab0", border="#a98a67", border2="#c8ae8a", pattern="diamond", accent="#cdb99c"), "floor", False)
+    add("rug_meeting", V.rug_fancy(7, 9, base="#e3d3b3", border="#b08960", border2="#cfb48d", pattern="grid", accent="#d3bd97"), "floor", False)
+    add("doormat_big", V.doormat_blank(), "floor", False)
 
-    # 벽
+    # 벽 (몰딩)
     add("wall_top", P.wall_top())
     add("wall_l", P.wall_side("l"))
     add("wall_r", P.wall_side("r"))
@@ -103,42 +105,44 @@ def build_objects():
     add("wall_picture_a", over(wf(1), stacked(K(16, 12), Canvas(T, T))))
     add("wall_picture_b", over(wf(1), stacked(K(17, 12), Canvas(T, T))))
     add("wall_picture_c", over(wf(1), stacked(K(18, 12), Canvas(T, T))))
+    add("wall_frames_a", V.wall_frames(0))
+    add("wall_frames_b", V.wall_frames(1))
     add("wall_shelf", over(wf(1), stacked(Canvas(T, T), K(19, 17))))
     add("wall_lamp", R.wall_spot())
+    add("wall_clock", V.wall_clock())
 
-    # 창문 (4타일 높이, 깜빡임 2프레임)
-    for kind in ("l", "m", "r"):
-        for lamp in (False, True):
-            if lamp and kind != "m":
-                continue
-            base = f"window_{kind}" + ("_lamp" if lamp else "")
-            seeds = range(4) if kind == "m" else [7 if kind == "l" else 11]
-            for s in seeds:
-                nm = f"{base}_{s}" if kind == "m" else base
-                sd = s + (50 if lamp else 0)
-                add(nm + "_b", R.window_tall(kind, lamp, True, seed=sd))
-                add(nm, R.window_tall(kind, lamp, False, seed=sd), anim=nm + "_b")
+    # 창문 (5타일 높이, 3프레임 깜빡임: 이름_f0 → _f1 → _f2 → _f0)
+    def window_set(base, kind, lamp, seed):
+        names = [f"{base}_f{f}" for f in range(3)]
+        for f in range(3):
+            add(names[f], V.window_big(kind, lamp, frame=f, seed=seed), anim=names[(f + 1) % 3])
 
-    # 상단 벽 보드류
-    add("chalkboard_big", R.chalkboard_big())
+    window_set("window_l", "l", False, 7)
+    window_set("window_r", "r", False, 11)
+    for s in range(4):
+        window_set(f"window_m_{s}", "m", False, s)
+        window_set(f"window_m_lamp_{s}", "m", True, 50 + s)
+
+    # 상단 벽 보드류 (글자 없음 — 클라이언트 웹폰트)
+    add("chalkboard_big", V.chalkboard_blank())
     add("cabinet_printer", R.cabinet_printer())
-    add("board_focus_tall", R.board_focus_tall())
+    add("board_focus_tall", V.board_tall_blank())
     add("bookshelf_big", R.bookshelf_big())
-    add("music_panel", R.music_panel())
+    add("music_panel", V.music_panel_blank())
 
     # 라운지
-    add("sofa_wide", R.sofa_wide(), seats=[(2, 1, "down"), (3, 1, "down"), (4, 1, "down"), (5, 1, "down")])
-    add("round_table", R.round_table())
+    add("sofa_wide", V.sofa_wide(), seats=[(1, 1, "down"), (2, 1, "down"), (3, 1, "down"), (4, 1, "down")])
+    add("round_table", V.round_table())
     add("standing_lamp", P.standing_lamp(), top=1)
-    add("dog", R.dog())
+    add("dog_cushion", V.sprite_png("poodle_cushion.png"), top=1)  # 쿠션 위 푸들 (1x2, 윗칸은 top)
 
     # 카페 코너
-    add("menu_board_cream", R.menu_board_cream())
-    add("counter_a", K(0, 12, variant="counter"))
-    add("counter_b", K(1, 12, variant="counter"))
-    add("counter_c", K(2, 12, variant="counter"))
+    add("menu_board_cream", V.menu_board_blank())
+    add("counter_cups", V.counter_dense(0))
+    add("counter_bottles", V.counter_dense(1))
+    add("counter_grinder", V.counter_dense(2))
     add("counter_plates", K(4, 12, variant="counter"))
-    add("counter_jars", K(5, 12, variant="counter"))
+    add("cup_shelf", V.cup_shelf())
     add("coffee_machine", P.coffee_machine())
     add("display_case", R.display_case())
     add("shelf_narrow_a", R.shelf_narrow(2, 1))
@@ -147,15 +151,16 @@ def build_objects():
     add("ladder_shelf", R.ladder_shelf())
 
     # 푸프 / 작은 테이블
-    add("pouf_cream", R.pouf("#e6cfa8", "#c9ae83", "#f4e3c6"), solid=False, seats=[(0, 0, "down")])
-    add("pouf_green", R.pouf("#4f6a45", "#3b5234", "#6b8a5e"), solid=False, seats=[(0, 0, "down")])
+    add("pouf_cream", V.pouf_big("#e6cfa8", "#c9ae83", "#f4e3c6"), solid=False, seats=[(0, 1, "down")])
+    add("pouf_green", V.pouf_big("#4f6a45", "#3b5234", "#6b8a5e"), solid=False, seats=[(0, 1, "down")])
     add("side_table_round", R.side_table_round())
 
     # 스터디룸
-    add("desk_monitor", R.desk_monitor())
+    add("desk_wide", V.desk_wide())
+    add("desk_return", V.desk_return())
     add("nightstand", R.nightstand())
-    add("study_panel_1", R.study_panel("STUDY 1", light_side="r"))
-    add("study_panel_2", R.study_panel("STUDY 2", light_side="l"))
+    add("study_panel_1", V.study_panel_blank(light_side="r"))
+    add("study_panel_2", V.study_panel_blank(light_side="l"))
     add("glass_door_l", R.glass_door_wide("l"), solid=False, door=True)
     add("glass_door_r", R.glass_door_wide("r"), solid=False, door=True)
     for n in (2, 3, 4):
@@ -163,20 +168,27 @@ def build_objects():
             key = "".join(d for d in "NSEW" if d in combo)
             add(f"glass_{key}", P.glass_tile(key))
 
-    # 회의 구역
-    add("whiteboard_big", R.whiteboard_big())
+    # 회의 구역 / 의자
+    add("whiteboard_big", V.whiteboard_blank())
     add("big_table_v", R.big_table_v())
-    add("chair_s", K(0, 2, variant="chair"), solid=False, seats=[(0, 0, "down")])
-    add("chair_n", K(1, 2, variant="chair"), solid=False, seats=[(0, 0, "up")])
-    add("chair_e", K(2, 2, variant="chair"), solid=False, seats=[(0, 0, "right")])
-    add("chair_w", K(3, 2, variant="chair"), solid=False, seats=[(0, 0, "left")])
+    for f, facing in (("n", "up"), ("s", "down"), ("e", "right"), ("w", "left")):
+        add(f"chair_{f}", V.chair_black(f), solid=False, seats=[(0, 0, facing)])
 
-    # 화분
+    # 화분 3종+
     add("plant_small_a", K(16, 0))
     add("plant_small_b", K(17, 0))
     for s in range(4):
         add(f"plant_tall_{s}", P.plant_tall(seed=s), top=1)
+    for s in range(2):
+        add(f"plant_palm_{s}", V.plant_palm(seed=s), top=1)
+        add(f"plant_bush_{s}", V.plant_bush(seed=s))
     add("plant_hanging", P.plant_hanging(), "top", False)
+    add("wall_vine", V.wall_vine(), "top", False)
+
+    # 자잘한 소품
+    add("coat_rack", V.coat_rack(), top=1)
+    add("trash_bin", V.trash_bin())
+    add("water_dispenser", V.water_dispenser(), top=1)
 
     # 입구 / 실외
     add("entrance_wide", R.entrance_wide())
@@ -186,8 +198,8 @@ def build_objects():
     add("hedge_flower_0", R.hedge_flower(2))
     add("hedge_flower_1", R.hedge_flower(3))
     add("bench", R.bench())
-    add("sign_left", R.sign_outdoor(["SAME", "PLACE", "BRIGHTER", "US"], arrow="heart"))
-    add("sign_right", R.sign_outdoor(["GOOD", "IDEAS", "START", "HERE"], arrow="right"))
+    add("sign_left", V.sign_outdoor_blank())
+    add("sign_right", V.sign_outdoor_blank())
 
 
 # ── 아틀라스 패킹 ──────────────────────────────────────────────────────
@@ -244,7 +256,7 @@ def build_preview():
         x, y = (i % cols) * cell_w, (i // cols) * cell_h
         img = o["img"].resize((o["img"].width * SCALE, o["img"].height * SCALE), Image.NEAREST)
         # 바닥 위에 올려서 보이게
-        floor = OBJECTS["floor_wood_0"]["img"].resize((T * SCALE, T * SCALE), Image.NEAREST)
+        floor = OBJECTS["floor_0"]["img"].resize((T * SCALE, T * SCALE), Image.NEAREST)
         for fy in range(0, img.height, T * SCALE):
             for fx in range(0, img.width, T * SCALE):
                 im.alpha_composite(floor, (x + 4 + fx, y + 4 + fy))

@@ -27,6 +27,7 @@ class RoomBuilder {
     this.seats = [];
     this.doors = [];
     this.lights = [];
+    this.labels = [];
     this.spawn = { x: 0, y: 0 };
     this.placed = [];
   }
@@ -104,6 +105,26 @@ class RoomBuilder {
     return this;
   }
 
+  /**
+   * 보드/표지판 글자 (클라이언트가 웹폰트로 그림). (x, y) 는 글자 블록의 중심(타일 단위).
+   * opts: font 'hand'|'sans', size(px, 월드 기준), weight, color, align, lineHeight, spacing(letterSpacing)
+   */
+  label(x, y, text, opts = {}) {
+    this.labels.push({
+      x: Math.round(x * TILE),
+      y: Math.round(y * TILE),
+      text,
+      font: opts.font || 'sans',
+      size: opts.size || 12,
+      weight: opts.weight || 400,
+      color: opts.color || '#f1e6d2',
+      align: opts.align || 'center',
+      lineHeight: opts.lineHeight || 1.2,
+      spacing: opts.spacing || 0,
+    });
+    return this;
+  }
+
   setSpawn(x, y) {
     this.spawn = { x: Math.round((x + 0.5) * TILE), y: Math.round((y + 1) * TILE) };
     return this;
@@ -126,6 +147,7 @@ class RoomBuilder {
       seats: this.seats,
       doors: this.doors,
       lights: this.lights,
+      labels: this.labels,
       spawn: this.spawn,
     };
   }

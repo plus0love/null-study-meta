@@ -16,11 +16,21 @@ Null Study Meta — 에셋 출처 / 제작자 / 라이선스
    - 라이선스: CC0 1.0 (Public Domain)
    - 사용 부분: gfx/character.png 의 4방향 걷기 4프레임(16x32). 머리색 → 흑발, 셔츠 → 흰색으로 리컬러 후 2배 확대
 
-3. 오리지널 픽셀아트 (이 저장소, tools/props.py · tools/props_room.py 로 코드 생성)
+3. 오리지널 픽셀아트 (이 저장소, tools/props.py · props_room.py · props_v2.py 로 코드 생성)
    - 바닥/벽/창문(야경·펜던트), 대형 칠판·세로 보드·유리 패널, 큰 책장·좁은 책장·사다리 선반,
      소파·둥근 테이블·스탠드 램프·강아지, 커피머신·메뉴보드·진열장, 푸프, 모니터 책상·협탁,
      유리 파티션·미닫이문·STUDY 패널, 화이트보드·회의 테이블, 입구 이중문·가로등·벤치·화단·표지판·매트, 러그류, 3x5 픽셀 폰트
+   - 쿠션 위 푸들(dog_cushion)은 tools/sprites/poodle_cushion.png (16x32 원본, 오리지널)
    - 라이선스: 프로젝트 라이선스를 따름
+
+4. UI 라인 아이콘 (public/index.html 의 인라인 SVG <symbol>) — 이 저장소에서 직접 그린 오리지널 (24px 그리드, stroke 기반)
+   이모지(상태 아이콘·리액션)는 사용자 시스템 이모지 폰트로 렌더링 (별도 에셋 없음)
+
+5. 웹폰트 (CDN 로드, 보드/표지판 글자 · UI)
+   - Gaegu — 제작: JIKJI SOFT / Google Fonts, SIL Open Font License 1.1
+     https://fonts.google.com/specimen/Gaegu
+   - Pretendard — 제작: 길형진 (orioncactus), SIL Open Font License 1.1
+     https://github.com/orioncactus/pretendard
 
 검토했으나 사용하지 않은 후보
    - Ninja Adventure (Pixel-boy / Sparklin Labs, CC0): 닌자·승려 컨셉이라 스터디룸과 맞지 않음

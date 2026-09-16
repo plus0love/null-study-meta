@@ -679,8 +679,9 @@ def side_table_round():
 
 def wall_spot():
     """벽 위쪽의 작은 스팟 조명 (wall_face 배경 포함, 1x2)."""
+    from props_v2 import wall_block
     c = canvas(1, 2)
-    c.blit(wall_face_block(1, 2), 0, 0)
+    c.blit(wall_block(1, 2), 0, 0)
     c.rect(5, 1, 6, 3, "#1f1d23")
     c.rect(6, 4, 4, 2, "#ffe9b0")
     c.px(7, 6, "#ffd98a")
