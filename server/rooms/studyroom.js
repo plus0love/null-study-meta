@@ -78,7 +78,7 @@ function buildStudyRoom() {
   b.place('rug_lounge', 16, 7);
   b.place('round_table', 19, 8);
   b.light(21, 8.5, 3.2, 0xffc46a, 0.3);
-  b.place('dog_cushion', 24, 8);
+  b.place('cushion', 24, 9); // 강아지 쿠션 — NPC 가 여기서 잔다 (server/game/npc.js)
   b.place('plant_bush_0', 26, 9);
 
   // ── 상단 중앙 우: FOCUS/PLAN/STUDY/GROW 세로 표지판 ─────────────────

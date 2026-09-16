@@ -11,6 +11,9 @@
  *   pomodoro:start / pomodoro:stop           → 모두에게 pomodoro { ...snapshot }
  *   time:ping { t0 }                         → ack { t0, serverTime }
  *   leave                                    → 즉시 정리 (유예 없음)
+ *   npc:pet   { id }                         → ack { ok, error? }, 모두에게 npc:pet { id, by, nickname } + 시스템 chat
+ *   npc:name  { id, name }                   → ack { ok, name?, error? }, 모두에게 npc:name { id, name }
+ * 서버 → npc:update { id, kind, name, x, y, facing, state } (10Hz, 바뀔 때)
  * 서버 → 클라이언트 알림: playerJoined { player }, playerLeft { id, nickname, reason }, playerReconnected { id }, playerDisconnected { id }
  */
 const { Server } = require('socket.io');
@@ -30,6 +33,12 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, log = console }
     io.emit('roomCount', { count: world.connectedCount });
   });
   world.on('pomodoro', (snap) => io.emit('pomodoro', snap));
+  world.on('npcUpdate', (snap) => io.emit('npc:update', snap));
+  world.on('npcPet', ({ npc, by, playerId, name }) => {
+    io.emit('npc:pet', { id: npc, by, playerId });
+    io.emit('chat', { system: true, text: `${by}님이 강아지를 쓰다듬었어요`, ts: world.now() });
+  });
+  world.on('npcName', ({ npc, name }) => io.emit('npc:name', { id: npc, name }));
 
   const ackOf = (cb) => (typeof cb === 'function' ? cb : () => {});
 
@@ -57,6 +66,7 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, log = console }
         players: world.listPlayers().filter((p) => p.id !== player.id),
         seats: world.seatSnapshot(),
         pomodoro: world.pomodoro.snapshot(),
+        npcs: world.npcSnapshots(),
         config: world.config,
         serverTime: world.now(),
       });
@@ -123,6 +133,18 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, log = console }
     }));
     socket.on('pomodoro:stop', requirePlayer((_p, ack) => {
       ack({ ok: world.pomodoro.stop(player.nickname) });
+    }));
+
+    socket.on('npc:pet', requirePlayer((payload, ack) => {
+      const npc = world.npcById(payload && payload.id);
+      if (!npc) return ack({ ok: false, error: 'no_npc' });
+      ack(npc.pet(player));
+    }));
+
+    socket.on('npc:name', requirePlayer((payload, ack) => {
+      const npc = world.npcById(payload && payload.id);
+      if (!npc) return ack({ ok: false, error: 'no_npc' });
+      ack(npc.setName(payload && payload.name));
     }));
 
     socket.on('time:ping', (payload, cb) => {

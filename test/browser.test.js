@@ -136,6 +136,28 @@ test('브라우저 2탭 (B 는 300ms 지연): 입장·이동 유지·채팅·착
   await a.waitForFunction(() => !window.NSM.scene.me.seated, { timeout: 5000 });
   assert.equal(await a.evaluate(() => window.NSM.ui.status), 'rest');
 
+  // 강아지 NPC: 두 탭에 같은 이름·상태로 보인다. 쿠션에서 자게 고정한 뒤 옆까지 걸어가 E → ❤️ + 시스템 채팅
+  const dog = srv.world.dog;
+  dog.path = [];
+  dog.x = (24 + 0.5) * T;
+  dog.y = (9 + 1) * T;
+  dog.setState('sleep', 60000);
+  await b.waitForFunction(() => { const n = window.NSM.scene.npcs.get('dog'); return n && n.state === 'sleep'; }, { timeout: 5000 });
+  assert.equal(await a.evaluate(() => window.NSM.scene.npcs.get('dog').name), '사랑');
+  assert.equal(await b.evaluate(() => window.NSM.scene.npcs.get('dog').name), '사랑');
+  const cur2 = await a.evaluate(feetTile);
+  const toDog = pathTo(room, cur2.tx, cur2.ty, (x, y) => Math.hypot((x + 0.5) * T - dog.x, (y + 1) * T - dog.y) <= 40);
+  assert.ok(toDog && toDog.length, '강아지까지 경로가 있어야 함');
+  await walk(a, toDog);
+  await a.waitForFunction(() => document.getElementById('sit-hint').textContent.includes('쓰다듬기'), { timeout: 3000 });
+  assert.equal(dog.state, 'look', '가까이 가면 쳐다본다');
+  await a.keyboard.press('KeyE');
+  await b.waitForFunction(() => Boolean(window.NSM.scene.npcs.get('dog').heart), { timeout: 5000 });
+  await b.waitForFunction(() => /브라우저A님이 강아지를 쓰다듬었어요/.test(document.getElementById('chat-log').textContent), { timeout: 5000 });
+  const dogA = await a.evaluate(() => { const n = window.NSM.scene.npcs.get('dog'); return { x: n.x, y: n.y, state: n.state }; });
+  const dogB = await b.evaluate(() => { const n = window.NSM.scene.npcs.get('dog'); return { x: n.x, y: n.y, state: n.state }; });
+  assert.deepEqual(dogA, dogB, '두 탭이 같은 강아지 위치/상태');
+
   // 재접속: B 의 소켓을 강제로 끊으면 배너가 뜨고, 같은 토큰으로 이어받아 A 화면에서 사라지지 않는다
   const tokenB = await b.evaluate(() => localStorage.getItem('nsm.token'));
   assert.ok(tokenB);

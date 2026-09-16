@@ -2,8 +2,9 @@
 
 2D 탑뷰 멀티플레이 **스터디 메타버스**. 밤의 아늑한 스터디 카페 "우리의 스터디룸"에서 같이 공부하는 공간을 만듭니다.
 
-> **현재 단계: 2단계 — 멀티플레이 기본 기능.** 닉네임으로 입장해 다른 접속자와 같은 방을 걸어다니고(서버 이동 검증),
+> **현재 단계: 2.5단계 — 강아지 NPC.** 닉네임으로 입장해 다른 접속자와 같은 방을 걸어다니고(서버 이동 검증),
 > 의자·푸프·소파에 앉고(E), 채팅·이모지·공부/휴식 상태·공용 뽀모도로를 공유합니다. 끊겨도 30초 안에 같은 세션으로 이어집니다.
+> 라운지의 갈색 푸들 "사랑" 은 서버가 움직이는 NPC 로, 어슬렁거리다 앉고 쿠션에서 자며 가까이 가면 쳐다보고 E 로 쓰다듬을 수 있습니다.
 
 ![목업과 게임 비교](screenshots/compare.png)
 
@@ -35,7 +36,8 @@ null-study-meta/
 │   │   ├── movement.js       # 발 박스 충돌 + "경과 시간 × 최대 속도 × 1.5" 이동 예산 검증
 │   │   ├── nickname.js       # 닉네임 규칙(문자·숫자·공백·_- 12자) + 중복 시 "이름2"
 │   │   ├── chat.js           # 200자·HTML 이스케이프·300ms 도배 방지
-│   │   └── pomodoro.js       # 공용 뽀모도로 25/5 자동 전환 (서버 시각 기준)
+│   │   ├── pomodoro.js       # 공용 뽀모도로 25/5 자동 전환 (서버 시각 기준)
+│   │   └── npc.js            # 강아지 NPC: 어슬렁/앉기/자기/산책 상태기계, BFS 경로(충돌 준수), 쳐다보기, 쓰다듬기 쿨다운, 이름
 │   ├── rooms/
 │   │   ├── build.js          # RoomBuilder: tiles.json 기준으로 레이어 배열 + 충돌/의자/문/조명 생성, 판정 함수
 │   │   └── studyroom.js      # "우리의 스터디룸" 46x34 타일 정의
@@ -46,13 +48,14 @@ null-study-meta/
 │   ├── js/net.js             # 소켓 래퍼: join/재접속(세션 토큰 localStorage), 서버 시각 동기화, 20Hz 이동 전송
 │   ├── js/ui.js              # HUD(방 이름·인원·설정·멤버·알림·나가기) + 사이드바(미니맵·할 일·뽀모도로·채팅) + 이모지 바·입장 모달
 │   ├── js/scenes/RoomScene.js# 타일맵 3레이어, 내 아바타(입력·충돌·서버 보정), 원격 아바타(선형 보간), 말풍선/이모지/상태 아이콘, 조명
-│   └── assets/               # tiles.png / tiles.json (아틀라스), player.png / player.json, CREDITS.txt
+│   └── assets/               # tiles.png / tiles.json (아틀라스), player.png / player.json, dog.png / dog.json, CREDITS.txt
 ├── tools/
 │   ├── fetch_assets.py       # 외부 에셋 원본 다운로드 → tools/raw/ (git 제외)
 │   ├── build_assets.py       # 아틀라스 + 캐릭터 시트 빌드 (16px 논리 → 32px, nearest)
 │   ├── recolor.py            # 팔레트 리컬러 (Kenney 원색 → 목업의 따뜻한 파스텔/우드 톤)
 │   ├── pixel.py              # 픽셀 드로잉 도우미 + 3x5 픽셀 폰트
 │   ├── props.py, props_room.py, props_v2.py # 팩에 없는 소품을 코드로 그림 (창문, 보드, 소파, 유리벽, 커피머신, 벤치 …)
+│   ├── dog_sprite.py         # 강아지 NPC 시트 (푸들 머리 + 직접 그린 4방향 걷기 2프레임·앉기(꼬리 2종)·자기 2프레임)
 │   ├── render_map.py         # 서버 방 데이터를 PNG 로 합성 (배치/충돌 검수)
 │   ├── screenshot.js         # puppeteer-core 로 게임 스크린샷 (2탭 접속 / 채팅 / 착석 / 전체 맵)
 │   └── lib/walk.js           # 헤드리스 브라우저에서 키보드로 한 타일씩 걷기 (테스트·스크린샷 공용)
@@ -73,6 +76,7 @@ npm start            # http://localhost:3000  (개발 중 자동 재시작: npm 
 |---|---|
 | 이동 | 방향키 / WASD (벽·가구·유리벽·화분 통과 불가, 유리 스터디룸은 미닫이문으로만) |
 | 앉기 / 일어나기 | 의자·푸프·소파 옆에서 **E** (좌하단에 힌트가 뜸). 앉으면 자동으로 "공부 중" |
+| 강아지 쓰다듬기 | 강아지 옆에서 **E** (더 가까운 쪽이 우선). 머리 위 ❤️ 1초 + 채팅 알림, 3초 쿨다운. 이름은 설정에서 변경(기본 "사랑", 모두에게 적용) |
 | 채팅 | **Enter** 로 입력창 포커스 → Enter 전송, **Esc** 로 나가기. 입력 중엔 게임 키가 막힘 |
 | 이모지 | **1 ~ 6** (좌하단 바 클릭도 가능). 머리 위 2초 |
 | 상태 전환 | 좌하단 "공부 중 / 휴식 중" 버튼. 아바타 머리 위 📖 / ☕ |
@@ -95,9 +99,10 @@ npm test
 | 파일 | 내용 |
 |---|---|
 | `game.test.js` | 단위: 닉네임 규칙/중복, 이동 예산(정상 속도 허용·순간이동 거부·벽), 채팅 이스케이프/도배, 뽀모도로 자동 전환, 월드(좌석 점유·상태 복귀·유예 재접속) |
+| `npc.test.js` | 강아지: 결정적 난수로 20분 돌려도 막힌 칸에 안 들어감·모든 상태 순환·산책, 틱당 이동량, 쳐다보기, 쓰다듬기 쿨다운, 이름 규칙 + 소켓: 두 클라이언트가 같은 `npc:update` 를 받음, 쓰다듬기/이름 브로드캐스트 |
 | `socket.test.js` | 소켓 E2E: 입장/중복 닉네임, playerMoved 가 발신자에게 안 감, move:correct 는 본인에게만, 착석/상태/아바타, 채팅/이모지, 뽀모도로 동기화, 토큰 재접속·옛 소켓 정리·유예 만료 |
 | `latency.test.js` | TCP 지연 프록시(편도 300ms)로 두 명이 20Hz 이동 → 거부 0건, 상대·서버·새 입장자 모두 같은 최종 위치 |
-| `browser.test.js` | 헤드리스 Chrome 2탭(B 는 300ms 지연): 입장 → 키보드 이동이 상대 화면에 같은 위치 → 채팅(입력 중 이동 차단, HTML 미렌더) → 이모지 → 소파까지 걸어가 E 착석 → 소켓 강제 종료 후 이어받기 → 나가기. Chrome 이 없으면 건너뜀 (`CHROME_PATH`) |
+| `browser.test.js` | 헤드리스 Chrome 2탭(B 는 300ms 지연): 입장 → 키보드 이동이 상대 화면에 같은 위치 → 채팅(입력 중 이동 차단, HTML 미렌더) → 이모지 → 소파까지 걸어가 E 착석 → 강아지 옆까지 걸어가 E 쓰다듬기(두 탭 ❤️·채팅·같은 위치) → 소켓 강제 종료 후 이어받기 → 나가기. Chrome 이 없으면 건너뜀 (`CHROME_PATH`) |
 | `room.test.js`, `server.test.js`, `store.test.js` | 방 데이터·충돌·도달성, HTTP 엔드포인트·socket.io 클라이언트 서빙, 저장소 폴백 |
 
 ## 소켓 프로토콜
@@ -115,6 +120,12 @@ npm test
 | `pomodoro:start` / `pomodoro:stop` | `pomodoro { running, phase, startedAt, endsAt, startedBy, serverTime }` (자동 전환 때도) |
 | `time:ping { t0 }` | `{ t0, serverTime }` — 클라이언트가 왕복/2 를 빼서 시계 차이를 맞춤 |
 | `leave` | 즉시 정리 → `playerLeft` |
+| `npc:pet { id }` | 거리(56px)·3초 쿨다운 검사 → `npc:pet { id, by, playerId }` + 시스템 `chat { system: true, text }` |
+| `npc:name { id, name }` | 문자·숫자·공백·_- 8자 → `npc:name { id, name }` |
+
+강아지 NPC 는 서버가 행동을 정합니다 (`server/game/npc.js`): 라운지 러그 주변 어슬렁(40px/s) → 앉기 → 쿠션(24,9)에서 자기 → 가끔 방 안 산책(60px/s) 후 복귀.
+이동은 타일 중심을 잇는 BFS 경로라 벽·가구를 지키고(쿠션 타일만 예외), 플레이어와는 겹칩니다. 플레이어가 48px 안에 오면 멈춰서 그쪽을 보고 꼬리를 흔듭니다(`look`).
+`npc:update { id, kind, name, x, y, facing, state }` 를 걷는 동안 10Hz, 그 외엔 바뀔 때 + 1초 키프레임으로 보내고, 클라이언트는 100ms 늦게 선형 보간합니다. 입장 ack 의 `npcs` 에 현재 스냅샷이 들어 있습니다.
 
 그 밖에 `playerJoined`, `playerLeft { id, nickname, reason }`, `playerDisconnected`, `playerReconnected`, `roomCount { count }`.
 
@@ -161,6 +172,7 @@ npm test
 |---|---|---|
 | 의자·카운터·액자·작은 화분 | Kenney *Roguelike Indoors* | CC0 |
 | 캐릭터(치비 16×32, 4방향 4프레임 걷기) | ArMM1998 *Zelda-like tilesets and sprites* (OpenGameArt) | CC0 |
+| 강아지 NPC (16×24, 걷기 4방향×2·앉기·자기) | 이 저장소 오리지널 (`tools/dog_sprite.py`, 쿠션 위 푸들 그림 기준) | 프로젝트 라이선스 |
 | 나머지 대부분 (바닥·벽·창문·보드·소파·유리벽·커피머신·벤치 …) | 이 저장소에서 코드로 그린 오리지널 | 프로젝트 라이선스 |
 
 다시 빌드하려면 (Python 3.9+, Pillow):
@@ -168,6 +180,7 @@ npm test
 ```bash
 python tools/fetch_assets.py     # 원본 다운로드
 python tools/build_assets.py     # public/assets/tiles.png, tiles.json, player.png, player.json
+python tools/dog_sprite.py       # public/assets/dog.png, dog.json (원본 다운로드 불필요)
 ```
 
 ## 환경변수
@@ -190,3 +203,4 @@ Free 플랜은 15분 무요청 시 잠들고, 재시작 시 메모리 상태가 
 - Supabase 스키마와 공부 시간 기록 (앉아 있는 시간·뽀모도로 회차)
 - 유리문/입구 `doors` 로 방 이동, 실외 연결
 - 앉은 자세 프레임, 아바타 커스터마이즈 확장
+- 강아지 상호작용 확장 (간식 주기, 따라오기)

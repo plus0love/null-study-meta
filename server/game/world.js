@@ -3,7 +3,8 @@
  * 방 하나의 실시간 상태 (소켓과 무관한 순수 로직).
  *  - 플레이어 입장/퇴장, 닉네임 중복 처리, 세션 토큰으로 재접속
  *  - 이동 검증(예산 방식), 좌석 점유, 상태(공부/휴식), 채팅 검증, 뽀모도로
- * 이벤트: 'playerLeft' (유예 시간이 지나 정리될 때), 'pomodoro' (상태 변화)
+ * 이벤트: 'playerLeft' (유예 시간이 지나 정리될 때), 'pomodoro' (상태 변화),
+ *         'npcUpdate' (NPC 스냅샷, 10Hz), 'npcPet' ({ npc, by, nickname }), 'npcName' ({ npc, name })
  */
 const EventEmitter = require('node:events');
 const crypto = require('node:crypto');
@@ -12,6 +13,7 @@ const { normalizeNickname, uniqueNickname } = require('./nickname');
 const { SPEED, FEET_W, FEET_H, applyMove, maxBudget, canStand } = require('./movement');
 const { sanitizeChat, createRateLimiter, MAX_LEN: CHAT_MAX } = require('./chat');
 const { Pomodoro } = require('./pomodoro');
+const { DogNpc } = require('./npc');
 const { FACING_DELTA } = require('../rooms/build');
 
 const GRACE_MS = 30 * 1000; // 연결 끊김 후 플레이어를 유지하는 시간
@@ -26,7 +28,7 @@ function seatCenter(room, seat) {
 }
 
 class World extends EventEmitter {
-  constructor(room, { graceMs = GRACE_MS, pomodoro = {}, now = () => Date.now() } = {}) {
+  constructor(room, { graceMs = GRACE_MS, pomodoro = {}, npc = {}, now = () => Date.now() } = {}) {
     super();
     this.room = room;
     this.now = now;
@@ -38,6 +40,23 @@ class World extends EventEmitter {
     this.chatLimiter = createRateLimiter();
     this.pomodoro = new Pomodoro({ ...pomodoro, now });
     this.pomodoro.on('change', (snap, reason) => this.emit('pomodoro', snap, reason));
+
+    // 강아지 NPC: 접속 중인 플레이어 위치를 보고 행동한다. npc.autoStart === false 면 테스트가 직접 tick() 한다.
+    this.dog = new DogNpc(room, { ...npc, now });
+    this.dog.players = () => [...this.players.values()].filter((p) => p.connected);
+    this.dog.on('update', (snap) => this.emit('npcUpdate', snap));
+    this.dog.on('pet', ({ by, id }) => this.emit('npcPet', { npc: this.dog.id, by, playerId: id, name: this.dog.name }));
+    this.dog.on('name', (name) => this.emit('npcName', { npc: this.dog.id, name }));
+    this.npcs = [this.dog];
+    if (npc.autoStart !== false) this.dog.start();
+  }
+
+  npcSnapshots() {
+    return this.npcs.map((n) => n.snapshot());
+  }
+
+  npcById(id) {
+    return this.npcs.find((n) => n.id === id) || null;
   }
 
   get config() {
@@ -222,6 +241,7 @@ class World extends EventEmitter {
     for (const t of this.graceTimers.values()) clearTimeout(t);
     this.graceTimers.clear();
     this.pomodoro.dispose();
+    for (const n of this.npcs) n.dispose();
   }
 }
 

@@ -134,7 +134,7 @@ def build_objects():
     add("sofa_wide", V.sofa_wide(), seats=[(1, 1, "down"), (2, 1, "down"), (3, 1, "down"), (4, 1, "down")])
     add("round_table", V.round_table())
     add("standing_lamp", P.standing_lamp(), top=1)
-    add("dog_cushion", V.sprite_png("poodle_cushion.png"), top=1)  # 쿠션 위 푸들 (1x2, 윗칸은 top)
+    add("cushion", V.sprite_png("cushion.png"))  # 강아지 쿠션 (1x1). 푸들은 NPC 스프라이트(tools/dog_sprite.py)로 움직인다
 
     # 카페 코너
     add("menu_board_cream", V.menu_board_blank())

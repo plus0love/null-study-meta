@@ -62,6 +62,7 @@
       this.onPomodoro = () => {};
       this.onLeave = () => {};
       this.onRename = () => {};
+      this.onNpcName = () => {};
 
       this.bindHud();
       this.bindSidebar();
@@ -96,6 +97,12 @@
         if (window.confirm('스터디룸에서 나갈까요?')) this.onLeave();
       });
       $('btn-rename').addEventListener('click', () => this.onRename());
+      $('npc-name-form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const name = $('npc-name').value.trim();
+        if (name) this.onNpcName(name);
+      });
+      $('npc-name').addEventListener('keydown', (e) => e.stopPropagation());
       this.buildSwatches($('settings-avatars'), (i) => { this.setAvatar(i); this.onAvatar(i); });
 
       // 좌하단: 이모지 바 + 상태 토글
@@ -141,10 +148,22 @@
     }
 
     setSitHint(mode) {
-      // mode: null | 'sit' | 'stand'
+      // mode: null | 'sit' | 'stand' | 'pet'
       const h = $('sit-hint');
       h.hidden = !mode;
-      if (mode) h.querySelector('span').textContent = mode === 'sit' ? '앉기' : '일어나기';
+      if (mode) h.querySelector('span').textContent = { sit: '앉기', stand: '일어나기', pet: '쓰다듬기' }[mode] || mode;
+    }
+
+    /** 설정 팝오버의 강아지 이름 (입력 중이면 덮어쓰지 않는다) */
+    setNpcs(list) {
+      for (const n of list) this.setNpcName(n.id, n.name);
+    }
+
+    setNpcName(id, name) {
+      if (id !== 'dog') return;
+      const input = $('npc-name');
+      if (document.activeElement !== input) input.value = name;
+      input.placeholder = name;
     }
 
     setOffline(off) {
@@ -364,8 +383,8 @@
       for (const [id, p] of Object.entries(positions)) {
         const me = id === this.selfId;
         ctx.beginPath();
-        ctx.arc(p.x * S, (p.y - 16) * S, me ? 4 : 3, 0, Math.PI * 2);
-        ctx.fillStyle = me ? '#ffb85c' : '#f1e6d2';
+        ctx.arc(p.x * S, (p.y - 16) * S, me ? 4 : p.npc ? 2.5 : 3, 0, Math.PI * 2);
+        ctx.fillStyle = me ? '#ffb85c' : p.npc ? '#c48c52' : '#f1e6d2';
         ctx.fill();
         if (me) {
           ctx.strokeStyle = 'rgba(255,184,92,0.5)';

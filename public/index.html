@@ -59,7 +59,11 @@
           <label>닉네임</label>
           <div class="row"><span id="settings-nick" class="mono"></span><button class="btn small ghost" id="btn-rename">변경 (재입장)</button></div>
         </div>
-        <p class="hint">이동 방향키/WASD · 앉기 E · 채팅 Enter · 이모지 1~6</p>
+        <form class="field" id="npc-name-form" autocomplete="off">
+          <label for="npc-name">강아지 이름 (모두에게 적용)</label>
+          <div class="row"><input id="npc-name" type="text" maxlength="8" placeholder="사랑" /><button class="btn small" type="submit">저장</button></div>
+        </form>
+        <p class="hint">이동 방향키/WASD · 앉기/쓰다듬기 E · 채팅 Enter · 이모지 1~6</p>
       </div>
       <div class="popover" id="pop-members" hidden>
         <h3>멤버 <span class="muted" id="members-count"></span></h3>

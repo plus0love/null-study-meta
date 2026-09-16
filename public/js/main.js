@@ -18,11 +18,13 @@
   let room;
   let tiles;
   let player;
+  let dog;
   try {
-    [room, tiles, player] = await Promise.all([
+    [room, tiles, player, dog] = await Promise.all([
       fetch('/api/rooms/studyroom').then((r) => r.json()),
       fetch('/assets/tiles.json').then((r) => r.json()),
       fetch('/assets/player.json').then((r) => r.json()),
+      fetch('/assets/dog.json').then((r) => r.json()),
     ]);
   } catch (err) {
     fail(`방 데이터를 불러오지 못했습니다: ${err.message}`);
@@ -54,14 +56,15 @@
   });
   // 부팅 중에는 add() 가 인스턴스를 돌려주지 않으므로 직접 만들어 넘긴다
   const scene = new RoomScene();
-  await new Promise((onReady) => game.scene.add('room', scene, true, { room, tiles, player, onReady }));
+  await new Promise((onReady) => game.scene.add('room', scene, true, { room, tiles, player, dog, onReady }));
   ui.hideLoading();
 
   // ── 씬 → 네트워크/UI ───────────────────────────────────────────
   scene.hooks.onMove = (p) => net.move(p);
   scene.hooks.onSit = (seatId) => net.sit(seatId).then((r) => { if (!r.ok && r.error === 'occupied') ui.notify('이미 누가 앉아 있어요.'); }).catch(() => {});
   scene.hooks.onStand = () => net.stand().catch(() => {});
-  scene.hooks.onNearSeat = (seat) => ui.setSitHint(seat ? 'sit' : scene.me && scene.me.seated ? 'stand' : null);
+  scene.hooks.onInteract = (mode) => ui.setSitHint(mode || (scene.me && scene.me.seated ? 'stand' : null));
+  scene.hooks.onPet = (id) => net.petNpc(id).catch(() => {}); // 쿨다운/거리 거부는 조용히 무시
   scene.hooks.onEmojiKey = (i) => net.emoji(i).catch(() => {});
   scene.hooks.onChatKey = () => ui.focusChat();
   scene.hooks.onPositions = (map) => ui.drawMinimap(map);
@@ -90,6 +93,7 @@
     startLogin({ error: '' });
   };
   ui.onRename = () => ui.onLeave();
+  ui.onNpcName = (name) => net.setNpcName('dog', name).then((r) => { if (!r.ok) ui.notify(r.error || '이름을 바꾸지 못했어요.'); }).catch(() => {});
 
   // ── 네트워크 → 씬/UI ───────────────────────────────────────────
   const applySession = (ack) => {
@@ -103,6 +107,7 @@
     ui.setPomodoro(ack.pomodoro);
     ui.setOffline(false);
     ui.setSitHint(ack.self.seatId ? 'stand' : null);
+    ui.setNpcs(ack.npcs || []);
   };
   net.on('session', applySession);
   net.on('sessionLost', () => ui.addChat({ system: true, text: '서버가 다시 시작되어 새로 입장했어요.' }));
@@ -156,9 +161,13 @@
   });
   net.on('playerEmoji', (d) => scene.onEmoji(d));
   net.on('chat', (d) => {
+    if (d.system) return ui.addChat({ system: true, text: d.text });
     scene.onChat(d);
     ui.addChat({ nickname: d.nickname, text: d.text, ts: d.ts, self: scene.me && d.id === scene.me.id });
   });
+  net.on('npc:update', (d) => scene.upsertNpc(d));
+  net.on('npc:pet', (d) => scene.onNpcPet(d));
+  net.on('npc:name', (d) => { scene.onNpcName(d); ui.setNpcName(d.id, d.name); });
   net.on('pomodoro', (snap) => {
     const prev = ui.pomodoro;
     ui.setPomodoro(snap);

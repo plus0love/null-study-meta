@@ -11,6 +11,7 @@
   const FORWARD = [
     'playerJoined', 'playerLeft', 'playerMoved', 'move:correct', 'playerSat', 'playerStood', 'playerStatus',
     'playerAvatar', 'playerEmoji', 'chat', 'pomodoro', 'roomCount', 'playerDisconnected', 'playerReconnected',
+    'npc:update', 'npc:pet', 'npc:name',
   ];
 
   class Net {
@@ -119,9 +120,9 @@
       return Boolean(this.socket && this.socket.connected);
     }
 
-    /** 20Hz 위치 전송 — 끊긴 동안은 버리지 않고 쌓이는 것을 막기 위해 volatile 사용 */
+    /** 20Hz 위치 전송 — 끊긴 동안은 보내지 않는다 (쌓였다가 몰려가는 것 방지). volatile 은 마지막 '정지' 패킷까지 버릴 수 있어 쓰지 않는다. */
     move(payload) {
-      if (this.socket && this.socket.connected) this.socket.volatile.emit('move', payload);
+      if (this.socket && this.socket.connected) this.socket.emit('move', payload);
     }
 
     sit(seatId) { return this.ask('sit', { seatId }); }
@@ -134,6 +135,8 @@
     }
     chat(text) { return this.ask('chat', { text }); }
     emoji(index) { return this.ask('emoji', { index }); }
+    petNpc(id) { return this.ask('npc:pet', { id }); }
+    setNpcName(id, name) { return this.ask('npc:name', { id, name }); }
     pomodoroStart() { return this.ask('pomodoro:start', {}); }
     pomodoroStop() { return this.ask('pomodoro:stop', {}); }
 

@@ -5,7 +5,7 @@
  * 출력:
  *   game_spawn.png  — 입장 직후 화면 (HUD + 사이드바)
  *   game_multi.png  — 두 명 접속: 이동·채팅 말풍선·이모지
- *   game_seat.png   — 소파에 앉은 컷
+ *   game_seat.png   — 푸프에 앉은 컷
  *   game_full.png   — 맵 전체(1472x1088)를 한 장에 (목업 비교용)
  */
 const path = require('node:path');
@@ -66,15 +66,20 @@ async function hold(page, key, ms) {
   console.log('players', await a.evaluate(() => 1 + window.NSM.scene.remotes.size), `(headless fps ${fps})`);
   await shot(a, 'game_multi.png');
 
-  // 소파에 앉기: 스폰에서 소파 옆까지 한 타일씩 걸어간 뒤 E
+  // 푸프에 앉기: 스폰에서 푸프 옆까지 한 타일씩 걸어간 뒤 E (소파는 강아지가 옆에 있으면 E 가 쓰다듬기가 되므로 피한다)
   const room = await a.evaluate(() => window.NSM.room);
-  const seat = room.seats.find((s) => s.kind === 'sofa_wide');
+  const seat = room.seats.find((s) => s.kind === 'pouf_cream');
   const cur = await a.evaluate(feetTile);
   const dirs = pathTo(room, cur.tx, cur.ty, (x, y) => Math.hypot((seat.x + 0.5) * 32 - (x + 0.5) * 32, (seat.y + 1) * 32 - (y + 1) * 32) <= 46);
   await walk(a, dirs);
-  await a.waitForFunction(() => !document.getElementById('sit-hint').hidden && !window.NSM.scene.me.walking, { timeout: 5000 });
+  await a.waitForFunction(() => document.getElementById('sit-hint').textContent.includes('앉기') && !window.NSM.scene.me.walking, { timeout: 5000 });
   await a.keyboard.press('KeyE');
-  await a.waitForFunction(() => window.NSM.scene.me.seated, { timeout: 5000 });
+  try {
+    await a.waitForFunction(() => window.NSM.scene.me.seated, { timeout: 5000 });
+  } catch (e) {
+    console.log('앉기 실패', await a.evaluate(() => ({ x: window.NSM.scene.me.x, y: window.NSM.scene.me.y, near: window.NSM.scene.nearSeat && window.NSM.scene.nearSeat.id, npc: window.NSM.scene.nearNpc && window.NSM.scene.nearNpc.id, hint: document.getElementById('sit-hint').textContent, corr: window.NSM.net.corrections, active: document.activeElement.tagName, kb: window.NSM.scene.input.keyboard.enabled, pending: window.NSM.scene.sitPending })));
+    throw e;
+  }
   await sleep(500);
   console.log('seated', await a.evaluate(() => window.NSM.scene.me.seated));
   await shot(a, 'game_seat.png');

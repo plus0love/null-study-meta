@@ -16,7 +16,7 @@ const { attachSocket } = require('./socket');
 function assetVersion() {
   const dir = path.join(__dirname, '..', 'public', 'assets');
   const h = crypto.createHash('sha1');
-  for (const f of ['tiles.json', 'tiles.png', 'player.json', 'player.png']) h.update(fs.readFileSync(path.join(dir, f)));
+  for (const f of ['tiles.json', 'tiles.png', 'player.json', 'player.png', 'dog.json', 'dog.png']) h.update(fs.readFileSync(path.join(dir, f)));
   return h.digest('hex').slice(0, 10);
 }
 const ASSET_VERSION = assetVersion();

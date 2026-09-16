@@ -5,7 +5,8 @@
  * 닉네임·상태 아이콘·채팅 말풍선·이모지는 아바타 머리 위에 붙는다. 조명/비네팅 포함.
  *
  * 외부 연결은 scene.hooks 콜백으로만 한다 (main.js 가 채움):
- *   onMove(payload) · onSit(seatId) · onStand() · onNearSeat(seat|null) · onEmojiKey(i) · onChatKey() · onPositions(map)
+ *   onMove(payload) · onSit(seatId) · onStand() · onPet(npcId) · onInteract('sit'|'pet'|null) · onEmojiKey(i) · onChatKey() · onPositions(map)
+ * 강아지 NPC(서버가 행동 결정)는 npc:update 스냅샷을 100ms 늦게 선형 보간해 그린다.
  */
 (function () {
   'use strict';
@@ -177,6 +178,122 @@
     }
   }
 
+
+  // ── 강아지 NPC 표시 ─────────────────────────────────────────────────
+  class Npc {
+    constructor(scene, snap) {
+      this.scene = scene;
+      this.id = snap.id;
+      this.name = snap.name;
+      this.state = snap.state;
+      this.facing = snap.facing || 'down';
+      this.x = snap.x;
+      this.y = snap.y;
+      this.buffer = [];
+      this.animKey = null;
+      const meta = scene.dogMeta;
+      this.sprite = scene.add.sprite(snap.x, snap.y, 'dog', meta.rows.sit * meta.framesPerRow).setOrigin(0.5, 1);
+      this.shadow = scene.add.ellipse(snap.x, snap.y - 2, 18, 6, 0x000000, 0.25).setDepth(DEPTH.shadow);
+      this.nameText = scene.add.text(snap.x, snap.y + 2, snap.name, {
+        fontFamily: FONTS.sans, fontSize: '10px', fontStyle: 'bold', color: '#ffd9a8',
+        stroke: '#14111a', strokeThickness: 3, resolution: ZOOM,
+      }).setOrigin(0.5, 0).setDepth(DEPTH.label);
+      this.heart = null;
+      this.heartTimer = null;
+      this.setPosition(snap.x, snap.y);
+      this.applyState();
+    }
+
+    setPosition(x, y) {
+      this.x = x;
+      this.y = y;
+      const rx = Math.round(x);
+      const ry = Math.round(y);
+      this.sprite.setPosition(rx, ry).setDepth(DEPTH.avatar + y / this.scene.mapH);
+      this.shadow.setPosition(rx, ry - 2);
+      this.nameText.setPosition(rx, ry + 2);
+      if (this.heart) this.heart.setPosition(rx, ry - 52 - (this.heart.rise || 0));
+    }
+
+    setName(name) {
+      this.name = name;
+      this.nameText.setText(name);
+    }
+
+    /** 서버 스냅샷 반영: 위치는 보간 버퍼에, 상태/방향은 즉시 */
+    push(snap) {
+      this.buffer.push({ x: snap.x, y: snap.y, t: performance.now() });
+      if (this.buffer.length > 30) this.buffer.splice(0, this.buffer.length - 30);
+      if (snap.name !== this.name) this.setName(snap.name);
+      if (snap.state !== this.state || snap.facing !== this.facing) {
+        this.state = snap.state;
+        this.facing = snap.facing;
+        this.applyState();
+      }
+    }
+
+    applyState() {
+      const meta = this.scene.dogMeta;
+      const per = meta.framesPerRow;
+      const play = (key) => {
+        if (this.animKey === key) return;
+        this.animKey = key;
+        this.sprite.anims.play(key, true);
+      };
+      const still = (frame) => {
+        this.animKey = null;
+        this.sprite.anims.stop();
+        this.sprite.setFrame(frame);
+      };
+      switch (this.state) {
+        case 'walk': play(`dog-walk-${this.facing}`); break;
+        case 'look': play('dog-wag'); break; // 앉아서 꼬리 흔들기
+        case 'sleep': play('dog-sleep'); break;
+        case 'sit': still(meta.rows.sit * per); break;
+        default: still(meta.rows[this.facing] * per); // idle: 서서 정지
+      }
+    }
+
+    /** INTERP_DELAY 만큼 과거 시각을 두 스냅샷 사이에서 선형 보간 */
+    update() {
+      const buf = this.buffer;
+      if (!buf.length) return;
+      const rt = performance.now() - INTERP_DELAY;
+      while (buf.length >= 2 && buf[1].t <= rt) buf.shift();
+      const s0 = buf[0];
+      const s1 = buf[1];
+      if (s1 && s1.t > s0.t) {
+        const k = Phaser.Math.Clamp((rt - s0.t) / (s1.t - s0.t), 0, 1);
+        this.setPosition(s0.x + (s1.x - s0.x) * k, s0.y + (s1.y - s0.y) * k);
+      } else this.setPosition(s0.x, s0.y);
+    }
+
+    showHeart() {
+      this.clearHeart();
+      const t = this.scene.add.text(0, 0, '❤️', { fontSize: '16px', resolution: ZOOM }).setOrigin(0.5, 1).setDepth(DEPTH.bubble);
+      t.rise = 0;
+      this.heart = t;
+      this.setPosition(this.x, this.y);
+      this.scene.tweens.add({ targets: t, rise: 10, duration: 400, ease: 'Sine.easeOut', onUpdate: () => this.setPosition(this.x, this.y) });
+      this.scene.tweens.add({ targets: t, alpha: 0, delay: 700, duration: 300 });
+      this.heartTimer = this.scene.time.delayedCall(1000, () => this.clearHeart());
+    }
+
+    clearHeart() {
+      if (this.heartTimer) this.heartTimer.remove(false);
+      this.heartTimer = null;
+      if (this.heart) this.heart.destroy();
+      this.heart = null;
+    }
+
+    destroy() {
+      this.clearHeart();
+      this.sprite.destroy();
+      this.shadow.destroy();
+      this.nameText.destroy();
+    }
+  }
+
   // ── 씬 ─────────────────────────────────────────────────────────────
   class RoomScene extends Phaser.Scene {
     constructor() {
@@ -187,8 +304,11 @@
       this.room = data.room;
       this.tilesMeta = data.tiles;
       this.playerMeta = data.player;
+      this.dogMeta = data.dog;
       this.onReady = data.onReady || (() => {});
-      this.hooks = { onMove() {}, onSit() {}, onStand() {}, onNearSeat() {}, onEmojiKey() {}, onChatKey() {}, onPositions() {} };
+      this.hooks = { onMove() {}, onSit() {}, onStand() {}, onPet() {}, onInteract() {}, onEmojiKey() {}, onChatKey() {}, onPositions() {} };
+      this.npcs = new Map();
+      this.nearNpc = null;
       this.config = { speed: 150, feetW: 18, feetH: 10 };
       this.me = null;
       this.remotes = new Map();
@@ -209,6 +329,7 @@
         frameWidth: this.playerMeta.frameWidth,
         frameHeight: this.playerMeta.frameHeight,
       });
+      this.load.spritesheet('dog', `/assets/dog.png${v}`, { frameWidth: this.dogMeta.frameWidth, frameHeight: this.dogMeta.frameHeight });
     }
 
     create() {
@@ -222,6 +343,7 @@
       this.buildLabels();
       this.buildLightTextures();
       this.buildAvatarTextures();
+      this.buildDogAnims();
       this.buildLighting();
       this.syncVignette();
       this.setupWindowTwinkle();
@@ -262,8 +384,10 @@
       this.lastSent = null;
       this.correction = null;
       this.nearSeat = null;
-      this.hooks.onNearSeat(null);
+      this.nearNpc = null;
+      this.hooks.onInteract(null);
       for (const p of ack.players) this.addRemote(p);
+      for (const n of ack.npcs || []) this.upsertNpc(n);
       const cam = this.cameras.main;
       cam.startFollow(this.me.sprite, true, 0.15, 0.15);
       cam.centerOn(this.me.x, this.me.y);
@@ -272,6 +396,8 @@
     clearSession() {
       for (const r of this.remotes.values()) r.avatar.destroy();
       this.remotes.clear();
+      for (const n of this.npcs.values()) n.destroy();
+      this.npcs.clear();
       if (this.me) this.me.destroy();
       this.me = null;
       this.cameras.main.stopFollow();
@@ -357,6 +483,60 @@
       if (r) r.avatar.sprite.setAlpha(connected ? 1 : 0.5);
     }
 
+    // ── NPC ─────────────────────────────────────────────────────────
+    upsertNpc(snap) {
+      let n = this.npcs.get(snap.id);
+      if (!n) {
+        n = new Npc(this, snap);
+        this.npcs.set(snap.id, n);
+      }
+      n.push(snap);
+    }
+
+    onNpcPet(d) {
+      const n = this.npcs.get(d.id);
+      if (n) n.showHeart();
+    }
+
+    onNpcName(d) {
+      const n = this.npcs.get(d.id);
+      if (n) n.setName(d.name);
+    }
+
+    findNearNpc() {
+      if (!this.me) return null;
+      let best = null;
+      let bestD = SIT_RANGE;
+      for (const n of this.npcs.values()) {
+        const d = Math.hypot(n.x - this.me.x, n.y - this.me.y);
+        if (d < bestD) {
+          bestD = d;
+          best = n;
+        }
+      }
+      return best;
+    }
+
+    npcCloser() {
+      const T = this.T;
+      const ds = Math.hypot((this.nearSeat.x + 0.5) * T - this.me.x, (this.nearSeat.y + 1) * T - this.me.y);
+      const dn = Math.hypot(this.nearNpc.x - this.me.x, this.nearNpc.y - this.me.y);
+      return dn < ds;
+    }
+
+    buildDogAnims() {
+      const meta = this.dogMeta;
+      const per = meta.framesPerRow;
+      const mk = (key, row, frameRate) => {
+        if (this.anims.exists(key)) return;
+        const start = meta.rows[row] * per;
+        this.anims.create({ key, frames: this.anims.generateFrameNumbers('dog', { start, end: start + per - 1 }), frameRate, repeat: -1 });
+      };
+      for (const dir of ['down', 'right', 'up', 'left']) mk(`dog-walk-${dir}`, dir, 5);
+      mk('dog-wag', 'sit', 6);
+      mk('dog-sleep', 'sleep', 1.2);
+    }
+
     // ── 좌석 ────────────────────────────────────────────────────────
     findNearSeat() {
       if (!this.me) return null;
@@ -378,6 +558,7 @@
     toggleSeat() {
       if (!this.me) return;
       if (this.me.seated) this.hooks.onStand();
+      else if (this.nearNpc && (!this.nearSeat || this.npcCloser())) this.hooks.onPet(this.nearNpc.id);
       else if (this.nearSeat && !this.sitPending) {
         // 앉기 요청 전에 마지막 위치를 보내고, 응답이 올 때까지는 위치 전송을 멈춘다 (착석 뒤 도착한 move 가 거부되지 않도록)
         this.flushMove(false);
@@ -407,19 +588,23 @@
         if (this.seatAcc >= 150) {
           this.seatAcc = 0;
           const s = this.me.seated ? null : this.findNearSeat();
-          if ((s && s.id) !== (this.nearSeat && this.nearSeat.id)) {
+          const n = this.me.seated ? null : this.findNearNpc();
+          if ((s && s.id) !== (this.nearSeat && this.nearSeat.id) || (n && n.id) !== (this.nearNpc && this.nearNpc.id)) {
             this.nearSeat = s;
-            this.hooks.onNearSeat(s);
+            this.nearNpc = n;
+            this.hooks.onInteract(n && (!s || this.npcCloser()) ? 'pet' : s ? 'sit' : null);
           }
         }
       }
       this.updateRemotes();
+      for (const n of this.npcs.values()) n.update();
       this.posAcc += delta;
       if (this.posAcc >= 100) {
         this.posAcc = 0;
         const map = {};
         if (this.me) map[this.me.id] = { x: this.me.x, y: this.me.y };
         for (const [id, r] of this.remotes) map[id] = { x: r.avatar.x, y: r.avatar.y };
+        for (const [id, n] of this.npcs) map[id] = { x: n.x, y: n.y, npc: true };
         this.hooks.onPositions(map);
       }
     }
