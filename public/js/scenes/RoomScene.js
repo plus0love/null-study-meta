@@ -15,6 +15,7 @@
  *  - 화면(room.screens): 연결된 좌석이 점유되면 모니터/노트북이 켜진다 (서버 좌석 상태 기준).
  *  - 상호작용 지점(room.interactables): 커피머신·음악 패널 앞에서 E.
  *  - 뽀모도로 전환: flashLights() — 창문·펜던트가 1초 밝아졌다 돌아온다.
+ * 4단계: 앉아 있고 오늘 목표가 있으면 발 아래에 작은 팻말(목표 텍스트, 말줄임) + 진행 바(오늘 누적/목표). 목표 달성 시 머리 위 🎉 3초.
  */
 (function () {
   'use strict';
@@ -36,6 +37,7 @@
   ];
 
   const DEPTH = { sky: 0.5, stars: 0.6, windowDay: 1.5, zone: 2, screen: 2.5, shadow: 9, avatar: 10, label: 25, bubble: 26, darkness: 30, glow: 31 };
+  const SIGN_MAX_W = 96; // 팻말 최대 폭(px) — 넘치면 말줄임
   const DAYLIGHT_TICK = 1000; // ms — 시간대 가중치 재계산 주기
 
   // ── 아바타 (내 것/원격 공용 표시 요소) ────────────────────────────────
@@ -49,6 +51,8 @@
       this.status = p.status || 'rest';
       this.seated = Boolean(p.seatId);
       this.listening = Boolean(p.listening);
+      this.goal = p.goal || null; // { text, targetMinutes }
+      this.progress = 0; // 오늘 누적 / 목표 (0..1)
       this.x = p.x;
       this.y = p.y;
       this.walking = false;
@@ -66,9 +70,73 @@
       this.chatTimer = null;
       this.emojiText = null;
       this.emojiTimer = null;
+      this.sign = null; // 목표 팻말 (앉아 있을 때만)
       this.setPosition(p.x, p.y);
       this.setFacing(this.facing);
       this.setSeated(this.seated);
+    }
+
+    // ── 목표 팻말 ────────────────────────────────────────────────────
+    setGoal(goal) {
+      this.goal = goal && (goal.text || goal.targetMinutes) ? goal : null;
+      this.syncSign();
+    }
+
+    setProgress(ratio) {
+      this.progress = Phaser.Math.Clamp(Number(ratio) || 0, 0, 1);
+      if (this.sign) this.drawSignBar();
+    }
+
+    /** 팻말은 앉아 있고 목표가 있을 때만 */
+    syncSign() {
+      const want = this.seated && this.goal;
+      if (!want) {
+        if (this.sign) this.sign.destroy();
+        this.sign = null;
+        return;
+      }
+      if (this.sign) this.sign.destroy();
+      const scene = this.scene;
+      const label = this.goal.text || `${this.goal.targetMinutes}분 목표`;
+      const t = scene.add.text(0, 0, label, { fontFamily: FONTS.sans, fontSize: '9px', color: '#3b2f22', resolution: ZOOM, align: 'center' }).setOrigin(0.5, 0);
+      // 넘치면 말줄임
+      if (t.width > SIGN_MAX_W - 8) {
+        let s = label;
+        while (s.length > 1 && t.width > SIGN_MAX_W - 8) {
+          s = s.slice(0, -1);
+          t.setText(`${s}…`);
+        }
+      }
+      const w = Math.ceil(t.width) + 8;
+      const h = Math.ceil(t.height) + 9;
+      const g = scene.add.graphics();
+      g.fillStyle(0xf1e6d2, 0.95);
+      g.lineStyle(1, 0x8a6a52, 0.9);
+      g.fillRoundedRect(-w / 2, 0, w, h, 3);
+      g.strokeRoundedRect(-w / 2, 0, w, h, 3);
+      g.fillStyle(0x8a6a52, 1);
+      g.fillRect(-1, -3, 2, 3); // 꽂이
+      t.setPosition(0, 2);
+      const bar = scene.add.graphics();
+      const c = scene.add.container(0, 0, [g, t, bar]).setDepth(DEPTH.label);
+      c.signW = w;
+      c.signH = h;
+      c.bar = bar;
+      this.sign = c;
+      this.drawSignBar();
+      this.setPosition(this.x, this.y);
+    }
+
+    drawSignBar() {
+      const c = this.sign;
+      if (!c) return;
+      const bw = c.signW - 8;
+      const y = c.signH - 4;
+      c.bar.clear();
+      c.bar.fillStyle(0xd9c29d, 1);
+      c.bar.fillRect(-bw / 2, y, bw, 2);
+      c.bar.fillStyle(this.progress >= 1 ? 0x6faa62 : 0xffb85c, 1);
+      c.bar.fillRect(-bw / 2, y, Math.round(bw * this.progress), 2);
     }
 
     makeBubble(text, { pad = 6, fontSize = 11, radius = 7, maxWidth = 0, fill = 0x1c1824, stroke = 0xffb85c } = {}) {
@@ -99,6 +167,7 @@
       this.sprite.setPosition(rx, ry).setDepth(DEPTH.avatar + y / this.scene.mapH);
       this.shadow.setPosition(rx, ry - 2);
       this.name.setPosition(rx, ry + 3);
+      if (this.sign) this.sign.setPosition(rx, ry + 19);
       this.statusBubble.setPosition(rx + 16, ry - 66);
       if (this.chatBubble) this.chatBubble.setPosition(rx, ry - 78 - this.chatBubble.bubbleH / 2);
       if (this.emojiText) this.emojiText.setPosition(rx, ry - 74 - (this.emojiText.rise || 0));
@@ -130,6 +199,7 @@
         // 앉은 자세 프레임이 없으므로 아래 방향 정지 프레임
         this.sprite.setFrame(this.scene.idleFrame('down'));
       } else this.sprite.setFrame(this.scene.idleFrame(this.facing));
+      this.syncSign();
     }
 
     setStatus(s) {
@@ -170,15 +240,15 @@
       this.chatBubble = null;
     }
 
-    showEmoji(emoji) {
+    showEmoji(emoji, duration = 2000) {
       this.clearEmoji();
       const t = this.scene.add.text(0, 0, emoji, { fontSize: '18px', resolution: ZOOM }).setOrigin(0.5, 1).setDepth(DEPTH.bubble);
       t.rise = 0;
       this.emojiText = t;
       this.setPosition(this.x, this.y);
       this.scene.tweens.add({ targets: t, rise: 10, duration: 500, ease: 'Sine.easeOut', onUpdate: () => this.setPosition(this.x, this.y) });
-      this.scene.tweens.add({ targets: t, alpha: 0, delay: 1500, duration: 500 });
-      this.emojiTimer = this.scene.time.delayedCall(2000, () => this.clearEmoji());
+      this.scene.tweens.add({ targets: t, alpha: 0, delay: duration - 500, duration: 500 });
+      this.emojiTimer = this.scene.time.delayedCall(duration, () => this.clearEmoji());
     }
 
     clearEmoji() {
@@ -191,6 +261,7 @@
     destroy() {
       this.clearChat();
       this.clearEmoji();
+      if (this.sign) this.sign.destroy();
       this.sprite.destroy();
       this.shadow.destroy();
       this.name.destroy();
@@ -501,6 +572,30 @@
     onListening(d) {
       const a = this.avatarOf(d.id);
       if (a) a.setListening(d.listening);
+    }
+
+    onGoal(d) {
+      const a = this.avatarOf(d.id);
+      if (a) a.setGoal(d.goal);
+    }
+
+    /** 랭킹 통계(닉네임 → 오늘 누적 초)로 팻말 진행 바 갱신 */
+    applyProgress(rows) {
+      const by = new Map(rows.map((r) => [r.nickname, r.todaySeconds]));
+      const all = [this.me, ...[...this.remotes.values()].map((r) => r.avatar)].filter(Boolean);
+      for (const a of all) {
+        if (!a.goal || !a.goal.targetMinutes) continue;
+        a.setProgress((by.get(a.nickname) || 0) / (a.goal.targetMinutes * 60));
+      }
+    }
+
+    /** 목표 달성: 머리 위 🎉 3초 */
+    onGoalReached(d) {
+      const a = this.avatarOf(d.id);
+      if (a) {
+        a.showEmoji('🎉', 3000);
+        a.setProgress(1);
+      }
     }
 
     onStatus(d) {

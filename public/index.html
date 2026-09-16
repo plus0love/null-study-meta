@@ -34,6 +34,8 @@
       <symbol id="i-leaf" viewBox="0 0 24 24"><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.5 20 2c1 2 2 4.2 2 8 0 5.5-4.8 10-10 10z"/><path d="M2 21c0-3 1.9-5.5 5-6.5"/></symbol>
       <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
       <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+      <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></symbol>
+      <symbol id="i-trophy" viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0zM7 6H4a2 2 0 0 0 0 4h3M17 6h3a2 2 0 0 1 0 4h-3"/></symbol>
       <symbol id="i-wifi-off" viewBox="0 0 24 24"><path d="m1 1 22 22M16.7 11.1a10 10 0 0 1 2.1 1.6M5 12.6a10 10 0 0 1 5.2-2.7M10.7 5.1a16 16 0 0 1 11.3 3.6M1.4 8.7a16 16 0 0 1 4.4-3M8.5 16.4a5 5 0 0 1 7 0M12 20h.01"/></symbol>
     </defs>
   </svg>
@@ -96,12 +98,23 @@
     </div>
 
     <div id="banner-offline" hidden><svg class="icon"><use href="#i-wifi-off"/></svg><span>재접속 중…</span></div>
+    <div id="toast" hidden></div>
   </div>
 
   <aside id="sidebar">
     <section class="card" id="card-minimap">
       <header><svg class="icon"><use href="#i-map"/></svg><h2>미니맵</h2></header>
       <canvas id="minimap" width="322" height="238"></canvas>
+    </section>
+
+    <section class="card" id="card-goal">
+      <header><svg class="icon"><use href="#i-target"/></svg><h2>오늘의 목표</h2><span class="muted" id="goal-progress"></span></header>
+      <form id="goal-form" class="goal-form" autocomplete="off">
+        <input id="goal-text" type="text" maxlength="20" placeholder="목표 한 줄 (20자)" />
+        <select id="goal-minutes" title="목표 시간"></select>
+        <button class="btn small" type="submit">저장</button>
+      </form>
+      <div class="goal-track"><div id="goal-bar"></div></div>
     </section>
 
     <section class="card" id="card-todo">
@@ -128,6 +141,15 @@
           <button class="btn" id="btn-pomo"><svg class="icon"><use href="#i-play"/></svg><span>시작</span></button>
         </div>
       </div>
+    </section>
+
+    <section class="card" id="card-rank">
+      <header>
+        <svg class="icon"><use href="#i-trophy"/></svg><h2>랭킹</h2>
+        <div id="rank-tabs" class="tabs"><button type="button" data-tab="today" class="active">오늘</button><button type="button" data-tab="week">이번 주</button></div>
+      </header>
+      <ul class="list" id="rank-list"></ul>
+      <div class="rank-foot"><span id="rank-store" class="store-badge">저장소 확인 중…</span></div>
     </section>
 
     <section class="card" id="card-music" hidden>

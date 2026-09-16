@@ -6,6 +6,18 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
+
+// 프로젝트 루트 .env 를 Node 내장 파서로 읽는다 (dotenv 불필요). 이미 있는 환경변수는 덮어쓰지 않는다.
+// 테스트(test/setup.js 가 STORE=memory 강제)에서는 실제 키가 프로세스에 들어오지 않도록 읽지 않는다.
+const ENV_FILE = path.join(__dirname, '..', '.env');
+if (process.env.STORE !== 'memory' && fs.existsSync(ENV_FILE)) {
+  try {
+    process.loadEnvFile(ENV_FILE);
+  } catch (err) {
+    console.warn(`[env] .env 를 읽지 못했습니다: ${err.message}`);
+  }
+}
+
 const express = require('express');
 
 const { createStore } = require('./store');
@@ -89,17 +101,25 @@ async function startServer({ port = Number(process.env.PORT) || 3000, env = proc
   const ctx = { store, world: null, fetch: fetcher };
   const app = createApp(ctx);
   const server = http.createServer(app);
-  const { io, world } = attachSocket(server, { room: getStudyRoom(), world: worldOpts, log });
+  const { io, world } = attachSocket(server, { room: getStudyRoom(), world: { store, tz: env.STATS_TZ || undefined, log, ...worldOpts }, log });
   ctx.world = world;
+  await world.init(); // 강아지 이름 · 저장된 공부 합계
   await new Promise((resolve) => server.listen(port, resolve));
   const actualPort = server.address().port;
-  log.log(`[server] http://localhost:${actualPort}  store=${store.kind}  node=${process.version}`);
+  log.log(`[server] http://localhost:${actualPort}  store=${store.kind}${store.kind === 'memory' ? ' (영구 저장 없음)' : ''}  tz=${world.tz}  node=${process.version}`);
 
-  const close = () =>
-    new Promise((resolve) => {
-      world.dispose();
-      io.close(() => store.close().then(resolve, resolve));
-    });
+  // 종료: 진행 중인 공부 세션을 먼저 저장(SIGTERM 포함)하고 소켓·저장소를 닫는다
+  let closing = null;
+  const close = () => {
+    if (!closing) {
+      closing = (async () => {
+        await world.dispose();
+        await new Promise((resolve) => io.close(() => resolve()));
+        await store.close().catch(() => {});
+      })();
+    }
+    return closing;
+  };
   return { app, server, io, world, store, port: actualPort, close };
 }
 

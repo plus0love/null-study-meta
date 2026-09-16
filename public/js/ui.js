@@ -2,7 +2,8 @@
 /**
  * HUD + 사이드바 (DOM). 게임 씬/네트워크와는 콜백(this.on*)으로만 연결한다.
  *  - 좌상단: 방 이름 + 인원 + (뽀모도로 진행 중) 남은 시간 배지   우상단: 설정·멤버·알림·♪·나가기 (팝오버)
- *  - 사이드바: 미니맵 · 오늘의 할 일(localStorage) · 뽀모도로(원형 게이지) · 유튜브(IFrame API, 접기) · 채팅
+ *  - 사이드바: 미니맵 · 오늘의 목표 · 오늘의 할 일(서버 저장, 이월 배지) · 뽀모도로(원형 게이지) · 랭킹(오늘/이번 주) · 유튜브 · 채팅
+ *  - 토스트: 출석 스트릭 ("N일 연속 출석 🔥") 등 짧은 안내
  *  - 좌하단: 이모지 바(1~6) · 상태 토글 · E 힌트(앉기/쓰다듬기/커피 마시기/음악 듣기)
  *  - 입장 모달, 재접속 배너
  *  - 설정: 아바타 · 닉네임 · 강아지 이름 · 항상 밤 · 알림 소리 · 브라우저 알림 허용
@@ -15,7 +16,8 @@
   const STATUS_LABEL = { study: '공부 중', rest: '휴식 중', coffee: '☕ 휴식 중' };
   const STATUS_ICON = { study: 'i-book', rest: 'i-leaf', coffee: 'i-coffee' };
   const HINT_LABEL = { sit: '앉기', stand: '일어나기', pet: '쓰다듬기', coffee: '커피 마시기', music: '음악 듣기' };
-  const TODO_KEY = 'nsm.todos';
+  const TODO_KEY = 'nsm.todos'; // 3단계까지의 localStorage 할 일 — 첫 접속 때 서버로 옮기고 지운다
+  const GOAL_MINUTES = Array.from({ length: 16 }, (_, i) => (i + 1) * 30); // 30분 ~ 8시간
   const LS_NIGHT = 'nsm.alwaysNight';
   const LS_RECENT = 'nsm.music.recent';
   const MINIMAP_SCALE = 7; // 타일당 px (46x34 → 322x238)
@@ -74,6 +76,17 @@
       this.onNotifyPerm = () => {};
       this.onListening = () => {};
       this.onUse = () => {};
+      this.onTodoAdd = () => {};
+      this.onTodoToggle = () => {};
+      this.onTodoDelete = () => {};
+      this.onGoalSave = () => {};
+
+      this.todos = [];
+      this.goal = null; // { text, targetMinutes }
+      this.todaySeconds = 0;
+      this.rankTab = 'today';
+      this.stats = null;
+      this.toastTimer = null;
 
       // 유튜브 카드 상태
       this.yt = { player: null, ready: false, apiPromise: null, current: null, userPlayed: false, title: '', playing: false };
@@ -81,6 +94,7 @@
       this.bindHud();
       this.bindSidebar();
       this.bindMusic();
+      this.bindGoalAndRank();
       this.buildMinimapBase();
       this.renderTodos();
       setInterval(() => this.tickPomodoro(), 250);
@@ -220,6 +234,7 @@
     // ── 멤버 / 알림 ──────────────────────────────────────────────────
     setSelf(id, nickname) {
       this.selfId = id;
+      this.selfNickname = nickname;
       $('settings-nick').textContent = nickname;
     }
 
@@ -280,11 +295,8 @@
         const input = $('todo-input');
         const text = input.value.trim();
         if (!text) return;
-        const todos = this.loadTodos();
-        todos.push({ id: Date.now().toString(36), text, done: false });
-        this.saveTodos(todos);
         input.value = '';
-        this.renderTodos();
+        this.onTodoAdd(text);
       });
 
       $('btn-pomo').addEventListener('click', () => this.onPomodoro(this.pomodoro && this.pomodoro.running ? 'stop' : 'start'));
@@ -306,6 +318,7 @@
 
     focusChat() {
       $('chat-input').focus();
+      $('card-chat').scrollIntoView({ block: 'nearest' });
     }
 
     /** 입력창에 포커스가 있으면 게임 키 입력을 막아야 한다 */
@@ -314,16 +327,25 @@
       return Boolean(a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA'));
     }
 
-    loadTodos() {
-      try { return JSON.parse(localStorage.getItem(TODO_KEY) || '[]'); } catch (_) { return []; }
+    /** 예전 localStorage 할 일을 꺼내고 지운다 (서버로 이전용). 없으면 [] */
+    takeLegacyTodos() {
+      try {
+        const list = JSON.parse(localStorage.getItem(TODO_KEY) || '[]');
+        localStorage.removeItem(TODO_KEY);
+        return Array.isArray(list) ? list.filter((t) => t && t.text) : [];
+      } catch (_) {
+        return [];
+      }
     }
 
-    saveTodos(todos) {
-      try { localStorage.setItem(TODO_KEY, JSON.stringify(todos)); } catch (_) { /* ignore */ }
+    /** 서버에서 받은 할 일 목록 (이월 carried 는 맨 위) */
+    setTodos(list) {
+      this.todos = Array.isArray(list) ? list : [];
+      this.renderTodos();
     }
 
     renderTodos() {
-      const todos = this.loadTodos();
+      const todos = this.todos;
       const list = $('todo-list');
       list.innerHTML = '';
       const done = todos.filter((t) => t.done).length;
@@ -333,13 +355,118 @@
         return;
       }
       for (const t of todos) {
-        const li = el('li', { class: t.done ? 'done' : '' }, [
-          el('button', { class: 'check', type: 'button', title: '완료', onclick: () => { t.done = !t.done; this.saveTodos(todos); this.renderTodos(); } }, [svgIcon('i-check')]),
+        const li = el('li', { class: `${t.done ? 'done' : ''} ${t.carried ? 'carried' : ''}` }, [
+          el('button', { class: 'check', type: 'button', title: t.done ? '되돌리기' : '완료', onclick: () => this.onTodoToggle(t.id, !t.done) }, [svgIcon('i-check')]),
+          t.carried ? el('span', { class: 'badge-carried', text: '이월', title: '어제 못 끝낸 할 일' }) : null,
           el('span', { class: 'text', text: t.text }),
-          el('button', { class: 'del', type: 'button', title: '삭제', onclick: () => { this.saveTodos(todos.filter((x) => x.id !== t.id)); this.renderTodos(); } }, [svgIcon('i-x')]),
+          el('button', { class: 'del', type: 'button', title: '삭제', onclick: () => this.onTodoDelete(t.id) }, [svgIcon('i-x')]),
         ]);
         list.appendChild(li);
       }
+    }
+
+    // ── 오늘의 목표 / 랭킹 / 토스트 ─────────────────────────────────
+    bindGoalAndRank() {
+      const sel = $('goal-minutes');
+      for (const m of GOAL_MINUTES) sel.appendChild(el('option', { value: String(m), text: fmtMinutes(m) }));
+      sel.value = '60';
+      $('goal-form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        this.onGoalSave({ text: $('goal-text').value.trim(), targetMinutes: Number(sel.value) });
+      });
+      $('goal-text').addEventListener('keydown', (e) => { if (e.key === 'Escape') e.target.blur(); e.stopPropagation(); });
+      for (const b of document.querySelectorAll('#rank-tabs button')) {
+        b.addEventListener('click', () => {
+          this.rankTab = b.dataset.tab;
+          this.renderRank();
+        });
+      }
+    }
+
+    /** 오늘 목표 (입장 ack / 저장 응답). null 이면 없음 */
+    setGoal(goal) {
+      this.goal = goal && (goal.text || goal.targetMinutes) ? goal : null;
+      const input = $('goal-text');
+      if (document.activeElement !== input) input.value = this.goal ? this.goal.text || '' : '';
+      if (this.goal && this.goal.targetMinutes) $('goal-minutes').value = String(this.goal.targetMinutes);
+      this.renderGoal();
+    }
+
+    /** 오늘 누적 초 (랭킹 통계에서) → 목표 카드 진행 */
+    setTodaySeconds(sec) {
+      this.todaySeconds = Math.max(0, Number(sec) || 0);
+      this.renderGoal();
+    }
+
+    renderGoal() {
+      const bar = $('goal-bar');
+      const txt = $('goal-progress');
+      if (!this.goal || !this.goal.targetMinutes) {
+        bar.style.width = '0%';
+        bar.classList.remove('done');
+        txt.textContent = this.todaySeconds ? `오늘 ${fmtDuration(this.todaySeconds)} 공부 · 목표를 정해 보세요` : '목표 시간을 정하면 팻말과 진행 바가 생겨요';
+        return;
+      }
+      const ratio = Math.min(1, this.todaySeconds / (this.goal.targetMinutes * 60));
+      bar.style.width = `${Math.round(ratio * 100)}%`;
+      bar.classList.toggle('done', ratio >= 1);
+      txt.textContent = `${fmtDuration(this.todaySeconds)} / ${fmtMinutes(this.goal.targetMinutes)}${ratio >= 1 ? ' · 달성 🎉' : ''}`;
+    }
+
+    /** 랭킹 통계 { store, rows: [{ nickname, todaySeconds, weekSeconds, streak, live, online }] } */
+    setStats(res) {
+      this.stats = res;
+      const badge = $('rank-store');
+      const sb = res.store === 'supabase';
+      badge.textContent = sb ? '☁ Supabase' : '⚠ 메모리 (서버 재시작 시 사라짐)';
+      badge.classList.toggle('warn', !sb);
+      const me = this.selfNickname ? res.rows.find((r) => r.nickname === this.selfNickname) : null;
+      this.setTodaySeconds(me ? me.todaySeconds : 0);
+      this.renderRank();
+    }
+
+    renderRank() {
+      const list = $('rank-list');
+      list.innerHTML = '';
+      for (const b of document.querySelectorAll('#rank-tabs button')) b.classList.toggle('active', b.dataset.tab === this.rankTab);
+      if (!this.stats) return;
+      const key = this.rankTab === 'week' ? 'weekSeconds' : 'todaySeconds';
+      const rows = this.stats.rows.filter((r) => r[key] > 0 || r.live || r.online).sort((a, b) => b[key] - a[key] || a.nickname.localeCompare(b.nickname));
+      if (!rows.length) {
+        list.appendChild(el('li', { class: 'empty', text: this.rankTab === 'week' ? '이번 주 기록이 아직 없어요.' : '오늘 기록이 아직 없어요. 자리에 앉아 공부를 시작해 보세요.' }));
+        return;
+      }
+      rows.slice(0, 20).forEach((r, i) => {
+        list.appendChild(el('li', { class: `${r.nickname === this.selfNickname ? 'me' : ''} ${r.online ? '' : 'offline'}` }, [
+          el('span', { class: 'rank-no', text: String(i + 1) }),
+          el('span', { class: `dot-live ${r.live ? 'on' : ''}`, title: r.live ? '공부 중' : '' }),
+          el('span', { class: 'name', text: r.nickname }),
+          r.streak > 0 ? el('span', { class: 'streak', text: `🔥${r.streak}`, title: `${r.streak}일 연속 출석` }) : null,
+          el('span', { class: 'time mono', text: fmtDuration(r[key]) }),
+        ]));
+      });
+    }
+
+    /** 짧은 안내 토스트 (3초). 연달아 오면 차례로 보여준다 */
+    toast(text, ms = 3000) {
+      this.toastQueue = this.toastQueue || [];
+      this.toastQueue.push({ text, ms });
+      if (!this.toastTimer) this.nextToast();
+    }
+
+    nextToast() {
+      const t = $('toast');
+      const item = this.toastQueue.shift();
+      if (!item) {
+        t.classList.remove('show');
+        t.hidden = true;
+        this.toastTimer = null;
+        return;
+      }
+      t.textContent = item.text;
+      t.hidden = false;
+      t.classList.add('show');
+      this.toastTimer = setTimeout(() => this.nextToast(), item.ms);
     }
 
     setPomodoro(snap) {
@@ -689,6 +816,20 @@
   function fmt(ms) {
     const s = Math.ceil(ms / 1000);
     return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  }
+
+  /** 30 → "30분", 90 → "1시간 30분", 120 → "2시간" */
+  function fmtMinutes(m) {
+    const h = Math.floor(m / 60);
+    const r = m % 60;
+    return h ? (r ? `${h}시간 ${r}분` : `${h}시간`) : `${r}분`;
+  }
+
+  /** 초 → "1시간 05분" / "23분" / "0분" */
+  function fmtDuration(sec) {
+    const m = Math.floor((Number(sec) || 0) / 60);
+    const h = Math.floor(m / 60);
+    return h ? `${h}시간 ${String(m % 60).padStart(2, '0')}분` : `${m}분`;
   }
 
   window.UI = UI;

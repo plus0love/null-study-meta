@@ -94,6 +94,7 @@
     return (action === 'start' ? net.pomodoroStart() : net.pomodoroStop()).catch(() => {});
   };
   ui.onLeave = async () => {
+    clearInterval(statsTimer);
     await net.leave();
     scene.clearSession();
     ui.setPlayers([]);
@@ -104,6 +105,55 @@
   ui.onRename = () => ui.onLeave();
   ui.onNpcName = (name) => net.setNpcName('dog', name).then((r) => { if (!r.ok) ui.notify(r.error || '이름을 바꾸지 못했어요.'); }).catch(() => {});
   ui.onListening = (title) => net.setListening(title).catch(() => {});
+
+  // ── 공부 기록: 할 일(서버 저장) · 오늘 목표 · 랭킹 (5초 폴링 + leaderboard:refresh) ──
+  const STATS_POLL_MS = 5000;
+  const storeError = () => ui.notify('저장소 오류가 났어요. 잠시 후 다시 시도해 주세요.');
+  const reloadTodos = () => net.todoList().then((r) => { if (r.ok) ui.setTodos(r.todos); else storeError(); }).catch(() => {});
+  ui.onTodoAdd = (text) => net.todoAdd(text).then((r) => (r.ok ? reloadTodos() : storeError())).catch(() => {});
+  ui.onTodoToggle = (id, done) => net.todoToggle(id, done).then((r) => (r.ok ? reloadTodos() : storeError())).catch(() => {});
+  ui.onTodoDelete = (id) => net.todoDelete(id).then((r) => (r.ok ? reloadTodos() : storeError())).catch(() => {});
+  /** 3단계까지 localStorage 에 있던 할 일은 첫 접속 때 서버로 옮긴다 (서버 목록이 비어 있을 때만) */
+  const migrateTodos = async () => {
+    const r = await net.todoList();
+    if (!r.ok) return storeError();
+    const legacy = r.todos.length ? [] : ui.takeLegacyTodos();
+    for (const t of legacy) {
+      const added = await net.todoAdd(t.text);
+      if (added.ok && t.done) await net.todoToggle(added.todo.id, true);
+    }
+    if (legacy.length) ui.addChat({ system: true, text: `예전 할 일 ${legacy.length}개를 서버로 옮겼어요.` });
+    return reloadTodos();
+  };
+  ui.onGoalSave = (goal) => net.setGoal(goal).then((r) => {
+    if (!r.ok) return ui.notify(r.error === 'text_too_long' ? '목표는 20자까지예요.' : r.error === 'invalid_minutes' ? '목표 시간은 30분~8시간, 30분 단위예요.' : '목표를 저장하지 못했어요.');
+    ui.setGoal(r.goal);
+    if (scene.me) scene.me.setGoal(r.goal);
+    ui.toast('오늘 목표를 저장했어요 ✍️');
+    refreshStats();
+  }).catch(() => {});
+  let statsTimer = null;
+  const refreshStats = () => {
+    if (!net.connected || !scene.me) return;
+    net.stats().then((r) => {
+      if (!r.ok) return;
+      ui.setStats(r);
+      scene.applyProgress(r.rows);
+    }).catch(() => {});
+  };
+  const startStatsPolling = () => {
+    clearInterval(statsTimer);
+    statsTimer = setInterval(refreshStats, STATS_POLL_MS);
+    refreshStats();
+  };
+  net.on('leaderboard:refresh', () => refreshStats());
+  net.on('playerGoal', (d) => scene.onGoal(d));
+  net.on('attendance', ({ streak }) => ui.toast(`${streak}일 연속 출석 🔥`));
+  net.on('goalReached', (d) => {
+    scene.onGoalReached(d);
+    sound.chime('goal');
+    if (scene.me && d.id === scene.me.id) ui.toast('오늘 목표 달성 🎉');
+  });
   // 설정: 항상 밤 / 알림 소리 / 브라우저 알림
   scene.setAlwaysNight(ui.alwaysNight);
   ui.onAlwaysNight = (on) => scene.setAlwaysNight(on);
@@ -125,6 +175,11 @@
     ui.setOffline(false);
     ui.setSitHint(ack.self.seatId ? 'stand' : null);
     ui.setNpcs(ack.npcs || []);
+    const profile = ack.profile || {};
+    ui.setGoal(profile.goal || null);
+    if (profile.streak && profile.streak.attendedToday) ui.toast(`${profile.streak.streak}일 연속 출석 🔥`);
+    migrateTodos();
+    startStatsPolling();
   };
   net.on('session', applySession);
   net.on('sessionLost', () => ui.addChat({ system: true, text: '서버가 다시 시작되어 새로 입장했어요.' }));

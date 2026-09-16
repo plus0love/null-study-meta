@@ -4,8 +4,11 @@
  *  - 플레이어 입장/퇴장, 닉네임 중복 처리, 세션 토큰으로 재접속
  *  - 이동 검증(예산 방식), 좌석 점유, 상태(공부/휴식/☕휴식), 채팅 검증, 뽀모도로
  *  - 상호작용 지점(커피머신 앞 E → 'coffee' 상태), 듣는 중(유튜브 제목) 표시
+ *  - 4단계: 영구 데이터는 store(메모리/Supabase) — 공부 세션·출석·오늘 목표·할 일·강아지 이름. 실시간 상태는 계속 메모리.
  * 이벤트: 'playerLeft' (유예 시간이 지나 정리될 때), 'pomodoro' (상태 변화),
- *         'npcUpdate' (NPC 스냅샷, 10Hz), 'npcPet' ({ npc, by, nickname }), 'npcName' ({ npc, name })
+ *         'npcUpdate' (NPC 스냅샷, 10Hz), 'npcPet' ({ npc, by, nickname }), 'npcName' ({ npc, name }),
+ *         'sessionSaved' { nickname, playerId, seconds }, 'attendance' { nickname, playerId, streak, weekDays, inserted },
+ *         'goalReached' { nickname, playerId, todaySeconds, targetMinutes }
  */
 const EventEmitter = require('node:events');
 const crypto = require('node:crypto');
@@ -15,6 +18,9 @@ const { SPEED, FEET_W, FEET_H, applyMove, maxBudget, canStand } = require('./mov
 const { sanitizeChat, createRateLimiter, MAX_LEN: CHAT_MAX } = require('./chat');
 const { Pomodoro } = require('./pomodoro');
 const { DogNpc } = require('./npc');
+const { StudyTracker } = require('./study');
+const { createMemoryStore } = require('../store/memory');
+const { DEFAULT_TZ, dateKey, isValidTz } = require('../store/stats');
 const { FACING_DELTA, interactableById } = require('../rooms/build');
 
 const GRACE_MS = 30 * 1000; // 연결 끊김 후 플레이어를 유지하는 시간
@@ -25,17 +31,30 @@ const LISTENING_MAX = 80;
 const EMOJIS = ['👋', '😊', '👍', '❤️', '😂', '🔥'];
 const AVATAR_COUNT = 4;
 const FACINGS = Object.keys(FACING_DELTA);
+const GOAL_TEXT_MAX = 20;
+const GOAL_MIN = 30; // 분
+const GOAL_MAX = 8 * 60;
+const GOAL_STEP = 30;
+const TODO_MAX = 60;
 
 function seatCenter(room, seat) {
   return { x: (seat.x + 0.5) * room.tileSize, y: (seat.y + 1) * room.tileSize };
 }
 
 class World extends EventEmitter {
-  constructor(room, { graceMs = GRACE_MS, pomodoro = {}, npc = {}, now = () => Date.now() } = {}) {
+  constructor(room, { graceMs = GRACE_MS, pomodoro = {}, npc = {}, now = () => Date.now(), store = null, tz = DEFAULT_TZ, study = {}, log = console } = {}) {
     super();
     this.room = room;
     this.now = now;
+    this.log = log;
     this.graceMs = graceMs;
+    this.store = store || createMemoryStore();
+    this.tz = isValidTz(tz) ? tz : DEFAULT_TZ;
+    this.goals = new Map(); // nickname → { date, goalText, targetMinutes } (오늘 것만 캐시)
+    this.study = new StudyTracker({ store: this.store, tz: this.tz, now, log, goalOf: (n) => this.goalOf(n), ...study });
+    this.study.on('saved', (e) => this.emit('sessionSaved', e));
+    this.study.on('attendance', (e) => this.emit('attendance', e));
+    this.study.on('goalReached', (e) => this.emit('goalReached', e));
     this.players = new Map(); // id → player
     this.sessions = new Map(); // token → player
     this.seatOwners = new Map(); // seatId → playerId
@@ -54,6 +73,22 @@ class World extends EventEmitter {
     if (npc.autoStart !== false) this.dog.start();
   }
 
+  /** 저장소에서 초기 상태 로드 (강아지 이름, 저장된 합계). 서버 시작 시 한 번 */
+  async init() {
+    try {
+      const name = await this.store.getLatestDogName();
+      if (name) this.dog.setName(name);
+      await this.study.refreshTotals();
+    } catch (err) {
+      this.log.warn(`[world] 저장소 초기 로드 실패: ${err.message}`);
+    }
+    return this;
+  }
+
+  today() {
+    return dateKey(this.now(), this.tz);
+  }
+
   npcSnapshots() {
     return this.npcs.map((n) => n.snapshot());
   }
@@ -68,7 +103,7 @@ class World extends EventEmitter {
 
   /** 다른 클라이언트에 보내는 공개 정보 */
   publicPlayer(p) {
-    return { id: p.id, nickname: p.nickname, avatar: p.avatar, x: p.x, y: p.y, facing: p.facing, moving: p.moving, status: p.status, seatId: p.seatId, connected: p.connected, listening: p.listening || null };
+    return { id: p.id, nickname: p.nickname, avatar: p.avatar, x: p.x, y: p.y, facing: p.facing, moving: p.moving, status: p.status, seatId: p.seatId, connected: p.connected, listening: p.listening || null, goal: this.publicGoal(p.nickname) };
   }
 
   listPlayers() {
@@ -124,7 +159,24 @@ class World extends EventEmitter {
     };
     this.players.set(id, player);
     this.sessions.set(newToken, player);
+    this.store.upsertUser(name, { avatar: { shirt: player.avatar } }).catch((err) => this.log.warn(`[world] 사용자 저장 실패: ${err.message}`));
     return { ok: true, player, resumed: false, oldSocketId: null };
+  }
+
+  /** 입장 ack 에 실을 영구 데이터: 오늘 목표 · 출석 스트릭 (실패해도 입장은 된다) */
+  async loadProfile(player) {
+    const out = { goal: null, streak: { streak: 0, weekDays: 0, attendedToday: false } };
+    try {
+      const date = this.today();
+      const g = await this.store.getGoal(player.nickname, date);
+      if (g) this.goals.set(player.nickname, g);
+      else this.goals.delete(player.nickname);
+      out.goal = this.publicGoal(player.nickname);
+      out.streak = await this.store.attendanceOf(player.nickname, { tz: this.tz, now: this.now() });
+    } catch (err) {
+      this.log.warn(`[world] 프로필 로드 실패 (${player.nickname}): ${err.message}`);
+    }
+    return out;
   }
 
   bySocket(socketId) {
@@ -153,6 +205,8 @@ class World extends EventEmitter {
     this.players.delete(id);
     this.sessions.delete(player.token);
     this.chatLimiter.forget(id);
+    player.removed = true;
+    this.study.sync(player); // 앉은 채 나가면 세션 저장
     this.emit('playerLeft', player, reason);
     return player;
   }
@@ -192,6 +246,7 @@ class World extends EventEmitter {
     // 커피(☕ 휴식) 중에 앉으면 공부 중 → 일어날 때는 커피가 아니라 휴식으로
     player.prevStatus = player.status === 'coffee' ? 'rest' : player.status;
     player.status = 'study';
+    this.study.sync(player);
     return { ok: true, seat };
   }
 
@@ -203,6 +258,7 @@ class World extends EventEmitter {
     player.status = player.prevStatus || 'rest';
     player.budget = maxBudget();
     player.lastMoveAt = this.now();
+    this.study.sync(player);
     return { ok: true };
   }
 
@@ -215,6 +271,7 @@ class World extends EventEmitter {
     if (!MANUAL_STATUSES.includes(status)) return { ok: false, error: 'invalid' };
     player.status = status;
     player.prevStatus = status;
+    this.study.sync(player); // 앉은 채 휴식으로 바꾸면 세션 종료, 다시 공부면 새 세션
     return { ok: true };
   }
 
@@ -269,17 +326,79 @@ class World extends EventEmitter {
     return EMOJIS[i];
   }
 
+  // ── 오늘 목표 / 랭킹 / 할 일 (영구 데이터) ──────────────────────────
+  goalOf(nickname) {
+    const g = this.goals.get(nickname);
+    return g && g.date === this.today() ? g : null;
+  }
+
+  publicGoal(nickname) {
+    const g = this.goalOf(nickname);
+    return g ? { text: g.goalText || '', targetMinutes: g.targetMinutes || 0 } : null;
+  }
+
+  /** 목표 한 줄(≤20자) + 목표 시간(30분~8시간, 30분 단위). @returns {{ ok, goal, reached(이미 달성 상태인지) } | { ok: false, error }} */
+  async setGoal(player, { text, targetMinutes } = {}) {
+    const goalText = String(text ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim();
+    const mins = Number(targetMinutes);
+    if (goalText.length > GOAL_TEXT_MAX) return { ok: false, error: 'text_too_long' };
+    if (!Number.isInteger(mins) || mins < GOAL_MIN || mins > GOAL_MAX || mins % GOAL_STEP !== 0) return { ok: false, error: 'invalid_minutes' };
+    const date = this.today();
+    const g = await this.store.setGoal(player.nickname, date, { goalText, targetMinutes: mins });
+    this.goals.set(player.nickname, { ...g, date });
+    // 이미 넘어 있는 목표는 조용히 달성 처리(🎉 없음). reached 는 그 사실만 알려준다
+    const reached = this.study.markGoal(player.nickname, true) || this.study.todaySeconds(player.nickname) >= mins * 60;
+    return { ok: true, goal: this.publicGoal(player.nickname), reached };
+  }
+
+  async stats() {
+    const rows = await this.study.stats([...this.players.values()]);
+    return { ok: true, store: this.store.kind, tz: this.tz, date: this.today(), rows };
+  }
+
+  todoOpts() {
+    return { tz: this.tz, now: this.now() };
+  }
+
+  async listTodos(player) {
+    return this.store.listTodos(player.nickname, this.todoOpts());
+  }
+
+  async addTodo(player, text) {
+    const t = String(text ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, TODO_MAX);
+    if (!t) return { ok: false, error: 'empty' };
+    return { ok: true, todo: await this.store.addTodo(player.nickname, t, this.now()) };
+  }
+
+  async setTodoDone(player, id, done) {
+    const todo = await this.store.setTodoDone(player.nickname, id, Boolean(done), this.now());
+    return todo ? { ok: true, todo } : { ok: false, error: 'not_found' };
+  }
+
+  async deleteTodo(player, id) {
+    return { ok: await this.store.deleteTodo(player.nickname, id) };
+  }
+
+  /** 강아지 이름 변경 → users.dog_name (방 전체 공용이라 마지막 변경값을 시작 시 쓴다) */
+  setDogName(player, raw) {
+    const res = this.dog.setName(raw);
+    if (res.ok) this.store.upsertUser(player.nickname, { dogName: res.name }).catch((err) => this.log.warn(`[world] 강아지 이름 저장 실패: ${err.message}`));
+    return res;
+  }
+
   /** 플레이어 위치가 유효한지 (테스트/디버그용) */
   canStand(x, y) {
     return canStand(this.room, x, y);
   }
 
-  dispose() {
+  /** 종료: 진행 중인 공부 세션을 모두 저장한 뒤 정리 (SIGTERM 에서 await) */
+  async dispose() {
     for (const t of this.graceTimers.values()) clearTimeout(t);
     this.graceTimers.clear();
     this.pomodoro.dispose();
     for (const n of this.npcs) n.dispose();
+    await this.study.flushAll('shutdown');
   }
 }
 
-module.exports = { World, GRACE_MS, SIT_RANGE_PX, EMOJIS, STATUSES, MANUAL_STATUSES, AVATAR_COUNT, LISTENING_MAX, seatCenter };
+module.exports = { World, GRACE_MS, SIT_RANGE_PX, EMOJIS, STATUSES, MANUAL_STATUSES, AVATAR_COUNT, LISTENING_MAX, GOAL_TEXT_MAX, GOAL_MIN, GOAL_MAX, GOAL_STEP, TODO_MAX, seatCenter };

@@ -30,11 +30,11 @@
       } catch (_) { /* 오디오 없음 */ }
     }
 
-    /** 짧은 2~3음 차임. kind 'break' 는 올라가는 음, 'focus' 는 내려가는 음. */
+    /** 짧은 차임. kind 'break' 는 올라가는 3음, 'focus' 는 내려가는 3음, 'goal' 은 밝은 4음 아르페지오(목표 달성). */
     chime(kind = 'break') {
       if (!this.enabled || !this.ctx || this.ctx.state !== 'running') return false;
       const ctx = this.ctx;
-      const notes = kind === 'break' ? [523.25, 659.25, 783.99] : [783.99, 659.25, 523.25];
+      const notes = { break: [523.25, 659.25, 783.99], focus: [783.99, 659.25, 523.25], goal: [523.25, 659.25, 783.99, 1046.5] }[kind] || [659.25];
       const t0 = ctx.currentTime + 0.02;
       const master = ctx.createGain();
       master.gain.value = 0.18;

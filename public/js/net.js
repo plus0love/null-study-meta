@@ -12,6 +12,7 @@
     'playerJoined', 'playerLeft', 'playerMoved', 'move:correct', 'playerSat', 'playerStood', 'playerStatus',
     'playerAvatar', 'playerEmoji', 'chat', 'pomodoro', 'roomCount', 'playerDisconnected', 'playerReconnected',
     'npc:update', 'npc:pet', 'npc:name', 'playerListening',
+    'playerGoal', 'leaderboard:refresh', 'attendance', 'goalReached',
   ];
 
   class Net {
@@ -138,6 +139,12 @@
     petNpc(id) { return this.ask('npc:pet', { id }); }
     interact(id) { return this.ask('interact', { id }); }
     setListening(title) { return this.ask('listening', { title: title || null }); }
+    stats() { return this.ask('stats', {}); }
+    setGoal(goal) { return this.ask('goal:set', goal); }
+    todoList() { return this.ask('todo:list', {}); }
+    todoAdd(text) { return this.ask('todo:add', { text }); }
+    todoToggle(id, done) { return this.ask('todo:toggle', { id, done }); }
+    todoDelete(id) { return this.ask('todo:delete', { id }); }
     setNpcName(id, name) { return this.ask('npc:name', { id, name }); }
     pomodoroStart() { return this.ask('pomodoro:start', {}); }
     pomodoroStop() { return this.ask('pomodoro:stop', {}); }

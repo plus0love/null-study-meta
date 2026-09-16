@@ -4,6 +4,7 @@
  *  - 탭 A 는 서버에 직접, 탭 B 는 300ms 지연 프록시를 거쳐 접속한다.
  *  - 입장 → 서로의 아바타 표시 → 키보드 이동(서버 거부 없음, 상대 화면에 같은 위치) → 채팅 → E키 착석 → 강아지 → 재접속.
  *  - 3단계: 책상 착석 시 모니터 켜짐(두 탭 동기화), 커피머신 앞 E → ☕ 휴식, 시간대 고정(낮/노을/밤), 시스템 메시지 ×N 합치기.
+ *  - 4단계: localStorage 할 일 → 서버 이전, 오늘 목표 저장 → 상대 화면 팻말, 출석 토스트, 목표 달성 🎉·시스템 채팅, 랭킹 카드(진행 중 점·저장소 배지).
  * Chrome 이 없으면 건너뛴다 (CHROME_PATH 로 지정 가능).
  */
 const test = require('node:test');
@@ -27,7 +28,7 @@ const remotePos = (id) => {
 };
 
 test('브라우저 2탭 (B 는 300ms 지연): 입장·이동 유지·채팅·착석·재접속', { skip: !hasChrome || !puppeteer ? 'Chrome/puppeteer-core 없음' : false, timeout: 120000 }, async (t) => {
-  const srv = await boot({ world: { graceMs: 5000 } });
+  const srv = await boot({ world: { graceMs: 5000, study: { autoTick: false } } });
   t.after(() => srv.close());
   const proxy = await startDelayProxy(srv.port, 300);
   t.after(() => proxy.close());
@@ -46,6 +47,8 @@ test('브라우저 2탭 (B 는 300ms 지연): 입장·이동 유지·채팅·착
     page.on('pageerror', (e) => errors.push(`${nickname}: ${e.message}`));
     await page.setViewport({ width: 1100, height: 700 });
     await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'networkidle0', timeout: 60000 });
+    // 3단계까지의 localStorage 할 일 → 첫 접속 때 서버로 옮겨지는지 (A 만)
+    if (nickname === '브라우저A') await page.evaluate(() => localStorage.setItem('nsm.todos', JSON.stringify([{ id: 'x', text: '옛 할 일', done: false }])));
     await page.waitForSelector('#login:not([hidden])', { timeout: 30000 });
     await page.type('#login-nick', nickname);
     await page.click('#login-submit');
@@ -174,6 +177,38 @@ test('브라우저 2탭 (B 는 300ms 지연): 입장·이동 유지·채팅·착
   assert.equal(others, 1, '앉은 자리의 화면만 켜진다');
   await b.evaluate(() => window.NSM.net.stand());
   await a.waitForFunction((id) => { const s = window.NSM.scene.screenStates().find((q) => q.seatId === id); return s && !s.on && s.alpha < 0.05; }, { timeout: 5000 }, deskSeat.id);
+
+  // 4단계 ① 할 일 이전 + 오늘 목표: A 가 목표를 저장하면 B 화면의 A 팻말에 텍스트가 보이고, B 가 앉은 책상엔 B 의 팻말이 없다(목표 없음)
+  await a.waitForFunction(() => /옛 할 일/.test(document.getElementById('todo-list').textContent), { timeout: 5000 });
+  assert.equal(await a.evaluate(() => localStorage.getItem('nsm.todos')), null, '이전 뒤 localStorage 는 비운다');
+  await a.type('#goal-text', '알고리즘 3문제');
+  await a.select('#goal-minutes', '30');
+  await a.click('#goal-form button[type=submit]');
+  await a.waitForFunction(() => /30분/.test(document.getElementById('goal-progress').textContent), { timeout: 5000 });
+  await b.waitForFunction((id) => { const av = window.NSM.scene.remotes.get(id).avatar; return av.goal && av.goal.text === '알고리즘 3문제'; }, { timeout: 5000 }, idA);
+  // A 를 서버에서 책상 의자에 앉힌다 (걷기 대신) → 팻말이 두 탭에 보인다
+  const deskSeat2 = room.seats.find((q) => q.kind === 'chair_n' && q.id !== deskSeat.id);
+  const pa = srv.world.players.get(idA);
+  pa.x = (deskSeat2.x + 0.5) * T;
+  pa.y = (deskSeat2.y + 1) * T;
+  await a.evaluate((x, y) => window.NSM.scene.me.setPosition(x, y), pa.x, pa.y);
+  assert.equal((await a.evaluate((id) => window.NSM.net.sit(id), deskSeat2.id)).ok, true);
+  await a.waitForFunction(() => window.NSM.scene.me.seated && window.NSM.scene.me.sign, { timeout: 5000 });
+  await b.waitForFunction((id) => { const av = window.NSM.scene.remotes.get(id).avatar; return av.seated && av.sign && av.sign.list[1].text === '알고리즘 3문제'; }, { timeout: 5000 }, idA);
+  // 세션을 31분 전에 시작한 것으로 돌려 tick → 출석 토스트(A) + 목표 달성 🎉(B 화면의 A) + 시스템 채팅
+  srv.world.study.live.get('브라우저A').startedAt -= 31 * 60 * 1000;
+  await srv.world.study.tick();
+  await a.waitForFunction(() => /1일 연속 출석/.test(document.getElementById('toast').textContent) && !document.getElementById('toast').hidden, { timeout: 5000 });
+  await b.waitForFunction((id) => { const av = window.NSM.scene.remotes.get(id).avatar; return av.emojiText && av.emojiText.text === '🎉'; }, { timeout: 5000 }, idA);
+  await b.waitForFunction(() => /브라우저A님이 오늘 목표를 달성했어요/.test(document.getElementById('chat-log').textContent), { timeout: 5000 });
+  // 일어나면 세션 저장 → leaderboard:refresh → 랭킹 카드에 시간·스트릭, 저장소 배지는 메모리
+  await a.evaluate(() => window.NSM.net.stand());
+  await a.waitForFunction(() => !window.NSM.scene.me.seated && !window.NSM.scene.me.sign, { timeout: 5000 });
+  await b.waitForFunction(() => /브라우저A.*31분/.test(document.getElementById('rank-list').textContent), { timeout: 8000 });
+  assert.match(await b.$eval('#rank-list', (el) => el.textContent), /🔥1/);
+  assert.match(await b.$eval('#rank-store', (el) => el.textContent), /메모리/);
+  assert.match(await a.$eval('#rank-list li.me', (el) => el.textContent), /브라우저A/);
+  await a.waitForFunction(() => /31분 \/ 30분 · 달성/.test(document.getElementById('goal-progress').textContent), { timeout: 8000 });
 
   // 3단계 ② 커피: A 가 커피머신 앞까지 걸어가 E → "☕ 휴식", B 멤버 목록에도 반영. 다시 E → 휴식
   const coffee = room.interactables.find((i) => i.id === 'coffee');

@@ -2,11 +2,13 @@
 
 2D 탑뷰 멀티플레이 **스터디 메타버스**. 밤의 아늑한 스터디 카페 "우리의 스터디룸"에서 같이 공부하는 공간을 만듭니다.
 
-> **현재 단계: 3단계 — 맵 정리 + 공간 연출.** 닉네임으로 입장해 다른 접속자와 같은 방을 걸어다니고(서버 이동 검증),
+> **현재 단계: 4단계 — Supabase 영구 저장 + 공부 기록.** 닉네임으로 입장해 다른 접속자와 같은 방을 걸어다니고(서버 이동 검증),
 > 의자·푸프·소파에 앉고(E), 채팅·이모지·공부/휴식 상태·공용 뽀모도로를 공유합니다. 끊겨도 30초 안에 같은 세션으로 이어집니다.
 > 라운지의 갈색 푸들 "사랑" 은 서버가 움직이는 NPC 로, 가까이 가면 쳐다보고 E 로 쓰다듬을 수 있습니다.
 > 3단계에서는 목업처럼 두께감 있는 유리 스터디룸·슬라이딩 문으로 맵을 정리하고, 책상에 앉으면 모니터가 켜지고,
 > 커피머신 앞에서 E 로 ☕ 휴식, 창밖은 실제 시각에 따라 낮/노을/밤으로 바뀌며, 뽀모도로 전환 연출과 유튜브 카드가 붙었습니다.
+> 4단계에서는 "앉아서 공부 중"인 시간이 **공부 세션**으로 Supabase(없으면 메모리)에 저장되고, 출석 스트릭·오늘 목표(책상 앞 팻말 + 진행 바)·
+> 랭킹(오늘/이번 주)·서버 저장 할 일(어제 것은 이월)이 생겼습니다.
 
 ![목업과 게임 비교](screenshots/compare_mockup.png)
 
@@ -36,8 +38,9 @@ null-study-meta/
 ├── .env.example              # 환경변수 템플릿 (.env 로 복사)
 ├── render.yaml               # Render free 플랜 Blueprint (NODE_VERSION=24, healthCheck /healthz)
 ├── design/studyroom.png      # 목업 (방 배치·색감 기준)
+├── supabase/schema.sql       # 영구 데이터 스키마 + 집계 SQL 함수 (여러 번 실행 안전, RLS on · 정책 없음)
 ├── server/
-│   ├── index.js              # Express 부트스트랩, /healthz, /api/rooms/studyroom, /api/oembed(유튜브 제목 프록시), Socket.io 부착
+│   ├── index.js              # Express 부트스트랩, /healthz, /api/rooms/studyroom, /api/oembed(유튜브 제목 프록시), Socket.io 부착, SIGTERM 시 세션 저장
 │   ├── socket.js             # 소켓 프로토콜 배선 (join/move/sit/status/interact/listening/chat/emoji/pomodoro/time:ping/leave/npc:*)
 │   ├── game/
 │   │   ├── world.js          # 방 실시간 상태: 플레이어·세션 토큰·좌석 점유·상태(공부/휴식/☕)·상호작용·듣는 중·유예 정리 (순수 로직)
@@ -45,16 +48,17 @@ null-study-meta/
 │   │   ├── nickname.js       # 닉네임 규칙(문자·숫자·공백·_- 12자) + 중복 시 "이름2"
 │   │   ├── chat.js           # 200자·HTML 이스케이프·300ms 도배 방지
 │   │   ├── pomodoro.js       # 공용 뽀모도로 25/5 자동 전환 (서버 시각 기준)
+│   │   ├── study.js          # 공부 세션(앉아서 공부 중, 60초 미만 폐기) · 출석 · 오늘 목표 달성 · 랭킹 통계 (저장소 인터페이스만 사용)
 │   │   └── npc.js            # 강아지 NPC: 어슬렁/앉기/자기/산책 상태기계, BFS 경로(충돌 준수), 쳐다보기, 쓰다듬기 쿨다운, 이름
 │   ├── rooms/
 │   │   ├── build.js          # RoomBuilder: tiles.json 기준으로 레이어 배열 + 충돌/의자/문/조명/창문/구역/화면/상호작용 지점 생성
 │   │   └── studyroom.js      # "우리의 스터디룸" 46x34 타일 정의 (3단계: 유리 스터디룸·식물 정리·수납장/선반 채우기)
-│   └── store/                # index.js(선택/폴백), memory.js, supabase.js
+│   └── store/                # index.js(선택/폴백), memory.js, supabase.js (같은 인터페이스), stats.js(시간대·주 시작·스트릭 규칙 공용)
 ├── public/
 │   ├── index.html, css/style.css
 │   ├── js/main.js            # 부트스트랩: 방 데이터 fetch → Phaser 생성 → Net·UI·씬·FX 연결, 입장/재입장 흐름
 │   ├── js/net.js             # 소켓 래퍼: join/재접속(세션 토큰 localStorage), 서버 시각 동기화, 20Hz 이동 전송
-│   ├── js/ui.js              # HUD(방 이름·인원·뽀모도로 배지·설정·멤버·알림·♪·나가기) + 사이드바(미니맵·할 일·뽀모도로·유튜브·채팅) + 이모지 바·입장 모달
+│   ├── js/ui.js              # HUD(방 이름·인원·뽀모도로 배지·설정·멤버·알림·♪·나가기) + 사이드바(미니맵·오늘의 목표·할 일·뽀모도로·랭킹·유튜브·채팅) + 토스트·입장 모달
 │   ├── js/daylight.js        # 시간대 가중치(낮/노을/밤, 경계 30분) + 하늘 팔레트 + 실내 연출 강도 (순수 함수, 테스트 공용)
 │   ├── js/music.js           # 유튜브 URL 파싱 · 최근 5개 (순수 함수, 테스트 공용)
 │   ├── js/fx.js              # Web Audio 합성 알림음 + 브라우저 알림 도우미
@@ -112,11 +116,12 @@ npm test
 | 파일 | 내용 |
 |---|---|
 | `game.test.js` | 단위: 닉네임 규칙/중복, 이동 예산(정상 속도 허용·순간이동 거부·벽), 채팅 이스케이프/도배, 뽀모도로 자동 전환, 월드(좌석 점유·상태 복귀·유예 재접속) |
+| `study.test.js` | 4단계: 날짜 규칙(시간대 0시·월요일 주 시작·세션은 시작 날짜), 출석 스트릭(경계일·끊김·주 경계), 메모리 저장소(세션·출석·목표·할 일 이월·강아지 이름), 세션 규칙(60초 폐기·휴식/커피 전환·일어나기·퇴장·재접속 유지·종료 저장), 출석 이벤트, 목표 달성(검증·한 번만·다음 날 리셋), 랭킹 통계, 저장소 폴백·인터페이스 동일성, 소켓 E2E(프로필·playerGoal·leaderboard:refresh·attendance·goalReached·할 일 CRUD·강아지 이름 저장) |
 | `stage3.test.js` | 3단계: 커피머신 상호작용(거리·토글·앉으면 공부→일어나면 휴식), 듣는 중 제목, 소켓 `interact`/`listening` 브로드캐스트, oEmbed 프록시(가짜 fetch·캐시, 네트워크 없음), 시간대 가중치(경계 30분·합 1·팔레트), 유튜브 URL 파싱·최근 5개 |
 | `npc.test.js` | 강아지: 결정적 난수로 20분 돌려도 막힌 칸에 안 들어감·모든 상태 순환·산책, 틱당 이동량, 쳐다보기, 쓰다듬기 쿨다운, 이름 규칙 + 소켓: 두 클라이언트가 같은 `npc:update` 를 받음, 쓰다듬기/이름 브로드캐스트 |
 | `socket.test.js` | 소켓 E2E: 입장/중복 닉네임, playerMoved 가 발신자에게 안 감, move:correct 는 본인에게만, 착석/상태/아바타, 채팅/이모지, 뽀모도로 동기화, 토큰 재접속·옛 소켓 정리·유예 만료 |
 | `latency.test.js` | TCP 지연 프록시(편도 300ms)로 두 명이 20Hz 이동 → 거부 0건, 상대·서버·새 입장자 모두 같은 최종 위치 |
-| `browser.test.js` | 헤드리스 Chrome 2탭(B 는 300ms 지연): 입장 → 키보드 이동이 상대 화면에 같은 위치 → 채팅(입력 중 이동 차단, HTML 미렌더) → 이모지 → 소파까지 걸어가 E 착석 → 강아지 옆까지 걸어가 E 쓰다듬기(두 탭 ❤️·채팅·같은 위치) → 책상 착석 시 두 탭 모두 모니터 켜짐/일어나면 꺼짐 → 커피머신까지 걸어가 E ☕ 휴식(상대 멤버 목록 반영) → 시각 고정으로 낮/노을/밤 전환·항상 밤 → 시스템 메시지 ×N → 소켓 강제 종료 후 이어받기 → 나가기. Chrome 이 없으면 건너뜀 (`CHROME_PATH`) |
+| `browser.test.js` | 헤드리스 Chrome 2탭(B 는 300ms 지연): 입장 → 키보드 이동이 상대 화면에 같은 위치 → 채팅(입력 중 이동 차단, HTML 미렌더) → 이모지 → 소파까지 걸어가 E 착석 → 강아지 옆까지 걸어가 E 쓰다듬기(두 탭 ❤️·채팅·같은 위치) → 책상 착석 시 두 탭 모두 모니터 켜짐/일어나면 꺼짐 → 커피머신까지 걸어가 E ☕ 휴식(상대 멤버 목록 반영) → 시각 고정으로 낮/노을/밤 전환·항상 밤 → 시스템 메시지 ×N → localStorage 할 일 서버 이전 → 목표 저장이 상대 화면 팻말에 → 출석 토스트·목표 달성 🎉·시스템 채팅 → 랭킹 카드(시간·🔥·메모리 배지) → 소켓 강제 종료 후 이어받기 → 나가기. Chrome 이 없으면 건너뜀 (`CHROME_PATH`) |
 | `room.test.js`, `server.test.js`, `store.test.js` | 방 데이터·충돌·도달성, 유리 스터디룸 타일 구성·문·구역·화면·상호작용 지점·식물 수·낮 창문 레이어, HTTP 엔드포인트·socket.io 클라이언트 서빙, 저장소 폴백 |
 
 ## 소켓 프로토콜
@@ -131,6 +136,9 @@ npm test
 | `status { study \| rest }`, `avatar { 0..3 }` | `playerStatus`, `playerAvatar` |
 | `interact { id }` | 상호작용 지점(`room.interactables`) 거리 검사. `coffee` 면 상태 `coffee`(☕ 휴식) ↔ `rest` 토글 → 모두에게 `playerStatus`. 앉으면 공부 중, 일어나면 휴식(커피 아님) |
 | `listening { title \| null }` | 유튜브 재생 중 제목(≤80자) → 모두에게 `playerListening { id, listening }` (닉네임 옆 ♪, 멤버 목록 "듣는 중") |
+| `stats` | `{ ok, store, tz, date, rows: [{ nickname, todaySeconds, weekSeconds, streak, weekDays, live, online }] }` — 진행 중 세션 초 포함, 서버 3초 캐시. 클라이언트는 5초 폴링 + `leaderboard:refresh` |
+| `goal:set { text ≤20자, targetMinutes 30~480(30단위) }` | `{ ok, goal, reached }` → 모두에게 `playerGoal { id, goal }` (앉으면 팻말) |
+| `todo:list` / `todo:add { text }` / `todo:toggle { id, done }` / `todo:delete { id }` | 본인 닉네임의 할 일. 목록은 미완료 전부 + 오늘 완료한 것, 어제 이전 미완료는 `carried: true`(이월) 로 맨 위 |
 | `chat { text }` | 200자·이스케이프·300ms 검사 → 모두에게 `chat { id, nickname, text, ts }` |
 | `emoji { index 0..5 }` | `playerEmoji { id, emoji }` |
 | `pomodoro:start` / `pomodoro:stop` | `pomodoro { running, phase, startedAt, endsAt, startedBy, serverTime }` (자동 전환 때도) |
@@ -143,12 +151,35 @@ npm test
 이동은 타일 중심을 잇는 BFS 경로라 벽·가구를 지키고(쿠션 타일만 예외), 플레이어와는 겹칩니다. 플레이어가 48px 안에 오면 멈춰서 그쪽을 보고 꼬리를 흔듭니다(`look`).
 `npc:update { id, kind, name, x, y, facing, state }` 를 걷는 동안 10Hz, 그 외엔 바뀔 때 + 1초 키프레임으로 보내고, 클라이언트는 100ms 늦게 선형 보간합니다. 입장 ack 의 `npcs` 에 현재 스냅샷이 들어 있습니다.
 
-그 밖에 `playerJoined`, `playerLeft { id, nickname, reason }`, `playerDisconnected`, `playerReconnected`, `roomCount { count }`.
+그 밖에 `playerJoined`, `playerLeft { id, nickname, reason }`, `playerDisconnected`, `playerReconnected`, `roomCount { count }`,
+`leaderboard:refresh { nickname, seconds }`(세션 저장 시), `attendance { streak, weekDays }`(본인, 출석 기록 시), `goalReached { id, nickname }` + 시스템 `chat`.
+입장 ack 에는 `profile { goal, streak: { streak, weekDays, attendedToday } }`, `store`, `tz` 가 함께 옵니다 (오늘 출석했으면 "N일 연속 출석 🔥" 토스트).
 HTTP: `GET /api/oembed?url=…` 은 유튜브 주소만 받아 서버가 oEmbed 제목을 대신 가져옵니다(10분 캐시, 브라우저 CORS 우회). 테스트는 fetch 를 주입해 네트워크를 쓰지 않습니다.
 
 이동 검증은 **예산 방식**입니다: 마지막 이동 이후 경과 시간 × 최대 속도(150px/s) × 1.5 만큼 예산이 쌓이고(상한 0.5초치),
 이동 거리만큼 소모합니다. 지연으로 패킷이 몰려 와도 통과하고, 순간이동은 거부됩니다. 거부되면 클라이언트는 순간이동 없이 서버 위치로 부드럽게 수렴합니다.
 원격 아바타는 받은 스냅샷을 100ms 늦게 두 점 사이 **선형 보간**으로 그립니다.
+
+## 공부 기록 (4단계)
+
+- **세션** = "자리에 앉아 있고 상태가 공부 중"인 구간 (`server/game/study.js`). 일어나기·휴식/커피 전환·퇴장(유예 만료 포함)·서버 종료(SIGTERM) 때 저장하고
+  **60초 미만은 폐기**합니다. 연결이 끊겨도 30초 유예 동안 자리는 유지되므로 재접속하면 세션이 이어집니다. 저장되면 `leaderboard:refresh`.
+- **출석**: 하루 첫 세션이 저장되는 순간 또는 진행 중 세션이 1분을 넘는 순간 `attendance(nickname, date)` 기록. 스트릭은 오늘 출석했으면 오늘부터,
+  아니면 어제부터 거슬러 센 연속 일수(하루가 지나기 전엔 끊기지 않음). 이번 주 출석 일수는 월요일부터.
+- **오늘 목표**: 한 줄(20자) + 목표 시간(30분~8시간, 30분 단위) → `daily_goals`. 앉으면 발 아래 팻말에 목표 텍스트(말줄임)와 진행 바(오늘 누적/목표).
+  공부 중 누적이 목표에 닿는 순간 머리 위 🎉 3초 + 시스템 채팅 "OOO님이 오늘 목표를 달성했어요 🎉" + 차임. 같은 목표는 하루 한 번, 이미 넘긴 목표를 다시 저장하면 조용히 달성 처리.
+- **랭킹**: 오늘/이번 주 탭, 진행 중이면 초록 점, 🔥N 스트릭, 내 행 강조, 하단에 저장소 표시(☁ Supabase / ⚠ 메모리).
+- **할 일**: 서버 `todos` 에 저장. 완료 체크 시 `done_at`. 어제 이전에 만든 미완료는 "이월" 배지로 오늘 목록 맨 위. 3단계까지의 localStorage 할 일은 첫 접속 때 자동으로 옮깁니다.
+- **시간대**: `STATS_TZ`(기본 `Asia/Seoul`) 기준 0시·월요일. 세션은 시작 시각의 날짜로 집계. 메모리 저장소(`server/store/stats.js`)와 Supabase SQL 함수가 같은 규칙입니다.
+- **저장소**: `server/store/` 의 메모리 구현과 Supabase 구현이 같은 인터페이스(`upsertUser` / `saveSession` / `studyTotals` / `recordAttendance` / `attendanceOf` / `attendanceStats` / `listTodos` … / `getGoal` / `setGoal`).
+  `SUPABASE_URL` · `SUPABASE_SERVICE_KEY` 가 없으면 메모리로 폴백(서버 재시작 시 사라짐). 실시간 상태(접속자·좌석·타이머·강아지 위치)는 계속 메모리이고, 강아지 이름은 `users.dog_name` 에 마지막 변경값을 저장해 시작 시 복원합니다.
+
+### Supabase 설정
+
+1. Supabase 프로젝트 → SQL Editor 에서 [`supabase/schema.sql`](supabase/schema.sql) 실행 (여러 번 실행해도 안전).
+   테이블 `users` · `study_sessions` · `todos` · `daily_goals` · `attendance` 와 집계 함수 `study_totals(tz)` · `attendance_streaks(tz, only_nickname)` · `list_todos(nickname, tz)` 가 생깁니다.
+   모든 테이블은 RLS 가 켜져 있고 정책이 없으며 함수도 anon/authenticated 에서 실행을 막아 두어, **service_role 키를 가진 서버만** 접근합니다.
+2. `.env` 에 `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`(service_role) 를 넣고 서버를 시작하면 로그에 `store=supabase` 가 찍힙니다. 연결에 실패하면 경고 후 메모리로 폴백합니다.
 
 ## 방 데이터 형식 (`GET /api/rooms/studyroom`)
 
@@ -224,11 +255,12 @@ python tools/dog_sprite.py       # public/assets/dog.png, dog.json (원본 다�
 | `STORE` | (자동) | `memory` 또는 `supabase`. 비워두면 Supabase 키가 있을 때 `supabase`, 없으면 `memory` |
 | `SUPABASE_URL` | – | Supabase 프로젝트 URL |
 | `SUPABASE_SERVICE_KEY` | – | Supabase **service_role** 키 (서버 전용, 클라이언트 노출 금지) |
+| `STATS_TZ` | `Asia/Seoul` | 통계 시간대 (오늘/이번 주/출석의 0시·월요일 기준) |
 
 ## Render 배포 (Free)
 
 `render.yaml` 이 있어 **New + → Blueprint** 로 배포합니다. `NODE_VERSION=24`, `healthCheckPath: /healthz`,
-`SUPABASE_URL` / `SUPABASE_SERVICE_KEY` 는 `sync: false` 라 대시보드에서 입력합니다 (지금 안 넣으면 메모리 저장소로 동작).
+`SUPABASE_URL` / `SUPABASE_SERVICE_KEY` 는 `sync: false` 라 대시보드에서 입력합니다 (지금 안 넣으면 메모리 저장소로 동작). `STATS_TZ` 는 `Asia/Seoul`.
 Free 플랜은 15분 무요청 시 잠들고, 재시작 시 메모리 상태가 초기화됩니다.
 
 검수 스크린샷을 다시 찍으려면 서버를 띄운 뒤:
@@ -240,7 +272,7 @@ python tools/compare_mockup.py                                        # screensh
 
 ## 다음 단계
 
-- Supabase 스키마와 공부 시간 기록 (앉아 있는 시간·뽀모도로 회차)
+- 뽀모도로 회차 기록, 주간 리포트
 - 유리문/입구 `doors` 로 방 이동, 실외 연결
 - 앉은 자세 프레임, 아바타 커스터마이즈 확장
 - 강아지 상호작용 확장 (간식 주기, 따라오기)

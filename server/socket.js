@@ -14,8 +14,14 @@
  *   time:ping { t0 }                         → ack { t0, serverTime }
  *   leave                                    → 즉시 정리 (유예 없음)
  *   npc:pet   { id }                         → ack { ok, error? }, 모두에게 npc:pet { id, by, nickname } + 시스템 chat
- *   npc:name  { id, name }                   → ack { ok, name?, error? }, 모두에게 npc:name { id, name }
+ *   npc:name  { id, name }                   → ack { ok, name?, error? }, 모두에게 npc:name { id, name } (users.dog_name 에 저장)
+ *   stats                                    → ack { ok, store, tz, date, rows: [{ nickname, todaySeconds, weekSeconds, streak, weekDays, live, online }] }
+ *   goal:set  { text, targetMinutes }        → ack { ok, goal, reached } , 모두에게 playerGoal { id, goal }
+ *   todo:list / todo:add { text } / todo:toggle { id, done } / todo:delete { id } → ack (본인 닉네임의 할 일, 이월 carried 포함)
  * 서버 → npc:update { id, kind, name, x, y, facing, state } (10Hz, 바뀔 때)
+ * 서버 → leaderboard:refresh { nickname, seconds } (세션 저장 시), attendance { streak, weekDays } (본인에게, 출석 기록 시),
+ *        goalReached { id, nickname } + 시스템 chat (오늘 목표 달성)
+ * 입장 ack 에 profile { goal, streak }, store('memory'|'supabase'), tz 가 포함된다.
  * 서버 → 클라이언트 알림: playerJoined { player }, playerLeft { id, nickname, reason }, playerReconnected { id }, playerDisconnected { id }
  */
 const { Server } = require('socket.io');
@@ -41,6 +47,17 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, log = console }
     io.emit('chat', { system: true, text: `${by}님이 강아지를 쓰다듬었어요`, ts: world.now() });
   });
   world.on('npcName', ({ npc, name }) => io.emit('npc:name', { id: npc, name }));
+  world.on('sessionSaved', ({ nickname, seconds }) => io.emit('leaderboard:refresh', { nickname, seconds }));
+  world.on('attendance', ({ playerId, streak, weekDays, inserted }) => {
+    const p = world.players.get(playerId);
+    if (!p || !inserted) return;
+    io.sockets.sockets.get(p.socketId)?.emit('attendance', { streak, weekDays });
+    io.emit('leaderboard:refresh', { nickname: p.nickname, seconds: 0 });
+  });
+  world.on('goalReached', ({ nickname, playerId }) => {
+    io.emit('goalReached', { id: playerId, nickname });
+    io.emit('chat', { system: true, text: `${nickname}님이 오늘 목표를 달성했어요 🎉`, ts: world.now() });
+  });
 
   const ackOf = (cb) => (typeof cb === 'function' ? cb : () => {});
 
@@ -52,7 +69,7 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, log = console }
       return fn(payload, ackOf(cb));
     };
 
-    socket.on('join', (payload, cb) => {
+    socket.on('join', async (payload, cb) => {
       const ack = ackOf(cb);
       if (player) return ack({ ok: false, error: 'already_joined' });
       const res = world.join({ ...(payload || {}), socketId: socket.id });
@@ -60,6 +77,8 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, log = console }
       player = res.player;
       // 같은 토큰으로 온 새 연결 → 옛 소켓은 즉시 정리 (옛 소켓의 disconnect 핸들러는 socketId 가 달라 무시된다)
       if (res.oldSocketId) io.sockets.sockets.get(res.oldSocketId)?.disconnect(true);
+      const profile = await world.loadProfile(player); // 오늘 목표 · 출석 스트릭 (저장소)
+      if (!socket.connected || player.socketId !== socket.id) return; // 기다리는 사이 끊김
       ack({
         ok: true,
         resumed: res.resumed,
@@ -71,6 +90,9 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, log = console }
         npcs: world.npcSnapshots(),
         config: world.config,
         serverTime: world.now(),
+        profile,
+        store: world.store.kind,
+        tz: world.tz,
       });
       if (res.resumed) socket.broadcast.emit('playerReconnected', { id: player.id, player: world.publicPlayer(player) });
       else socket.broadcast.emit('playerJoined', { player: world.publicPlayer(player) });
@@ -158,8 +180,28 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, log = console }
     socket.on('npc:name', requirePlayer((payload, ack) => {
       const npc = world.npcById(payload && payload.id);
       if (!npc) return ack({ ok: false, error: 'no_npc' });
-      ack(npc.setName(payload && payload.name));
+      ack(world.setDogName(player, payload && payload.name));
     }));
+
+    // ── 공부 기록: 랭킹 · 오늘 목표 · 할 일 (영구 저장소) ────────────────
+    const safe = (fn) => async (payload, ack) => {
+      try {
+        ack(await fn(payload));
+      } catch (err) {
+        log.warn(`[socket] 저장소 오류: ${err.message}`);
+        ack({ ok: false, error: 'store_error' });
+      }
+    };
+    socket.on('stats', requirePlayer(safe(() => world.stats())));
+    socket.on('goal:set', requirePlayer(safe(async (payload) => {
+      const res = await world.setGoal(player, payload || {});
+      if (res.ok) io.emit('playerGoal', { id: player.id, goal: res.goal });
+      return res;
+    })));
+    socket.on('todo:list', requirePlayer(safe(async () => ({ ok: true, todos: await world.listTodos(player) }))));
+    socket.on('todo:add', requirePlayer(safe((payload) => world.addTodo(player, payload && payload.text))));
+    socket.on('todo:toggle', requirePlayer(safe((payload) => world.setTodoDone(player, payload && payload.id, payload && payload.done))));
+    socket.on('todo:delete', requirePlayer(safe((payload) => world.deleteTodo(player, payload && payload.id))));
 
     socket.on('time:ping', (payload, cb) => {
       ackOf(cb)({ t0: payload && payload.t0, serverTime: world.now() });

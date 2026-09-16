@@ -18,3 +18,5 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_KEY
         sync: false
+      - key: STATS_TZ
+        value: Asia/Seoul
