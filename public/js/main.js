@@ -90,10 +90,33 @@
   ui.onEmoji = (i) => net.emoji(i).catch(() => {});
   ui.onToggleStatus = () => net.setStatus(ui.status === 'study' ? 'rest' : 'study').catch(() => {});
   ui.onAvatar = (avatar) => net.setAvatar(avatar).catch(() => {});
-  ui.onPomodoro = (action) => {
+  ui.onPomodoro = (action, cfg) => {
     // 시작 버튼(사용자 제스처)에서 브라우저 알림 권한을 한 번 물어본다
     if (action === 'start' && FX.Notify.permission() === 'default') FX.Notify.request().then((st) => ui.setNotifyPermission(st));
-    return (action === 'start' ? net.pomodoroStart() : net.pomodoroStop()).catch(() => {});
+    return (action === 'start' ? net.pomodoroStart(cfg) : net.pomodoroStop()).then((r) => {
+      if (r.ok) ui.setPomodoro(r); // ack 에 내 타이머 스냅샷이 실려 온다
+      else if (r.error === 'invalid_focus' || r.error === 'invalid_break') ui.notify('집중 20~90분, 휴식 5~20분 사이로 정해 주세요.');
+    }).catch(() => {});
+  };
+  // 화면 크기 / 넓게 보기 (7단계): 씬 카메라 줌 · 캔버스 크기 재계산
+  ui.onZoom = (z) => scene.setZoom(z);
+  // Phaser RESIZE 모드는 window resize 만 듣는다 → 사이드바를 접고 나서 그 이벤트를 흉내 내 캔버스를 다시 잰다
+  const refit = () => requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+  ui.onWide = refit;
+  scene.setZoom(ui.zoom);
+  refit();
+  // 내 기록 초기화: 서버가 토큰·닉네임 확인 → 목표/할 일/랭킹 화면도 비운다
+  ui.onReset = async (nickname) => {
+    const r = await net.resetProfile(nickname);
+    if (r.ok) {
+      ui.setGoal(null);
+      ui.setTodos([]);
+      if (scene.me) scene.me.setGoal(null);
+      ui.toast('내 기록을 초기화했어요 🧹');
+      ui.addChat({ system: true, text: '공부 세션 · 출석 · 목표 · 할 일을 모두 지웠어요.' });
+      refreshStats();
+    }
+    return r;
   };
   ui.onLeave = async () => {
     clearInterval(statsTimer);
@@ -248,15 +271,15 @@
   net.on('npc:pet', (d) => scene.onNpcPet(d));
   net.on('npc:name', (d) => { scene.onNpcName(d); ui.setNpcName(d.id, d.name); });
   net.on('pomodoro', (snap) => {
+    // 7단계: 내 타이머만 온다 (시작/정지는 ack 로 이미 반영, 여기서는 자동 전환을 알린다)
     const prev = ui.pomodoro;
     ui.setPomodoro(snap);
     if (!prev) return;
-    if (snap.running && !prev.running) ui.notify(`${snap.startedBy || '누군가'} 님이 뽀모도로를 시작했어요.`);
-    else if (!snap.running && prev.running) ui.notify(`${snap.startedBy || '누군가'} 님이 뽀모도로를 정지했어요.`);
-    else if (snap.running && snap.phase !== prev.phase) {
+    if (snap.running && prev.running && snap.phase !== prev.phase) {
       // 집중 ↔ 휴식 전환: 알림음 + 창문·펜던트 플래시 + 브라우저 알림(권한 있을 때)
       const isBreak = snap.phase === 'break';
-      ui.notify(isBreak ? '휴식 시간이에요 ☕ (5분)' : '다시 집중할 시간이에요 📖 (25분)');
+      const mins = Math.round((isBreak ? snap.breakMs : snap.focusMs) / 60000);
+      ui.notify(isBreak ? `휴식 시간이에요 ☕ (${mins}분)` : `다시 집중할 시간이에요 📖 (${mins}분)`);
       sound.chime(isBreak ? 'break' : 'focus');
       scene.flashLights();
       FX.Notify.show(isBreak ? '휴식 시간이에요 ☕' : '다시 집중할 시간이에요 📖', isBreak ? '5분 쉬고 와요.' : '25분 집중!');

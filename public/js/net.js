@@ -170,8 +170,11 @@
     todoToggle(id, done) { return this.ask('todo:toggle', { id, done }); }
     todoDelete(id) { return this.ask('todo:delete', { id }); }
     setNpcName(id, name) { return this.ask('npc:name', { id, name }); }
-    pomodoroStart() { return this.ask('pomodoro:start', {}); }
+    /** 내 뽀모도로 시작 (7단계: 개인 타이머, 집중/휴식 분을 함께 보낸다) */
+    pomodoroStart(cfg = {}) { return this.ask('pomodoro:start', cfg); }
     pomodoroStop() { return this.ask('pomodoro:stop', {}); }
+    /** 내 기록 초기화: 서버가 세션 토큰 + 닉네임을 확인한다 */
+    resetProfile(nickname) { return this.ask('profile:reset', { nickname, token: Net.saved().token }); }
 
     /** 나가기: 서버에서 즉시 정리하고 토큰을 버린다 */
     async leave() {

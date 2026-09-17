@@ -36,6 +36,9 @@
       <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
       <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></symbol>
       <symbol id="i-trophy" viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0zM7 6H4a2 2 0 0 0 0 4h3M17 6h3a2 2 0 0 1 0 4h-3"/></symbol>
+      <symbol id="i-expand" viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></symbol>
+      <symbol id="i-shrink" viewBox="0 0 24 24"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/></symbol>
       <symbol id="i-wifi-off" viewBox="0 0 24 24"><path d="m1 1 22 22M16.7 11.1a10 10 0 0 1 2.1 1.6M5 12.6a10 10 0 0 1 5.2-2.7M10.7 5.1a16 16 0 0 1 11.3 3.6M1.4 8.7a16 16 0 0 1 4.4-3M8.5 16.4a5 5 0 0 1 7 0M12 20h.01"/></symbol>
     </defs>
   </svg>
@@ -55,6 +58,7 @@
       <button class="icon-btn" id="btn-members" title="멤버" aria-label="멤버"><svg class="icon"><use href="#i-users"/></svg></button>
       <button class="icon-btn" id="btn-notify" title="알림" aria-label="알림"><svg class="icon"><use href="#i-bell"/></svg><span class="dot" id="notify-dot" hidden></span></button>
       <button class="icon-btn" id="btn-music" title="음악 (유튜브)" aria-label="음악"><svg class="icon"><use href="#i-music"/></svg></button>
+      <button class="icon-btn" id="btn-wide" title="넓게 보기 (사이드바 접기)" aria-label="넓게 보기"><svg class="icon"><use href="#i-expand"/></svg></button>
       <button class="icon-btn danger" id="btn-leave" title="나가기" aria-label="나가기"><svg class="icon"><use href="#i-logout"/></svg></button>
 
       <div class="popover" id="pop-settings" hidden>
@@ -72,10 +76,22 @@
           <div class="row"><input id="npc-name" type="text" maxlength="8" placeholder="사랑" /><button class="btn small" type="submit">저장</button></div>
         </form>
         <div class="field">
+          <label>화면</label>
+          <div class="row">
+            <span class="muted">크기</span>
+            <div class="tabs" id="zoom-tabs"><button type="button" data-zoom="1.5">작게</button><button type="button" data-zoom="2" class="active">보통</button><button type="button" data-zoom="2.5">크게</button></div>
+          </div>
+          <label class="opt"><input type="checkbox" id="opt-wide" /><svg class="icon"><use href="#i-expand"/></svg><span>넓게 보기 (사이드바 접기)</span></label>
+        </div>
+        <div class="field">
           <label>연출</label>
           <label class="opt"><input type="checkbox" id="opt-night" /><svg class="icon"><use href="#i-moon"/></svg><span>창밖 항상 밤으로 고정</span></label>
           <label class="opt"><input type="checkbox" id="opt-sound" checked /><svg class="icon"><use href="#i-bell"/></svg><span>뽀모도로 알림 소리</span></label>
           <button class="btn small ghost" id="btn-notify-perm" type="button">브라우저 알림 허용</button>
+        </div>
+        <div class="field">
+          <label>기록</label>
+          <button class="btn small ghost danger" id="btn-reset" type="button"><svg class="icon"><use href="#i-trash"/></svg><span>내 기록 초기화</span></button>
         </div>
         <p class="hint">이동 방향키/WASD · E 앉기/쓰다듬기/커피/음악 · 채팅 Enter · 이모지 1~6</p>
       </div>
@@ -127,7 +143,7 @@
     </section>
 
     <section class="card" id="card-pomo">
-      <header><svg class="icon"><use href="#i-timer"/></svg><h2>뽀모도로</h2><span class="muted" id="pomo-by"></span></header>
+      <header><svg class="icon"><use href="#i-timer"/></svg><h2>뽀모도로</h2><span class="muted" id="pomo-by">내 타이머</span></header>
       <div class="pomo">
         <div class="gauge">
           <svg viewBox="0 0 120 120">
@@ -137,7 +153,11 @@
           <div class="gauge-text"><div id="pomo-time">25:00</div><div id="pomo-phase" class="muted">대기 중</div></div>
         </div>
         <div class="pomo-ctl">
-          <p class="hint">25분 집중 · 5분 휴식 · 모두에게 공유</p>
+          <div class="pomo-cfg" id="pomo-cfg">
+            <label>집중 <input id="pomo-focus" type="number" min="20" max="90" step="5" value="25" /> 분</label>
+            <label>휴식 <input id="pomo-break" type="number" min="5" max="20" step="1" value="5" /> 분</label>
+          </div>
+          <p class="hint" id="pomo-hint">나에게만 · 시작 전에 바꿀 수 있어요</p>
           <button class="btn" id="btn-pomo"><svg class="icon"><use href="#i-play"/></svg><span>시작</span></button>
         </div>
       </div>
@@ -156,7 +176,6 @@
       <header>
         <svg class="icon"><use href="#i-music"/></svg><h2>음악</h2>
         <span class="muted" id="music-title"></span>
-        <button class="icon-btn small ghost" id="music-collapse" type="button" title="접기"><svg class="icon"><use href="#i-chevron"/></svg></button>
         <button class="icon-btn small ghost" id="music-close" type="button" title="닫기"><svg class="icon"><use href="#i-x"/></svg></button>
       </header>
       <div class="music-body">
@@ -200,6 +219,21 @@
       </div>
       <p class="error" id="login-error" hidden></p>
       <button class="btn primary" type="submit" id="login-submit">입장</button>
+    </form>
+  </div>
+
+  <!-- 내 기록 초기화 확인 (닉네임을 똑같이 입력해야 진행) -->
+  <div id="reset-modal" class="modal" hidden>
+    <form class="modal-box" id="reset-form" autocomplete="off">
+      <h1>내 기록 초기화</h1>
+      <p class="muted">공부 세션 · 출석 · 오늘 목표 · 할 일이 <b>모두 삭제</b>되고 되돌릴 수 없어요. 아바타와 강아지 이름은 남아요.</p>
+      <p class="muted">확인을 위해 닉네임 <b id="reset-nick-label"></b> 을(를) 똑같이 입력하세요.</p>
+      <input id="reset-nick" type="text" maxlength="12" placeholder="닉네임" required />
+      <p class="error" id="reset-error" hidden></p>
+      <div class="row modal-actions">
+        <button class="btn ghost" type="button" id="reset-cancel">취소</button>
+        <button class="btn danger" type="submit" id="reset-submit" disabled>삭제</button>
+      </div>
     </form>
   </div>
 

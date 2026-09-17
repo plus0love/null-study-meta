@@ -12,7 +12,10 @@
  *   avatar:update { avatar }                 → ack { ok, avatar(정규화됨) }, 모두에게 avatar:update { id, avatar } (본인 포함)
  *   chat      { text }                       → ack { ok, error? }, 모두에게 chat { id, nickname, text, ts }
  *   emoji     { index }                      → 모두에게 playerEmoji { id, emoji }
- *   pomodoro:start / pomodoro:stop           → 모두에게 pomodoro { ...snapshot }
+ *   pomodoro:start { focusMinutes?, breakMinutes? } / pomodoro:stop → ack { ok, ...snapshot | error }. 7단계: **개인 타이머** —
+ *             본인에게만 pomodoro { ...snapshot } (자동 전환 때도). 집중 20~90분 · 휴식 5~20분, 진행 중엔 설정 변경 불가
+ *   profile:reset { nickname, token }        → ack { ok, counts?, error?: confirm_mismatch }. 본인 토큰·닉네임 확인 후 세션·출석·목표·할 일 삭제,
+ *                                              모두에게 playerGoal { id, goal: null } + leaderboard:refresh
  *   time:ping { t0 }                         → ack { t0, serverTime }
  *   leave                                    → 즉시 정리 (유예 없음)
  *   npc:pet   { id }                         → ack { ok, error? }, 모두에게 npc:pet { id, by, nickname } + 시스템 chat
@@ -43,7 +46,7 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, gate = createGa
     io.emit('playerLeft', { id: player.id, nickname: player.nickname, reason });
     io.emit('roomCount', { count: world.connectedCount });
   });
-  world.on('pomodoro', (snap) => io.emit('pomodoro', snap));
+  world.on('pomodoro', (snap, _reason, player) => io.sockets.sockets.get(player.socketId)?.emit('pomodoro', snap));
   world.on('npcUpdate', (snap) => io.emit('npc:update', snap));
   world.on('npcPet', ({ npc, by, playerId, name }) => {
     io.emit('npc:pet', { id: npc, by, playerId });
@@ -97,7 +100,7 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, gate = createGa
         self: world.publicPlayer(player),
         players: world.listPlayers().filter((p) => p.id !== player.id),
         seats: world.seatSnapshot(),
-        pomodoro: world.pomodoro.snapshot(),
+        pomodoro: world.pomodoroOf(player).snapshot(),
         npcs: world.npcSnapshots(),
         config: world.config,
         serverTime: world.now(),
@@ -174,12 +177,8 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, gate = createGa
       io.emit('playerEmoji', { id: player.id, emoji });
     }));
 
-    socket.on('pomodoro:start', requirePlayer((_p, ack) => {
-      ack({ ok: world.pomodoro.start(player.nickname) });
-    }));
-    socket.on('pomodoro:stop', requirePlayer((_p, ack) => {
-      ack({ ok: world.pomodoro.stop(player.nickname) });
-    }));
+    socket.on('pomodoro:start', requirePlayer((payload, ack) => ack(world.startPomodoro(player, payload || {}))));
+    socket.on('pomodoro:stop', requirePlayer((_p, ack) => ack(world.stopPomodoro(player))));
 
     socket.on('npc:pet', requirePlayer((payload, ack) => {
       const npc = world.npcById(payload && payload.id);
@@ -212,6 +211,14 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, gate = createGa
     socket.on('todo:add', requirePlayer(safe((payload) => world.addTodo(player, payload && payload.text))));
     socket.on('todo:toggle', requirePlayer(safe((payload) => world.setTodoDone(player, payload && payload.id, payload && payload.done))));
     socket.on('todo:delete', requirePlayer(safe((payload) => world.deleteTodo(player, payload && payload.id))));
+    socket.on('profile:reset', requirePlayer(safe(async (payload) => {
+      const res = await world.resetProfile(player, payload || {});
+      if (res.ok) {
+        io.emit('playerGoal', { id: player.id, goal: null });
+        io.emit('leaderboard:refresh', { nickname: player.nickname, seconds: 0 });
+      }
+      return res;
+    })));
 
     socket.on('time:ping', (payload, cb) => {
       ackOf(cb)({ t0: payload && payload.t0, serverTime: world.now() });

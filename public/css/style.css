@@ -71,6 +71,11 @@ ul { padding: 0; list-style: none; }
   overflow: hidden;
 }
 
+/* 넓게 보기 (7단계): 사이드바를 접고 캔버스가 화면 전체 */
+body.wide #stage { right: 0; }
+body.wide #sidebar { display: none; }
+body.wide #btn-wide { color: var(--amber-2); border-color: var(--line-strong); background: var(--amber-dim); }
+
 #game canvas {
   display: block;
   image-rendering: pixelated;
@@ -231,6 +236,11 @@ ul { padding: 0; list-style: none; }
 .btn.small { padding: 5px 9px; font-size: 12px; border-radius: 8px; }
 .btn.ghost { background: transparent; }
 .btn:disabled { opacity: 0.5; cursor: default; }
+.btn.danger { color: var(--danger); border-color: rgba(255, 138, 122, 0.45); }
+.btn.danger:hover { background: rgba(255, 138, 122, 0.14); border-color: var(--danger); }
+.btn.danger:not(.ghost):not(:disabled) { background: rgba(255, 138, 122, 0.16); }
+.modal-actions { justify-content: flex-end; }
+.modal-box p.muted b { color: var(--cream); }
 .btn.status.study { color: var(--amber-2); border-color: var(--line-strong); }
 .btn.status.rest { color: var(--ok); }
 .btn.status.coffee { color: #f0b898; border-color: rgba(217, 151, 122, 0.45); }
@@ -335,9 +345,17 @@ kbd {
   flex: none;
 }
 .card header { display: flex; align-items: center; gap: 8px; }
-.card header h2 { font-size: 13px; font-weight: 700; color: var(--amber-2); letter-spacing: 0.03em; }
+.card header h2 { font-size: 13px; font-weight: 700; color: var(--amber-2); letter-spacing: 0.03em; white-space: nowrap; flex: none; }
 .card header .icon { color: var(--amber); width: 16px; height: 16px; }
 .card header .muted { margin-left: auto; font-size: 12px; }
+/* 카드 접기/펼치기 (7단계): 제목 줄만 남기고 나머지는 숨김. 상태는 localStorage */
+.card header .card-toggle { width: 24px; height: 24px; border-radius: 7px; margin-left: 0; flex: none; }
+.card header .card-toggle .icon { width: 14px; height: 14px; transition: transform 0.15s; }
+.card header .muted + .card-toggle { margin-left: 6px; }
+.card header h2 + .card-toggle { margin-left: auto; }
+.card.collapsed > :not(header) { display: none !important; }
+.card.collapsed { flex: none !important; min-height: 0 !important; max-height: none !important; }
+.card.collapsed header .card-toggle .icon { transform: rotate(180deg); }
 
 #minimap {
   width: auto;
@@ -465,13 +483,26 @@ input::placeholder { color: var(--cream-faint); }
 #pomo-time { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
 #pomo-phase { font-size: 11px; }
 .pomo-ctl { display: flex; flex-direction: column; gap: 8px; flex: 1; }
+.pomo-cfg { display: flex; flex-wrap: wrap; gap: 6px 10px; font-size: 12px; color: var(--cream-dim); }
+.pomo-cfg label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.pomo-cfg input[type="number"] {
+  width: 46px;
+  padding: 3px 4px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: rgba(14, 11, 18, 0.7);
+  color: var(--cream);
+  outline: none;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.pomo-cfg input[type="number"]:focus { border-color: var(--line-strong); box-shadow: 0 0 0 3px var(--amber-dim); }
+.pomo-cfg input[type="number"]:disabled { opacity: 0.5; }
 
 /* 유튜브 카드 */
 #card-music header .muted { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #card-music header .icon-btn.small { width: 26px; height: 26px; border-radius: 7px; margin-left: 0; }
 #card-music header .icon-btn.small .icon { width: 14px; height: 14px; }
-#card-music.collapsed .music-body { display: none; }
-#card-music.collapsed #music-collapse .icon { transform: rotate(180deg); }
 #card-music.playing header h2::after { content: ' ♪'; color: var(--amber); }
 .music-body { display: flex; flex-direction: column; gap: 8px; }
 .player-box { position: relative; width: 100%; aspect-ratio: 16 / 9; max-height: 180px; border-radius: 10px; overflow: hidden; background: #0b0910; border: 1px solid rgba(255, 184, 92, 0.14); }
@@ -482,7 +513,7 @@ input::placeholder { color: var(--cream-faint); }
 #music-recent li .text:hover { color: var(--amber-2); }
 #music-recent li.empty { justify-content: center; color: var(--cream-faint); background: transparent; font-size: 12px; }
 
-#card-chat { flex: 1; min-height: 160px; }
+#card-chat { flex: 1; min-height: 224px; } /* 7단계: 160 → 224 (+40%) */
 #chat-log {
   flex: 1;
   overflow-y: auto;

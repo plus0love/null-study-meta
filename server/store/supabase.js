@@ -105,6 +105,16 @@ function createSupabaseStore({ url, key }) {
       return { nickname: r.nickname, date: r.date, goalText: r.goal_text, targetMinutes: r.target_minutes };
     },
 
+    // ── 기록 초기화 (7단계) ───────────────────────────────────────────
+    async resetUser(nickname) {
+      const counts = {};
+      for (const [key, table] of [['sessions', 'study_sessions'], ['attendance', 'attendance'], ['goals', 'daily_goals'], ['todos', 'todos']]) {
+        const rows = check(await client.from(table).delete().eq('nickname', nickname).select('nickname'));
+        counts[key] = rows ? rows.length : 0;
+      }
+      return counts;
+    },
+
     async close() {},
   };
 }

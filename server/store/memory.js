@@ -8,6 +8,7 @@
  *  recordAttendance / attendanceOf / attendanceStats
  *  listTodos / addTodo / setTodoDone / deleteTodo
  *  getGoal / setGoal
+ *  resetUser (세션·출석·목표·할 일 삭제, users 행은 유지)
  */
 const { DEFAULT_TZ, dateKey, streakOf, totalsOf } = require('./stats');
 
@@ -132,6 +133,17 @@ function createMemoryStore() {
       const g = { nickname, date, goalText, targetMinutes };
       goals.set(`${nickname}|${date}`, g);
       return { ...g };
+    },
+
+    // ── 기록 초기화 (7단계) ───────────────────────────────────────────
+    /** 닉네임의 공부 세션·출석·목표·할 일을 지운다. users(아바타·강아지 이름)는 남긴다. 반환: 지운 개수 */
+    async resetUser(nickname) {
+      const counts = { sessions: 0, attendance: 0, goals: 0, todos: 0 };
+      for (let i = sessions.length - 1; i >= 0; i--) if (sessions[i].nickname === nickname) { sessions.splice(i, 1); counts.sessions++; }
+      for (const k of [...attendance]) if (k.startsWith(`${nickname}|`)) { attendance.delete(k); counts.attendance++; }
+      for (const k of [...goals.keys()]) if (k.startsWith(`${nickname}|`)) { goals.delete(k); counts.goals++; }
+      for (let i = todos.length - 1; i >= 0; i--) if (todos[i].nickname === nickname) { todos.splice(i, 1); counts.todos++; }
+      return counts;
     },
 
     async close() {},

@@ -161,36 +161,41 @@ test('소켓 E2E: 채팅(이스케이프·200자·도배), 이모지', async (t)
   assert.equal((await ask(a, 'emoji', { index: 6 })).ok, false);
 });
 
-test('소켓 E2E: 공용 뽀모도로 — 누구나 시작/정지, 자동 전환, 서버 시각 동기화', async (t) => {
+test('소켓 E2E: 개인 뽀모도로 — 내 타이머만 받고, 각자 따로 돌고, 자동 전환, 서버 시각 동기화', async (t) => {
   const srv = await boot({ world: { pomodoro: { focusMs: 120, breakMs: 80 } } });
   t.after(() => srv.close());
   const a = connect(srv.port);
   const b = connect(srv.port);
   t.after(() => { a.close(); b.close(); });
   await joinAs(a, { nickname: 'A' });
-  await joinAs(b, { nickname: 'B' });
+  const jb = await joinAs(b, { nickname: 'B' });
+  assert.equal(jb.pomodoro.running, false);
 
   const pong = await ask(a, 'time:ping', { t0: 42 });
   assert.equal(pong.t0, 42);
   assert.ok(Math.abs(pong.serverTime - Date.now()) < 1000);
 
   const seenB = collect(b, 'pomodoro');
-  const started = once(b, 'pomodoro');
-  assert.equal((await ask(a, 'pomodoro:start')).ok, true);
-  const s = await started;
+  const seenA = collect(a, 'pomodoro');
+  const s = await ask(a, 'pomodoro:start');
+  assert.equal(s.ok, true);
   assert.equal(s.running, true);
   assert.equal(s.phase, 'focus');
   assert.equal(s.startedBy, 'A');
   assert.equal(s.endsAt - s.startedAt, 120);
-  assert.equal((await ask(b, 'pomodoro:start')).ok, false); // 이미 실행 중
-  await once(b, 'pomodoro', { filter: (p) => p.phase === 'break' });
-  await once(b, 'pomodoro', { filter: (p) => p.phase === 'focus' && p.running });
-  const stopped = once(a, 'pomodoro', { filter: (p) => !p.running });
-  assert.equal((await ask(b, 'pomodoro:stop')).ok, true); // 다른 사람이 정지
-  const last = await stopped;
-  assert.equal(last.startedBy, 'B');
-  assert.ok(seenB.length >= 3);
-  // 새로 들어온 사람은 현재 상태를 받는다
+  assert.equal((await ask(a, 'pomodoro:start')).error, 'running'); // 내 것은 이미 실행 중
+  assert.equal((await ask(b, 'pomodoro:start')).ok, true); // B 는 자기 타이머를 따로 시작
+  assert.equal((await ask(b, 'pomodoro:stop')).ok, true);
+  assert.equal((await ask(b, 'pomodoro:stop')).error, 'not_running');
+  await once(a, 'pomodoro', { filter: (p) => p.phase === 'break' });
+  await once(a, 'pomodoro', { filter: (p) => p.phase === 'focus' && p.running });
+  const stopped = await ask(a, 'pomodoro:stop');
+  assert.equal(stopped.ok, true);
+  assert.equal(stopped.running, false);
+  await sleep(50);
+  assert.ok(seenA.length >= 3, 'A 는 자기 타이머의 시작·전환·정지를 받는다');
+  assert.ok(seenB.every((p) => p.startedBy === 'B'), 'B 에게는 A 의 타이머 이벤트가 오지 않는다');
+  // 새로 들어온 사람은 자기(비어 있는) 타이머를 받는다
   const c = connect(srv.port);
   t.after(() => c.close());
   const jc = await joinAs(c, { nickname: 'C' });

@@ -6,7 +6,7 @@
  *  - 상호작용 지점(커피머신 앞 E → 'coffee' 상태), 듣는 중(유튜브 제목) 표시
  *  - 4단계: 영구 데이터는 store(메모리/Supabase) — 공부 세션·출석·오늘 목표·할 일·강아지 이름. 실시간 상태는 계속 메모리.
  *  - 5단계: 아바타는 파츠 객체(avatar.js 카탈로그 검증) — users.avatar 에 저장하고 재입장 시 복원.
- * 이벤트: 'playerLeft' (유예 시간이 지나 정리될 때), 'pomodoro' (상태 변화),
+ * 이벤트: 'playerLeft' (유예 시간이 지나 정리될 때), 'pomodoro' (snap, reason, player — 개인 타이머 상태 변화),
  *         'npcUpdate' (NPC 스냅샷, 10Hz), 'npcPet' ({ npc, by, nickname }), 'npcName' ({ npc, name }),
  *         'sessionSaved' { nickname, playerId, seconds }, 'attendance' { nickname, playerId, streak, weekDays, inserted },
  *         'goalReached' { nickname, playerId, todaySeconds, targetMinutes }
@@ -61,8 +61,8 @@ class World extends EventEmitter {
     this.seatOwners = new Map(); // seatId → playerId
     this.graceTimers = new Map(); // playerId → timeout
     this.chatLimiter = createRateLimiter();
-    this.pomodoro = new Pomodoro({ ...pomodoro, now });
-    this.pomodoro.on('change', (snap, reason) => this.emit('pomodoro', snap, reason));
+    this.pomodoroOpts = { ...pomodoro, now }; // 개인 타이머 기본값 (테스트: focusMs/breakMs)
+    this.pomodoros = new Map(); // playerId → Pomodoro (7단계: 개인별, 퇴장하면 정리)
 
     // 강아지 NPC: 접속 중인 플레이어 위치를 보고 행동한다. npc.autoStart === false 면 테스트가 직접 tick() 한다.
     this.dog = new DogNpc(room, { ...npc, now });
@@ -217,6 +217,8 @@ class World extends EventEmitter {
     this.players.delete(id);
     this.sessions.delete(player.token);
     this.chatLimiter.forget(id);
+    const pomo = this.pomodoros.get(id);
+    if (pomo) { pomo.dispose(); this.pomodoros.delete(id); }
     player.removed = true;
     this.study.sync(player); // 앉은 채 나가면 세션 저장
     this.emit('playerLeft', player, reason);
@@ -340,6 +342,39 @@ class World extends EventEmitter {
     return EMOJIS[i];
   }
 
+  // ── 개인 뽀모도로 ──────────────────────────────────────────────────
+  /** 플레이어의 타이머 (없으면 기본값으로 생성). 재접속으로 이어받으면 그대로 유지된다 */
+  pomodoroOf(player) {
+    let p = this.pomodoros.get(player.id);
+    if (!p) {
+      p = new Pomodoro(this.pomodoroOpts);
+      p.on('change', (snap, reason) => this.emit('pomodoro', snap, reason, player));
+      this.pomodoros.set(player.id, p);
+    }
+    return p;
+  }
+
+  /**
+   * 내 타이머 시작. focusMinutes/breakMinutes 를 주면 먼저 설정(20~90 / 5~20분)하고 시작한다.
+   * @returns {{ ok: true, ...snapshot } | { ok: false, error: 'running' | 'invalid_focus' | 'invalid_break' }}
+   */
+  startPomodoro(player, { focusMinutes, breakMinutes } = {}) {
+    const pomo = this.pomodoroOf(player);
+    if (pomo.running) return { ok: false, error: 'running' };
+    if (focusMinutes !== undefined || breakMinutes !== undefined) {
+      const c = pomo.configure({ focusMinutes: focusMinutes ?? pomo.focusMs / 60000, breakMinutes: breakMinutes ?? pomo.breakMs / 60000 });
+      if (!c.ok) return c;
+    }
+    pomo.start(player.nickname);
+    return { ok: true, ...pomo.snapshot() };
+  }
+
+  stopPomodoro(player) {
+    const pomo = this.pomodoros.get(player.id);
+    if (!pomo || !pomo.stop(player.nickname)) return { ok: false, error: 'not_running' };
+    return { ok: true, ...pomo.snapshot() };
+  }
+
   // ── 오늘 목표 / 랭킹 / 할 일 (영구 데이터) ──────────────────────────
   goalOf(nickname) {
     const g = this.goals.get(nickname);
@@ -363,6 +398,21 @@ class World extends EventEmitter {
     // 이미 넘어 있는 목표는 조용히 달성 처리(🎉 없음). reached 는 그 사실만 알려준다
     const reached = this.study.markGoal(player.nickname, true) || this.study.todaySeconds(player.nickname) >= mins * 60;
     return { ok: true, goal: this.publicGoal(player.nickname), reached };
+  }
+
+  /**
+   * 내 기록 초기화(7단계): 공부 세션·출석·오늘 목표·할 일을 지운다 (아바타·강아지 이름은 유지).
+   * 본인 확인: 세션 토큰 + 닉네임이 모두 일치해야 한다. 앉아서 공부 중이면 지금부터 새 세션을 센다.
+   * @returns {{ ok: true, counts } | { ok: false, error: 'confirm_mismatch' }}
+   */
+  async resetProfile(player, { nickname, token } = {}) {
+    if (typeof token !== 'string' || token !== player.token || nickname !== player.nickname) return { ok: false, error: 'confirm_mismatch' };
+    this.study.reset(player.nickname);
+    const counts = await this.store.resetUser(player.nickname);
+    this.goals.delete(player.nickname);
+    this.study.sync(player);
+    this.log.log(`[world] 기록 초기화 ${player.nickname}: ${JSON.stringify(counts)}`);
+    return { ok: true, counts };
   }
 
   async stats() {
@@ -409,7 +459,8 @@ class World extends EventEmitter {
   async dispose() {
     for (const t of this.graceTimers.values()) clearTimeout(t);
     this.graceTimers.clear();
-    this.pomodoro.dispose();
+    for (const p of this.pomodoros.values()) p.dispose();
+    this.pomodoros.clear();
     for (const n of this.npcs) n.dispose();
     await this.study.flushAll('shutdown');
   }

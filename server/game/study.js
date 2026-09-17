@@ -98,6 +98,17 @@ class StudyTracker extends EventEmitter {
     return !silent;
   }
 
+  /** 기록 초기화(7단계): 진행 중 세션은 저장하지 않고 버리고, 저장된 합계·목표 달성 기억을 지운다. 반환: 버린 세션 또는 null */
+  reset(nickname) {
+    const s = this.live.get(nickname) || null;
+    this.live.delete(nickname);
+    this.saved.delete(nickname);
+    for (const k of [...this.goalReached]) if (k.startsWith(`${nickname}|`)) this.goalReached.delete(k);
+    this.statsCache = null;
+    if (s) this.emit('discarded', { nickname, seconds: this.liveSeconds(nickname), reason: 'reset' });
+    return s;
+  }
+
   /** 세션 종료 → 60초 이상이면 저장. 반환: 저장된 세션 또는 null */
   end(nickname, reason = 'end') {
     const s = this.live.get(nickname);

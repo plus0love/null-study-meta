@@ -3,7 +3,7 @@
 2D 탑뷰 멀티플레이 **스터디 메타버스**. 밤의 아늑한 스터디 카페 "우리의 스터디룸"에서 같이 공부하는 공간을 만듭니다.
 
 > **현재 단계: 5단계 — 아바타 커스터마이징.** 닉네임으로 입장해 다른 접속자와 같은 방을 걸어다니고(서버 이동 검증),
-> 의자·푸프·소파에 앉고(E), 채팅·이모지·공부/휴식 상태·공용 뽀모도로를 공유합니다. 끊겨도 30초 안에 같은 세션으로 이어집니다.
+> 의자·푸프·소파에 앉고(E), 채팅·이모지·공부/휴식 상태를 공유하고 각자 뽀모도로를 돌립니다. 끊겨도 30초 안에 같은 세션으로 이어집니다.
 > 라운지의 갈색 푸들 "사랑" 은 서버가 움직이는 NPC 로, 가까이 가면 쳐다보고 E 로 쓰다듬을 수 있습니다.
 > 3단계에서는 목업처럼 두께감 있는 유리 스터디룸·슬라이딩 문으로 맵을 정리하고, 책상에 앉으면 모니터가 켜지고,
 > 커피머신 앞에서 E 로 ☕ 휴식, 창밖은 실제 시각에 따라 낮/노을/밤으로 바뀌며, 뽀모도로 전환 연출과 유튜브 카드가 붙었습니다.
@@ -47,13 +47,13 @@ null-study-meta/
 ├── supabase/schema.sql       # 영구 데이터 스키마 + 집계 SQL 함수 (여러 번 실행 안전, RLS on · 정책 없음)
 ├── server/
 │   ├── index.js              # Express 부트스트랩, /healthz, /api/rooms/studyroom, /api/oembed(유튜브 제목 프록시), Socket.io 부착, SIGTERM 시 세션 저장
-│   ├── socket.js             # 소켓 프로토콜 배선 (join/move/sit/status/interact/listening/chat/emoji/pomodoro/time:ping/leave/npc:*)
+│   ├── socket.js             # 소켓 프로토콜 배선 (join/move/sit/status/interact/listening/chat/emoji/pomodoro/profile:reset/time:ping/leave/npc:*)
 │   ├── game/
 │   │   ├── world.js          # 방 실시간 상태: 플레이어·세션 토큰·좌석 점유·상태(공부/휴식/☕)·상호작용·듣는 중·유예 정리 (순수 로직)
 │   │   ├── movement.js       # 발 박스 충돌 + "경과 시간 × 최대 속도 × 1.5" 이동 예산 검증
 │   │   ├── nickname.js       # 닉네임 규칙(문자·숫자·공백·_- 12자) + 중복 시 "이름2"
 │   │   ├── chat.js           # 200자·HTML 이스케이프·300ms 도배 방지
-│   │   ├── pomodoro.js       # 공용 뽀모도로 25/5 자동 전환 (서버 시각 기준)
+│   │   ├── pomodoro.js       # 개인 뽀모도로 (기본 25/5, 집중 20~90·휴식 5~20분, 자동 전환, 서버 시각 기준)
 │   │   ├── study.js          # 공부 세션(앉아서 공부 중, 60초 미만 폐기) · 출석 · 오늘 목표 달성 · 랭킹 통계 (저장소 인터페이스만 사용)
 │   │   └── npc.js            # 강아지 NPC: 어슬렁/앉기/자기/산책 상태기계, BFS 경로(충돌 준수), 쳐다보기, 쓰다듬기 쿨다운, 이름
 │   ├── rooms/
@@ -64,7 +64,7 @@ null-study-meta/
 │   ├── index.html, css/style.css
 │   ├── js/main.js            # 부트스트랩: 방 데이터 fetch → Phaser 생성 → Net·UI·씬·FX 연결, 입장/재입장 흐름
 │   ├── js/net.js             # 소켓 래퍼: join/재접속(세션 토큰 localStorage), 서버 시각 동기화, 20Hz 이동 전송
-│   ├── js/ui.js              # HUD(방 이름·인원·뽀모도로 배지·설정·멤버·알림·♪·나가기) + 사이드바(미니맵·오늘의 목표·할 일·뽀모도로·랭킹·유튜브·채팅) + 토스트·입장 모달 + 아바타 빌더(AvatarBuilder)
+│   ├── js/ui.js              # HUD(방 이름·인원·뽀모도로 배지·설정·멤버·알림·♪·넓게 보기·나가기) + 사이드바(접을 수 있는 카드: 미니맵·오늘의 목표·할 일·뽀모도로·랭킹·유튜브·채팅) + 토스트·입장/초기화 모달 + 아바타 빌더(AvatarBuilder)
 │   ├── js/avatar-schema.js   # 아바타 값 검증 (catalog 기준, 서버와 같은 파일을 require)
 │   ├── js/avatar.js          # AvatarKit: catalog + 레이어 PNG 로드, 팔레트 리컬러, 레이어 합성 시트/프레임 그리기
 │   ├── js/daylight.js        # 시간대 가중치(낮/노을/밤, 경계 30분) + 하늘 팔레트 + 실내 연출 강도 (순수 함수, 테스트 공용)
@@ -108,7 +108,7 @@ npm start            # http://localhost:3000  (개발 중 자동 재시작: npm 
 | 상태 전환 | 좌하단 "공부 중 / 휴식 중" 버튼. 아바타 머리 위 📖 / ☕ |
 
 - 화면: 좌상단 방 이름·인원, 우상단 설정(셔츠 색·닉네임 변경)·멤버·알림·나가기, 오른쪽 360px 사이드바에
-  미니맵 · 오늘의 할 일(localStorage) · 공용 뽀모도로(25/5 자동 전환, 누구나 시작/정지, 서버 시각 기준) · 채팅.
+  미니맵 · 오늘의 목표 · 오늘의 할 일 · 내 뽀모도로(집중/휴식 분 설정, 자동 전환, 서버 시각 기준) · 랭킹 · 채팅. 카드마다 접기/펼치기(상태 기억).
 - 캔버스는 사이드바를 뺀 영역에 꽉 차고(`Scale.RESIZE`) 카메라 줌 2배로 내 아바타를 따라갑니다. `pixelArt: true`.
 - 재접속: 입장 시 받은 세션 토큰을 localStorage 에 두고, 끊기면 "재접속 중" 배너 → 같은 토큰으로 기존 플레이어를 이어받습니다
   (30초 유예). 서버가 재시작됐으면 저장된 닉네임·셔츠 색으로 새로 입장합니다.
@@ -125,10 +125,11 @@ npm test
 | 파일 | 내용 |
 |---|---|
 | `game.test.js` | 단위: 닉네임 규칙/중복, 이동 예산(정상 속도 허용·순간이동 거부·벽), 채팅 이스케이프/도배, 뽀모도로 자동 전환, 월드(좌석 점유·상태 복귀·유예 재접속) |
+| `stage7.test.js` | 7단계: 뽀모도로 configure 범위(20~90/5~20)·진행 중 거부, 월드 개인 타이머(따로 돌고·시작 때 설정·퇴장 정리·재접속 유지), 기록 초기화(메모리 저장소 resetUser 는 세션·출석·목표·할 일만, StudyTracker.reset 은 진행 중 세션 폐기, World.resetProfile 토큰·닉네임 확인), 소켓 `profile:reset` E2E(거부·삭제·playerGoal null·leaderboard:refresh·랭킹 0), 브라우저(카드 접기 새로고침 유지·채팅 높이·뽀모도로 입력 범위/잠김·줌 2.5 텍스트 해상도·넓게 보기 캔버스 전체·초기화 모달 닉네임 확인) |
 | `study.test.js` | 4단계: 날짜 규칙(시간대 0시·월요일 주 시작·세션은 시작 날짜), 출석 스트릭(경계일·끊김·주 경계), 메모리 저장소(세션·출석·목표·할 일 이월·강아지 이름), 세션 규칙(60초 폐기·휴식/커피 전환·일어나기·퇴장·재접속 유지·종료 저장), 출석 이벤트, 목표 달성(검증·한 번만·다음 날 리셋), 랭킹 통계, 저장소 폴백·인터페이스 동일성, 소켓 E2E(프로필·playerGoal·leaderboard:refresh·attendance·goalReached·할 일 CRUD·강아지 이름 저장) |
 | `stage3.test.js` | 3단계: 커피머신 상호작용(거리·토글·앉으면 공부→일어나면 휴식), 듣는 중 제목, 소켓 `interact`/`listening` 브로드캐스트, oEmbed 프록시(가짜 fetch·캐시, 네트워크 없음), 시간대 가중치(경계 30분·합 1·팔레트), 유튜브 URL 파싱·최근 5개 |
 | `npc.test.js` | 강아지: 결정적 난수로 20분 돌려도 막힌 칸에 안 들어감·모든 상태 순환·산책, 틱당 이동량, 쳐다보기, 쓰다듬기 쿨다운, 이름 규칙 + 소켓: 두 클라이언트가 같은 `npc:update` 를 받음, 쓰다듬기/이름 브로드캐스트 |
-| `socket.test.js` | 소켓 E2E: 입장/중복 닉네임, playerMoved 가 발신자에게 안 감, move:correct 는 본인에게만, 착석/상태/아바타, 채팅/이모지, 뽀모도로 동기화, 토큰 재접속·옛 소켓 정리·유예 만료 |
+| `socket.test.js` | 소켓 E2E: 입장/중복 닉네임, playerMoved 가 발신자에게 안 감, move:correct 는 본인에게만, 착석/상태/아바타, 채팅/이모지, 개인 뽀모도로(내 것만 받음·각자 따로), 토큰 재접속·옛 소켓 정리·유예 만료 |
 | `gate.test.js` | 6단계: 게이트 단위(비활성 통과·빈 값·틀림/맞음·5회 → 잠금·시간 경과 후 해제·성공 시 초기화·긴 값·IP 분리·X-Forwarded-For 키·평문 미로그), 서버 E2E(`/api/config`·`password_required`·`wrong_password remaining`·`locked retryAfterMs`·정상 입장·살아 있는 토큰 재접속은 비밀번호 없이·재시작 후엔 다시 필요·로그에 평문 없음), 브라우저(비밀번호 칸 표시·틀림 → 에러·맞음 → 입장·`nsm.password` 기억·새 탭 자동 입장) |
 | `avatar.test.js` | 5단계: 카탈로그(머리 ≥10·상의 5·안경 3·색 6/10/12/8/6, 톤 수 = 팔레트 수), 검증(없는 id·잘못된 값 → 기본값, 옛 정수/`{shirt}` → 상의 색, 여분 필드 제거), `users.avatar` 저장/아바타 미전송 재입장 복원, `avatar:update` ack·본인 포함 브로드캐스트, 모든 레이어 PNG 존재 + 128×256(32×64 ×4×4) 규격 |
 | `latency.test.js` | TCP 지연 프록시(편도 300ms)로 두 명이 20Hz 이동 → 거부 0건, 상대·서버·새 입장자 모두 같은 최종 위치 |
@@ -153,7 +154,8 @@ npm test
 | `todo:list` / `todo:add { text }` / `todo:toggle { id, done }` / `todo:delete { id }` | 본인 닉네임의 할 일. 목록은 미완료 전부 + 오늘 완료한 것, 어제 이전 미완료는 `carried: true`(이월) 로 맨 위 |
 | `chat { text }` | 200자·이스케이프·300ms 검사 → 모두에게 `chat { id, nickname, text, ts }` |
 | `emoji { index 0..5 }` | `playerEmoji { id, emoji }` |
-| `pomodoro:start` / `pomodoro:stop` | `pomodoro { running, phase, startedAt, endsAt, startedBy, serverTime }` (자동 전환 때도) |
+| `pomodoro:start { focusMinutes?, breakMinutes? }` / `pomodoro:stop` | **개인 타이머** (7단계). ack `{ ok, ...snapshot }` 또는 `{ ok:false, error: running \| not_running \| invalid_focus \| invalid_break }`. 집중 20~90분 · 휴식 5~20분(정수), 진행 중엔 설정 변경 불가. 자동 전환 때 **본인에게만** `pomodoro { running, phase, startedAt, endsAt, startedBy, focusMs, breakMs, serverTime }` |
+| `profile:reset { nickname, token }` | 내 기록 초기화 (7단계): 세션 토큰·닉네임이 모두 맞아야 `{ ok, counts: { sessions, attendance, goals, todos } }`, 아니면 `confirm_mismatch`. 공부 세션·출석·오늘 목표·할 일 삭제(아바타·강아지 이름 유지), 진행 중 세션은 버리고 앉아 있으면 새로 센다 → 모두에게 `playerGoal { id, goal: null }` + `leaderboard:refresh` |
 | `time:ping { t0 }` | `{ t0, serverTime }` — 클라이언트가 왕복/2 를 빼서 시계 차이를 맞춤 |
 | `leave` | 즉시 정리 → `playerLeft` |
 | `npc:pet { id }` | 거리(56px)·3초 쿨다운 검사 → `npc:pet { id, by, playerId }` + 시스템 `chat { system: true, text }` |
@@ -202,6 +204,14 @@ HTTP: `GET /api/oembed?url=…` 은 유튜브 주소만 받아 서버가 oEmbed 
 - 클라이언트(IP, 프록시 뒤에서는 `X-Forwarded-For` 첫 IP)별로 **5회 연속 실패 → 30초 잠금**. 잠긴 동안은 `locked { retryAfterMs }` 로 즉시 거부되고, 입장 화면은 남은 초를 세며 버튼을 막습니다. 맞추면 실패 횟수가 초기화됩니다.
 - 입장 화면은 `GET /api/config` 의 `passwordRequired` 를 보고 비밀번호 칸을 보입니다. **맞춘 값은 `localStorage`(`nsm.password`) 에 기억**해 다음 접속·재연결 때 자동으로 보내고, 틀리면 지웁니다. 살아 있는 세션 토큰으로 이어받는 재접속은 비밀번호를 다시 묻지 않습니다.
 - 비워두면 게이트가 꺼져 지금까지처럼 누구나 입장합니다. 바꾸려면 서버를 재시작합니다.
+
+## 설정·UI (7단계)
+
+- **뽀모도로는 각자**: 카드의 집중(20~90분)·휴식(5~20분) 입력은 `localStorage`(`nsm.pomo`) 에 기억하고 시작할 때 서버로 보냅니다. 서버는 플레이어마다 타이머를 하나씩 들고(재접속 이어받기 유지, 퇴장 시 정리) 자동 전환을 본인에게만 알립니다. 진행 중엔 입력이 잠깁니다.
+- **카드 접기/펼치기**: 사이드바 모든 카드 제목 줄의 ⌄ 로 접으면 제목 줄만 남고 `nsm.card.<id>` 에 기억합니다. 채팅 카드는 이전보다 40% 높게(최소 224px). Enter 로 채팅에 들어가면 채팅 카드는 자동으로 펼쳐집니다.
+- **내 기록 초기화**: 설정 → "내 기록 초기화" → 모달에 닉네임을 똑같이 입력해야 삭제 버튼이 살아납니다. 서버는 세션 토큰 + 닉네임을 확인한 뒤 공부 세션·출석·오늘 목표·할 일을 지웁니다(아바타·강아지 이름은 유지).
+- **화면 크기**: 설정의 작게/보통/크게 = 카메라 줌 1.5/2/2.5 (`nsm.zoom`). 줌을 바꾸면 씬의 모든 텍스트 해상도를 줌과 같게 다시 그려 흐려지지 않습니다.
+- **넓게 보기**: 설정 토글 또는 우상단 ⤢ 버튼으로 사이드바를 접고 캔버스가 화면 전체를 씁니다(`nsm.wide`). Enter(채팅)·♪(음악) 을 누르면 사이드바가 다시 펼쳐집니다.
 
 ## 아바타 (5단계)
 

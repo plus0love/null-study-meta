@@ -22,7 +22,7 @@
 (function () {
   'use strict';
 
-  const ZOOM = 2;
+  let ZOOM = 2; // 카메라 줌 = 텍스트 해상도. 7단계: 설정(작게/보통/크게 = 1.5/2/2.5)으로 바뀐다 (setZoom)
   const SEND_INTERVAL = 50; // ms (20Hz)
   const INTERP_DELAY = 100; // ms — 원격 아바타는 이만큼 과거를 그린다 (두 스냅샷 사이 선형 보간)
   const SIT_RANGE = 56; // px, 서버 SIT_RANGE_PX 와 동일
@@ -1203,6 +1203,30 @@
         this.lightStamp.setScale((l.r * 2.8) / 256).setAlpha(Math.min(1, l.intensity + 0.45));
         rt.erase(this.lightStamp, l.x, l.y);
       }
+    }
+
+    /**
+     * 화면 크기(7단계): 카메라 줌을 바꾸고, 이미 만들어진 모든 텍스트의 해상도를 줌에 맞춰 다시 그린다 (흐려지지 않게).
+     * 이후 만들어지는 텍스트(말풍선·이모지·이름표)는 ZOOM 을 읽으므로 자동으로 맞는다.
+     */
+    setZoom(z) {
+      const zoom = [1.5, 2, 2.5].includes(z) ? z : 2;
+      ZOOM = zoom;
+      const cam = this.cameras.main;
+      if (cam) cam.setZoom(zoom);
+      const res = zoom; // 해상도 = 줌 → 텍스처 픽셀이 화면 픽셀과 1:1
+      const walk = (list) => {
+        for (const obj of list) {
+          if (obj.type === 'Text' && obj.style && obj.style.resolution !== res) obj.setResolution(res);
+          else if (obj.type === 'Container' && obj.list) walk(obj.list);
+        }
+      };
+      walk(this.children.list);
+      this.syncVignette();
+    }
+
+    get zoom() {
+      return ZOOM;
     }
 
     syncVignette() {

@@ -2,11 +2,12 @@
 /**
  * HUD + 사이드바 (DOM). 게임 씬/네트워크와는 콜백(this.on*)으로만 연결한다.
  *  - 좌상단: 방 이름 + 인원 + (뽀모도로 진행 중) 남은 시간 배지   우상단: 설정·멤버·알림·♪·나가기 (팝오버)
- *  - 사이드바: 미니맵 · 오늘의 목표 · 오늘의 할 일(서버 저장, 이월 배지) · 뽀모도로(원형 게이지) · 랭킹(오늘/이번 주) · 유튜브 · 채팅
+ *  - 사이드바: 미니맵 · 오늘의 목표 · 오늘의 할 일(서버 저장, 이월 배지) · 뽀모도로(개인 타이머, 원형 게이지) · 랭킹(오늘/이번 주) · 유튜브 · 채팅
+ *    카드마다 접기/펼치기(제목 줄만 남음, localStorage nsm.card.<id>)
  *  - 토스트: 출석 스트릭 ("N일 연속 출석 🔥") 등 짧은 안내
  *  - 좌하단: 이모지 바(1~6) · 상태 토글 · E 힌트(앉기/쓰다듬기/커피 마시기/음악 듣기)
  *  - 입장 모달, 재접속 배너
- *  - 설정: 아바타(빌더 모달) · 닉네임 · 강아지 이름 · 항상 밤 · 알림 소리 · 브라우저 알림 허용
+ *  - 설정: 아바타(빌더 모달) · 닉네임 · 강아지 이름 · 화면 크기(줌 1.5/2/2.5) · 넓게 보기 · 항상 밤 · 알림 소리 · 브라우저 알림 허용 · 내 기록 초기화(닉네임 확인 모달)
  *  - 아바타 빌더(AvatarBuilder): 입장 모달과 설정 모달이 같은 DOM(#avatar-builder)을 옮겨 가며 쓴다.
  *    좌: 4배 미리보기(걷기 애니메이션, 클릭으로 방향 회전) · 우: 파츠 탭 → 썸네일 그리드 → 색상 원형 버튼 · 랜덤/초기화
  */
@@ -20,6 +21,12 @@
   const TODO_KEY = 'nsm.todos'; // 3단계까지의 localStorage 할 일 — 첫 접속 때 서버로 옮기고 지운다
   const GOAL_MINUTES = Array.from({ length: 16 }, (_, i) => (i + 1) * 30); // 30분 ~ 8시간
   const LS_NIGHT = 'nsm.alwaysNight';
+  const LS_ZOOM = 'nsm.zoom'; // 7단계: 화면 크기 (1.5 | 2 | 2.5)
+  const LS_WIDE = 'nsm.wide'; // 7단계: 넓게 보기
+  const LS_POMO = 'nsm.pomo'; // 7단계: 내 뽀모도로 시간 { focus, break } (분)
+  const LS_CARD = 'nsm.card.'; // + 카드 id → '1' 이면 접힘
+  const ZOOMS = [1.5, 2, 2.5];
+  const POMO = { focus: { min: 20, max: 90, def: 25 }, break: { min: 5, max: 20, def: 5 } };
   const LS_RECENT = 'nsm.music.recent';
   const MINIMAP_SCALE = 7; // 타일당 px (46x34 → 322x238)
   const YT_API = 'https://www.youtube.com/iframe_api';
@@ -44,6 +51,13 @@
     u.setAttribute('href', `#${id}`);
     s.appendChild(u);
     return s;
+  }
+
+  /** 정수로 바꿔 [min,max] 로 누른다. 숫자가 아니면 def */
+  function clampInt(v, { min, max, def }) {
+    const n = Math.round(Number(v));
+    if (!Number.isFinite(n)) return def;
+    return Math.min(max, Math.max(min, n));
   }
 
   function hhmm(ts) {
@@ -82,6 +96,9 @@
       this.onTodoToggle = () => {};
       this.onTodoDelete = () => {};
       this.onGoalSave = () => {};
+      this.onZoom = () => {};
+      this.onWide = () => {};
+      this.onReset = async () => ({ ok: false });
 
       this.todos = [];
       this.goal = null; // { text, targetMinutes }
@@ -160,6 +177,39 @@
       sound.addEventListener('change', () => this.onSound(sound.checked));
       $('btn-notify-perm').addEventListener('click', () => this.onNotifyPerm());
 
+      // 화면 크기(줌) · 넓게 보기 (7단계, localStorage)
+      for (const b of document.querySelectorAll('#zoom-tabs button')) b.addEventListener('click', () => this.setZoom(Number(b.dataset.zoom)));
+      this.setZoom(this.loadZoom(), { silent: true });
+      const wide = $('opt-wide');
+      wide.addEventListener('change', () => this.setWide(wide.checked));
+      $('btn-wide').addEventListener('click', () => this.setWide(!this.wide));
+      this.setWide(this.loadFlag(LS_WIDE, false), { silent: true });
+
+      // 내 기록 초기화 (닉네임을 똑같이 입력해야 삭제 버튼이 살아난다)
+      $('btn-reset').addEventListener('click', () => this.openResetModal());
+      $('reset-cancel').addEventListener('click', () => this.closeResetModal());
+      $('reset-modal').addEventListener('click', (e) => { if (e.target === $('reset-modal')) this.closeResetModal(); });
+      $('reset-nick').addEventListener('input', () => { $('reset-submit').disabled = $('reset-nick').value.trim() !== this.selfNickname; });
+      $('reset-nick').addEventListener('keydown', (e) => { if (e.key === 'Escape') this.closeResetModal(); e.stopPropagation(); });
+      $('reset-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const nickname = $('reset-nick').value.trim();
+        if (nickname !== this.selfNickname) return;
+        const btn = $('reset-submit');
+        const err = $('reset-error');
+        btn.disabled = true;
+        err.hidden = true;
+        try {
+          const r = await this.onReset(nickname);
+          if (!r.ok) throw new Error(r.error === 'confirm_mismatch' ? '닉네임이 맞지 않아요.' : '초기화하지 못했어요. 잠시 후 다시 시도해 주세요.');
+          this.closeResetModal();
+        } catch (ex) {
+          err.textContent = ex.message;
+          err.hidden = false;
+          btn.disabled = false;
+        }
+      });
+
       // 좌하단: 이모지 바 + 상태 토글
       const bar = $('emoji-bar');
       this.emojis.forEach((e, i) => {
@@ -236,6 +286,48 @@
       const label = { granted: '허용됨', denied: '차단됨 (브라우저 설정)', unsupported: '지원 안 함' }[state];
       b.textContent = label || '브라우저 알림 허용';
       b.disabled = state !== 'default';
+    }
+
+    // ── 화면 크기 / 넓게 보기 / 기록 초기화 (7단계) ─────────────────────
+    loadZoom() {
+      try { const z = Number(localStorage.getItem(LS_ZOOM)); return ZOOMS.includes(z) ? z : 2; } catch (_) { return 2; }
+    }
+
+    /** 카메라 줌 1.5 / 2 / 2.5 → 설정 탭 표시 + onZoom. silent 면 localStorage 에 쓰지 않는다 (초기 로드) */
+    setZoom(z, { silent = false } = {}) {
+      if (!ZOOMS.includes(z)) z = 2;
+      this.zoom = z;
+      for (const b of document.querySelectorAll('#zoom-tabs button')) b.classList.toggle('active', Number(b.dataset.zoom) === z);
+      if (!silent) { try { localStorage.setItem(LS_ZOOM, String(z)); } catch (_) { /* ignore */ } }
+      this.onZoom(z);
+    }
+
+    /** 넓게 보기: body.wide (사이드바 숨김·캔버스 전체) + 우상단 버튼 아이콘 */
+    setWide(on, { silent = false } = {}) {
+      this.wide = Boolean(on);
+      document.body.classList.toggle('wide', this.wide);
+      $('opt-wide').checked = this.wide;
+      const b = $('btn-wide');
+      b.classList.toggle('active', this.wide);
+      b.title = this.wide ? '사이드바 펼치기' : '넓게 보기 (사이드바 접기)';
+      b.querySelector('use').setAttribute('href', this.wide ? '#i-shrink' : '#i-expand');
+      if (!silent) this.saveFlag(LS_WIDE, this.wide);
+      this.onWide(this.wide);
+    }
+
+    openResetModal() {
+      $('pop-settings').hidden = true;
+      $('btn-settings').classList.remove('active');
+      $('reset-nick-label').textContent = this.selfNickname || '';
+      $('reset-nick').value = '';
+      $('reset-error').hidden = true;
+      $('reset-submit').disabled = true;
+      $('reset-modal').hidden = false;
+      setTimeout(() => $('reset-nick').focus(), 50);
+    }
+
+    closeResetModal() {
+      $('reset-modal').hidden = true;
     }
 
     loadFlag(key, def) {
@@ -330,7 +422,32 @@
         this.onTodoAdd(text);
       });
 
-      $('btn-pomo').addEventListener('click', () => this.onPomodoro(this.pomodoro && this.pomodoro.running ? 'stop' : 'start'));
+      // 뽀모도로: 내 시간(분) 입력은 localStorage 에 기억, 시작할 때 서버로 보낸다. 진행 중엔 잠김
+      const cfg = this.loadPomoConfig();
+      $('pomo-focus').value = String(cfg.focus);
+      $('pomo-break').value = String(cfg.break);
+      for (const id of ['pomo-focus', 'pomo-break']) {
+        const input = $(id);
+        input.addEventListener('keydown', (e) => { if (e.key === 'Escape' || e.key === 'Enter') e.target.blur(); e.stopPropagation(); });
+        input.addEventListener('change', () => { this.savePomoConfig(this.readPomoConfig()); this.tickPomodoro(); });
+      }
+      $('btn-pomo').addEventListener('click', () => {
+        if (this.pomodoro && this.pomodoro.running) return this.onPomodoro('stop');
+        const c = this.readPomoConfig();
+        this.savePomoConfig(c);
+        return this.onPomodoro('start', { focusMinutes: c.focus, breakMinutes: c.break });
+      });
+
+      // 카드 접기/펼치기 (음악 카드 포함). 상태는 localStorage
+      for (const card of document.querySelectorAll('#sidebar .card[id]')) {
+        const header = card.querySelector('header');
+        const btn = el('button', { class: 'icon-btn small ghost card-toggle', type: 'button', title: '접기' }, [svgIcon('i-chevron')]);
+        btn.addEventListener('click', (e) => { e.stopPropagation(); this.setCardCollapsed(card.id, !card.classList.contains('collapsed')); });
+        const close = header.querySelector('#music-close');
+        if (close) header.insertBefore(btn, close);
+        else header.appendChild(btn);
+        this.setCardCollapsed(card.id, this.loadFlag(LS_CARD + card.id, false), { silent: true });
+      }
 
       const chatForm = $('chat-form');
       const chatInput = $('chat-input');
@@ -347,7 +464,45 @@
       });
     }
 
+    /** 카드 접기: 제목 줄만 남긴다. silent 면 저장하지 않음 */
+    setCardCollapsed(id, on, { silent = false } = {}) {
+      const card = $(id);
+      if (!card) return;
+      card.classList.toggle('collapsed', on);
+      const btn = card.querySelector('.card-toggle');
+      if (btn) btn.title = on ? '펼치기' : '접기';
+      if (!silent) this.saveFlag(LS_CARD + id, on);
+    }
+
+    isCardCollapsed(id) {
+      const card = $(id);
+      return Boolean(card && card.classList.contains('collapsed'));
+    }
+
+    loadPomoConfig() {
+      try {
+        const v = JSON.parse(localStorage.getItem(LS_POMO) || 'null') || {};
+        return { focus: clampInt(v.focus, POMO.focus), break: clampInt(v.break, POMO.break) };
+      } catch (_) {
+        return { focus: POMO.focus.def, break: POMO.break.def };
+      }
+    }
+
+    /** 입력칸 값을 범위로 눌러 { focus, break } (분). 잘못된 값은 칸에도 바로 고쳐 넣는다 */
+    readPomoConfig() {
+      const c = { focus: clampInt($('pomo-focus').value, POMO.focus), break: clampInt($('pomo-break').value, POMO.break) };
+      $('pomo-focus').value = String(c.focus);
+      $('pomo-break').value = String(c.break);
+      return c;
+    }
+
+    savePomoConfig(c) {
+      try { localStorage.setItem(LS_POMO, JSON.stringify(c)); } catch (_) { /* ignore */ }
+    }
+
     focusChat() {
+      if (this.wide) this.setWide(false); // 넓게 보기 중 Enter → 사이드바를 펼치고 채팅으로
+      if (this.isCardCollapsed('card-chat')) this.setCardCollapsed('card-chat', false);
       $('chat-input').focus();
       $('card-chat').scrollIntoView({ block: 'nearest' });
     }
@@ -500,12 +655,19 @@
       this.toastTimer = setTimeout(() => this.nextToast(), item.ms);
     }
 
+    /** 내 타이머 상태 (입장 ack · pomodoro 이벤트). 진행 중이면 시간 입력이 잠기고 서버 값이 표시된다 */
     setPomodoro(snap) {
       this.pomodoro = snap;
       const btn = $('btn-pomo');
       btn.querySelector('span').textContent = snap.running ? '정지' : '시작';
       btn.querySelector('use').setAttribute('href', snap.running ? '#i-stop' : '#i-play');
-      $('pomo-by').textContent = snap.running && snap.startedBy ? `${snap.startedBy} 시작` : '';
+      $('pomo-focus').disabled = Boolean(snap.running);
+      $('pomo-break').disabled = Boolean(snap.running);
+      if (snap.running) {
+        $('pomo-focus').value = String(Math.round(snap.focusMs / 60000));
+        $('pomo-break').value = String(Math.round(snap.breakMs / 60000));
+      }
+      $('pomo-hint').textContent = snap.running ? `집중 ${Math.round(snap.focusMs / 60000)}분 · 휴식 ${Math.round(snap.breakMs / 60000)}분 · 나에게만` : '나에게만 · 시작 전에 바꿀 수 있어요';
       this.tickPomodoro();
     }
 
@@ -516,7 +678,7 @@
       const badge = $('pomo-badge');
       const CIRC = 2 * Math.PI * 52;
       if (!s || !s.running) {
-        const total = s ? s.focusMs : 25 * 60 * 1000;
+        const total = clampInt($('pomo-focus').value, POMO.focus) * 60 * 1000; // 대기 중엔 내가 정한 집중 시간
         $('pomo-time').textContent = fmt(total);
         $('pomo-phase').textContent = '대기 중';
         ring.style.strokeDashoffset = String(CIRC);
@@ -576,7 +738,6 @@
 
     // ── 유튜브 카드 (IFrame API, 소리는 본인에게만) ──────────────────
     bindMusic() {
-      const card = $('card-music');
       $('music-form').addEventListener('submit', (e) => {
         e.preventDefault();
         const input = $('music-url');
@@ -592,7 +753,6 @@
       $('music-url').addEventListener('keydown', (e) => { if (e.key === 'Escape') e.target.blur(); e.stopPropagation(); });
       $('music-play').addEventListener('click', () => this.playMusic());
       $('music-pause').addEventListener('click', () => this.pauseMusic());
-      $('music-collapse').addEventListener('click', () => this.setMusicCollapsed(!card.classList.contains('collapsed')));
       $('music-close').addEventListener('click', () => this.toggleMusic(false));
       this.renderRecent();
     }
@@ -608,7 +768,8 @@
       card.hidden = !open;
       $('btn-music').classList.toggle('active', open);
       if (open) {
-        this.setMusicCollapsed(false);
+        if (this.wide) this.setWide(false);
+        this.setCardCollapsed('card-music', false);
         if (!this.yt.current && this.loadRecent()[0]) this.loadMusic(this.loadRecent()[0], { autoplay: false });
         setTimeout(() => $('music-url').focus(), 50);
       } else this.pauseMusic();
@@ -616,12 +777,6 @@
 
     openMusic() {
       this.toggleMusic(true);
-    }
-
-    setMusicCollapsed(on) {
-      const card = $('card-music');
-      card.classList.toggle('collapsed', on);
-      $('music-collapse').setAttribute('title', on ? '펼치기' : '접기');
     }
 
     loadRecent() {
