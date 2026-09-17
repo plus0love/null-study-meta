@@ -1,6 +1,6 @@
-/* global Phaser, RoomScene, Net, UI, FX */
+/* global Phaser, RoomScene, Net, UI, FX, AvatarKit */
 /**
- * 부트스트랩: 방 데이터 / 아틀라스 메타 / 아바타 메타를 받아 Phaser 게임을 만들고,
+ * 부트스트랩: 방 데이터 / 아틀라스 메타 / 아바타 카탈로그·레이어 PNG 를 받아 Phaser 게임을 만들고,
  * 소켓(Net) · HUD/사이드바(UI) · 씬(RoomScene) 을 서로 연결한다.
  *
  * 입장 흐름: localStorage 에 세션 토큰이 있으면 바로 재입장 시도(서버가 기억하면 이어받고, 재시작됐으면
@@ -17,14 +17,14 @@
 
   let room;
   let tiles;
-  let player;
   let dog;
+  let avatarKit;
   try {
-    [room, tiles, player, dog] = await Promise.all([
-      fetch('/api/rooms/studyroom').then((r) => r.json()),
+    room = await fetch('/api/rooms/studyroom').then((r) => r.json());
+    [tiles, dog, avatarKit] = await Promise.all([
       fetch('/assets/tiles.json').then((r) => r.json()),
-      fetch('/assets/player.json').then((r) => r.json()),
       fetch('/assets/dog.json').then((r) => r.json()),
+      AvatarKit.load(room.assetVersion),
     ]);
   } catch (err) {
     fail(`방 데이터를 불러오지 못했습니다: ${err.message}`);
@@ -40,7 +40,7 @@
   } catch (_) { /* 폰트 없이 진행 */ }
 
   const net = new Net();
-  const ui = new UI({ room, serverNow: () => net.serverNow() });
+  const ui = new UI({ room, serverNow: () => net.serverNow(), avatarKit });
   const sound = new FX.Sound();
 
   const game = new Phaser.Game({
@@ -57,7 +57,7 @@
   });
   // 부팅 중에는 add() 가 인스턴스를 돌려주지 않으므로 직접 만들어 넘긴다
   const scene = new RoomScene();
-  await new Promise((onReady) => game.scene.add('room', scene, true, { room, tiles, player, dog, onReady }));
+  await new Promise((onReady) => game.scene.add('room', scene, true, { room, tiles, avatarKit, dog, onReady }));
   ui.hideLoading();
 
   // ── 씬 → 네트워크/UI ───────────────────────────────────────────
@@ -87,7 +87,7 @@
   }).catch(() => {});
   ui.onEmoji = (i) => net.emoji(i).catch(() => {});
   ui.onToggleStatus = () => net.setStatus(ui.status === 'study' ? 'rest' : 'study').catch(() => {});
-  ui.onAvatar = (i) => net.setAvatar(i).catch(() => {});
+  ui.onAvatar = (avatar) => net.setAvatar(avatar).catch(() => {});
   ui.onPomodoro = (action) => {
     // 시작 버튼(사용자 제스처)에서 브라우저 알림 권한을 한 번 물어본다
     if (action === 'start' && FX.Notify.permission() === 'default') FX.Notify.request().then((st) => ui.setNotifyPermission(st));
@@ -227,9 +227,10 @@
     ui.upsertPlayer({ id: d.id, status: d.status });
     if (scene.me && d.id === scene.me.id) ui.setStatus(d.status);
   });
-  net.on('playerAvatar', (d) => {
+  net.on('avatar:update', (d) => {
     scene.onAvatar(d);
     ui.upsertPlayer({ id: d.id, avatar: d.avatar });
+    if (scene.me && d.id === scene.me.id) ui.setAvatar(d.avatar);
   });
   net.on('playerListening', (d) => {
     scene.onListening(d);
@@ -273,6 +274,7 @@
   }
 
   const saved = Net.saved();
+  ui.setAvatar(saved.avatar);
   if (saved.token && saved.nickname) {
     net.connect();
     try {
@@ -285,5 +287,5 @@
   }
 
   // 디버그/테스트용 전역 핸들
-  window.NSM = { game, room, net, ui, scene, sound };
+  window.NSM = { game, room, net, ui, scene, sound, avatarKit };
 })();

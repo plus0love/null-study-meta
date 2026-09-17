@@ -5,6 +5,7 @@
  *  - 입장 → 서로의 아바타 표시 → 키보드 이동(서버 거부 없음, 상대 화면에 같은 위치) → 채팅 → E키 착석 → 강아지 → 재접속.
  *  - 3단계: 책상 착석 시 모니터 켜짐(두 탭 동기화), 커피머신 앞 E → ☕ 휴식, 시간대 고정(낮/노을/밤), 시스템 메시지 ×N 합치기.
  *  - 4단계: localStorage 할 일 → 서버 이전, 오늘 목표 저장 → 상대 화면 팻말, 출석 토스트, 목표 달성 🎉·시스템 채팅, 랭킹 카드(진행 중 점·저장소 배지).
+ *  - 5단계: 아바타 꾸미기 모달에서 머리·색 변경 → 상대 화면 즉시 반영, localStorage 저장, 캔버스 텍스처 존재.
  * Chrome 이 없으면 건너뛴다 (CHROME_PATH 로 지정 가능).
  */
 const test = require('node:test');
@@ -118,6 +119,20 @@ test('브라우저 2탭 (B 는 300ms 지연): 입장·이동 유지·채팅·착
   // 이모지 (숫자키 2)
   await a.keyboard.press('Digit2');
   await b.waitForFunction((id) => Boolean(window.NSM.scene.remotes.get(id).avatar.emojiText), { timeout: 5000 }, idA);
+
+  // 5단계 아바타: 설정 → 아바타 꾸미기 모달에서 머리(단발)·색(핑크) 선택 → B 화면의 A 아바타에 즉시 반영 + localStorage 저장
+  await a.click('#btn-settings');
+  await a.click('#btn-avatar');
+  await a.waitForSelector('#avatar-modal:not([hidden])');
+  await a.click('#ab-tabs button[data-tab="hair"]');
+  await a.click('#ab-grid .ab-item[title="단발"]');
+  await a.click('#ab-colors .swatch[data-color="pink"]');
+  await b.waitForFunction((id) => { const av = window.NSM.scene.remotes.get(id).avatar.avatar; return av.hair === 'bob' && av.hairColor === 'pink'; }, { timeout: 5000 }, idA);
+  assert.equal(await a.evaluate(() => JSON.parse(localStorage.getItem('nsm.avatar')).hair), 'bob');
+  assert.equal(await a.evaluate(() => window.NSM.scene.me.avatar.hairColor), 'pink');
+  assert.ok(await a.evaluate(() => window.NSM.scene.textures.exists(`av:${window.NSM.scene.me.id}`)), '내 아바타 캔버스 텍스처');
+  await a.click('#avatar-modal-close');
+  await a.waitForSelector('#avatar-modal[hidden]');
 
   // 착석: A 가 소파 옆까지 걸어가서 E
   const seat = room.seats.find((s) => s.kind === 'sofa_wide');

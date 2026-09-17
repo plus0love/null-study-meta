@@ -17,7 +17,7 @@ test('소켓 E2E: 입장/중복 닉네임/다른 접속자 목록/이동 중계/
   assert.equal(ja.ok, true);
   assert.equal(ja.resumed, false);
   assert.equal(ja.self.nickname, '민수');
-  assert.equal(ja.self.avatar, 1);
+  assert.equal(ja.self.avatar.topColor, 'amber'); // 옛 정수 아바타(1) → 상의 색
   assert.deepEqual(ja.players, []);
   assert.equal(ja.config.speed, 150);
   assert.equal(ja.config.emojis.length, 6);
@@ -118,11 +118,13 @@ test('소켓 E2E: 좌석 점유 (E키 앉기/일어나기), 상태, 아바타', 
   assert.equal((await ask(a, 'status', { status: 'rest' })).ok, true);
   assert.equal((await st).status, 'rest');
   assert.equal((await ask(a, 'status', { status: 'zzz' })).ok, false);
-  // 아바타 변경
-  const av = once(b, 'playerAvatar');
-  assert.equal((await ask(a, 'avatar', { avatar: 3 })).ok, true);
-  assert.equal((await av).avatar, 3);
-  assert.equal((await ask(a, 'avatar', { avatar: 9 })).ok, false);
+  // 아바타 변경 (파츠 객체) → 모두에게 avatar:update. 없는 id 는 기본값으로
+  const av = once(b, 'avatar:update');
+  const upd = await ask(a, 'avatar:update', { avatar: { hair: 'bob', hairColor: 'pink', top: 'nope' } });
+  assert.equal(upd.ok, true);
+  assert.equal(upd.avatar.top, 'basic');
+  assert.deepEqual((await av).avatar, upd.avatar);
+  assert.equal((await av).avatar.hair, 'bob');
 
   // A 가 끊기면(유예 없이 leave) 자리 해제
   await ask(a, 'leave');

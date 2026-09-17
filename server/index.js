@@ -23,12 +23,14 @@ const express = require('express');
 const { createStore } = require('./store');
 const { getStudyRoom } = require('./rooms/studyroom');
 const { attachSocket } = require('./socket');
+const { CATALOG_PATH, assetFiles: avatarAssetFiles } = require('./game/avatar');
 
-// 아틀라스/캐릭터 파일 해시 → 클라이언트가 ?v= 로 붙여 요청하므로 에셋을 다시 빌드하면 캐시가 자동 무효화된다
+// 아틀라스/캐릭터/아바타 파츠 파일 해시 → 클라이언트가 ?v= 로 붙여 요청하므로 에셋을 다시 빌드하면 캐시가 자동 무효화된다
 function assetVersion() {
   const dir = path.join(__dirname, '..', 'public', 'assets');
   const h = crypto.createHash('sha1');
-  for (const f of ['tiles.json', 'tiles.png', 'player.json', 'player.png', 'dog.json', 'dog.png']) h.update(fs.readFileSync(path.join(dir, f)));
+  for (const f of ['tiles.json', 'tiles.png', 'dog.json', 'dog.png']) h.update(fs.readFileSync(path.join(dir, f)));
+  for (const f of [CATALOG_PATH, ...avatarAssetFiles()]) h.update(fs.readFileSync(f));
   return h.digest('hex').slice(0, 10);
 }
 const ASSET_VERSION = assetVersion();

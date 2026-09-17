@@ -6,13 +6,14 @@
  *  - 토스트: 출석 스트릭 ("N일 연속 출석 🔥") 등 짧은 안내
  *  - 좌하단: 이모지 바(1~6) · 상태 토글 · E 힌트(앉기/쓰다듬기/커피 마시기/음악 듣기)
  *  - 입장 모달, 재접속 배너
- *  - 설정: 아바타 · 닉네임 · 강아지 이름 · 항상 밤 · 알림 소리 · 브라우저 알림 허용
+ *  - 설정: 아바타(빌더 모달) · 닉네임 · 강아지 이름 · 항상 밤 · 알림 소리 · 브라우저 알림 허용
+ *  - 아바타 빌더(AvatarBuilder): 입장 모달과 설정 모달이 같은 DOM(#avatar-builder)을 옮겨 가며 쓴다.
+ *    좌: 4배 미리보기(걷기 애니메이션, 클릭으로 방향 회전) · 우: 파츠 탭 → 썸네일 그리드 → 색상 원형 버튼 · 랜덤/초기화
  */
 (function () {
   'use strict';
 
   const $ = (id) => document.getElementById(id);
-  const AVATAR_COLORS = ['#f1eee8', '#ffc46e', '#a8c496', '#96b4dc'];
   const STATUS_LABEL = { study: '공부 중', rest: '휴식 중', coffee: '☕ 휴식 중' };
   const STATUS_ICON = { study: 'i-book', rest: 'i-leaf', coffee: 'i-coffee' };
   const HINT_LABEL = { sit: '앉기', stand: '일어나기', pet: '쓰다듬기', coffee: '커피 마시기', music: '음악 듣기' };
@@ -51,15 +52,16 @@
   }
 
   class UI {
-    constructor({ room, serverNow }) {
+    constructor({ room, serverNow, avatarKit }) {
       this.room = room;
       this.serverNow = serverNow || (() => Date.now());
+      this.avatarKit = avatarKit;
       this.selfId = null;
       this.players = new Map(); // id → public player (멤버 목록/미니맵용)
       this.status = 'rest';
       this.pomodoro = null;
       this.unread = 0;
-      this.avatar = 0;
+      this.avatar = avatarKit.defaults;
       this.emojis = ['👋', '😊', '👍', '❤️', '😂', '🔥'];
 
       // 콜백 (main.js 가 채움)
@@ -133,7 +135,23 @@
         if (name) this.onNpcName(name);
       });
       $('npc-name').addEventListener('keydown', (e) => e.stopPropagation());
-      this.buildSwatches($('settings-avatars'), (i) => { this.setAvatar(i); this.onAvatar(i); });
+      // 아바타 빌더 (입장 모달 · 설정 모달 공용). 방 안에서 바꾸면 즉시 서버로 (200ms 디바운스)
+      this.builder = new AvatarBuilder(this.avatarKit, $('avatar-builder'));
+      $('login-avatar-slot').appendChild(this.builder.root);
+      this.inRoom = false;
+      let avatarTimer = null;
+      this.avatarTouched = false; // 입장 화면에서 손대지 않았으면 null 을 보내 서버가 users.avatar 를 복원하게 한다
+      this.builder.onChange = (avatar) => {
+        this.avatar = avatar;
+        this.avatarTouched = true;
+        this.drawAvatarThumb();
+        if (!this.inRoom) return;
+        clearTimeout(avatarTimer);
+        avatarTimer = setTimeout(() => this.onAvatar(avatar), 200);
+      };
+      $('btn-avatar').addEventListener('click', () => this.openAvatarModal());
+      $('avatar-modal-close').addEventListener('click', () => this.closeAvatarModal());
+      $('avatar-modal').addEventListener('click', (e) => { if (e.target === $('avatar-modal')) this.closeAvatarModal(); });
       // 항상 밤 / 알림 소리 / 브라우저 알림
       const night = $('opt-night');
       night.checked = this.loadFlag(LS_NIGHT, false);
@@ -151,18 +169,31 @@
       this.setStatus('rest');
     }
 
-    buildSwatches(container, onPick) {
-      container.innerHTML = '';
-      AVATAR_COLORS.forEach((c, i) => {
-        container.appendChild(el('button', { class: 'swatch', type: 'button', style: `background:${c}`, title: `셔츠 ${i + 1}`, 'data-i': String(i), onclick: () => onPick(i) }));
-      });
+    /** 서버가 확정한 내 아바타 (입장 ack · avatar:update) */
+    setAvatar(avatar) {
+      this.avatar = this.avatarKit.normalize(avatar);
+      this.builder.set(this.avatar, { silent: true });
+      this.drawAvatarThumb();
     }
 
-    setAvatar(i) {
-      this.avatar = i;
-      for (const box of [$('settings-avatars'), $('login-avatars')]) {
-        for (const b of box.querySelectorAll('.swatch')) b.classList.toggle('selected', Number(b.dataset.i) === i);
-      }
+    drawAvatarThumb() {
+      const c = $('settings-avatar-thumb');
+      const ctx = c.getContext('2d');
+      ctx.clearRect(0, 0, c.width, c.height);
+      this.avatarKit.drawFrame(ctx, this.avatar, 'down', 0, 0, 0, 1);
+    }
+
+    openAvatarModal() {
+      $('avatar-modal-slot').appendChild(this.builder.root);
+      $('avatar-modal').hidden = false;
+      this.builder.setVisible(true);
+      $('pop-settings').hidden = true;
+      $('btn-settings').classList.remove('active');
+    }
+
+    closeAvatarModal() {
+      $('avatar-modal').hidden = true;
+      this.builder.setVisible(false);
     }
 
     setEmojis(list) {
@@ -777,14 +808,18 @@
 
     // ── 입장 모달 ────────────────────────────────────────────────────
     /** 입장 정보를 받는다. submit 이 실패(reject)하면 에러를 보여주고 다시 기다린다. */
-    showLogin({ nickname = '', avatar = 0, error = '' }, submit) {
+    showLogin({ nickname = '', avatar = null, error = '' }, submit) {
       const modal = $('login');
       const form = $('login-form');
       const input = $('login-nick');
       const err = $('login-error');
       const btn = $('login-submit');
-      this.buildSwatches($('login-avatars'), (i) => this.setAvatar(i));
+      this.inRoom = false;
+      this.closeAvatarModal();
+      $('login-avatar-slot').appendChild(this.builder.root);
+      this.avatarTouched = avatar !== null && avatar !== undefined;
       this.setAvatar(avatar);
+      this.builder.setVisible(true);
       input.value = nickname;
       err.textContent = error;
       err.hidden = !error;
@@ -795,9 +830,11 @@
         btn.disabled = true;
         err.hidden = true;
         try {
-          await submit({ nickname: input.value.trim(), avatar: this.avatar });
+          await submit({ nickname: input.value.trim(), avatar: this.avatarTouched ? this.avatar : null });
           form.removeEventListener('submit', onSubmit);
           modal.hidden = true;
+          this.builder.setVisible(false);
+          this.inRoom = true;
         } catch (ex) {
           err.textContent = ex.message || '입장에 실패했습니다.';
           err.hidden = false;
@@ -810,6 +847,114 @@
 
     hideLoading() {
       $('loading').classList.add('hidden');
+    }
+  }
+
+  // ── 아바타 빌더 ──────────────────────────────────────────────────
+  const TAB_ORDER = ['hair', 'top', 'bottom', 'shoes', 'body', 'acc'];
+  const DIR_CYCLE = ['down', 'right', 'up', 'left'];
+  const PREVIEW_SCALE = 4; // 32x64 프레임 → 128x256 (방 안 2배 줌의 2배)
+  const WALK_FPS = 8;
+
+  class AvatarBuilder {
+    constructor(kit, root) {
+      this.kit = kit;
+      this.root = root;
+      this.avatar = kit.normalize(null);
+      this.tab = 'hair';
+      this.dirIndex = 0;
+      this.frame = 0;
+      this.onChange = () => {};
+      this.visible = false;
+      this.raf = null;
+      this.lastTick = 0;
+      this.preview = root.querySelector('#ab-preview');
+      this.preview.addEventListener('click', () => { this.dirIndex = (this.dirIndex + 1) % DIR_CYCLE.length; this.drawPreview(); });
+      root.querySelector('#ab-random').addEventListener('click', () => this.set(kit.random()));
+      root.querySelector('#ab-reset').addEventListener('click', () => this.set(kit.defaults));
+      this.renderTabs();
+      this.renderGrid();
+      this.drawPreview();
+    }
+
+    set(avatar, { silent = false } = {}) {
+      this.avatar = this.kit.normalize(avatar);
+      this.renderGrid();
+      this.drawPreview();
+      if (!silent) this.onChange(this.avatar);
+    }
+
+    patch(field, value) {
+      this.set({ ...this.avatar, [field]: value });
+    }
+
+    /** 보일 때만 걷기 애니메이션 rAF 를 돌린다 */
+    setVisible(on) {
+      this.visible = on;
+      if (on && !this.raf) {
+        const tick = (t) => {
+          if (!this.visible) { this.raf = null; return; }
+          if (t - this.lastTick >= 1000 / WALK_FPS) {
+            this.lastTick = t;
+            this.frame = (this.frame + 1) % this.kit.frame.framesPerRow;
+            this.drawPreview();
+          }
+          this.raf = requestAnimationFrame(tick);
+        };
+        this.raf = requestAnimationFrame(tick);
+      }
+    }
+
+    drawPreview() {
+      const ctx = this.preview.getContext('2d');
+      ctx.clearRect(0, 0, this.preview.width, this.preview.height);
+      this.kit.drawFrame(ctx, this.avatar, DIR_CYCLE[this.dirIndex], this.frame, 0, 0, PREVIEW_SCALE);
+    }
+
+    renderTabs() {
+      const box = this.root.querySelector('#ab-tabs');
+      box.innerHTML = '';
+      for (const name of TAB_ORDER) {
+        const layer = this.kit.catalog.layers[name];
+        if (!layer) continue;
+        box.appendChild(el('button', { type: 'button', role: 'tab', 'data-tab': name, text: layer.label, class: name === this.tab ? 'active' : '', onclick: () => { this.tab = name; this.renderTabs(); this.renderGrid(); } }));
+      }
+    }
+
+    /** 현재 탭의 파츠 썸네일(그 파츠만 바꾼 아바타 정면) + 색상 원형 버튼 */
+    renderGrid() {
+      const layer = this.kit.catalog.layers[this.tab];
+      const grid = this.root.querySelector('#ab-grid');
+      const colors = this.root.querySelector('#ab-colors');
+      grid.innerHTML = '';
+      colors.innerHTML = '';
+      if (!layer) return;
+      const thumb = (avatar, label, selected, onclick) => {
+        const c = document.createElement('canvas');
+        c.width = this.kit.frame.width;
+        c.height = this.kit.frame.height;
+        this.kit.drawFrame(c.getContext('2d'), avatar, 'down', 0, 0, 0, 1);
+        return el('button', { type: 'button', class: `ab-item${selected ? ' selected' : ''}`, title: label, onclick }, [c, el('span', { text: label })]);
+      };
+      if (layer.field) {
+        for (const it of layer.items) {
+          const av = { ...this.avatar, [layer.field]: it.id };
+          grid.appendChild(thumb(av, it.label, this.avatar[layer.field] === it.id, () => this.patch(layer.field, it.id)));
+        }
+      } else if (layer.colorField) {
+        // 피부: 색 자체가 선택지 → 썸네일로
+        for (const c of this.kit.catalog.colors[layer.colorField]) {
+          const av = { ...this.avatar, [layer.colorField]: c.id };
+          grid.appendChild(thumb(av, c.label, this.avatar[layer.colorField] === c.id, () => this.patch(layer.colorField, c.id)));
+        }
+        return;
+      }
+      if (layer.colorField) {
+        for (const c of this.kit.catalog.colors[layer.colorField]) {
+          const selected = this.avatar[layer.colorField] === c.id;
+          colors.appendChild(el('button', { type: 'button', class: `swatch${selected ? ' selected' : ''}`, title: c.label, 'aria-label': c.label, 'data-color': c.id, style: `background:${c.tones[0]}`, onclick: () => this.patch(layer.colorField, c.id) }));
+        }
+      }
     }
   }
 
@@ -833,4 +978,5 @@
   }
 
   window.UI = UI;
+  window.AvatarBuilder = AvatarBuilder;
 })();

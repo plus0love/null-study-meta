@@ -16,6 +16,8 @@
  *  - 상호작용 지점(room.interactables): 커피머신·음악 패널 앞에서 E.
  *  - 뽀모도로 전환: flashLights() — 창문·펜던트가 1초 밝아졌다 돌아온다.
  * 4단계: 앉아 있고 오늘 목표가 있으면 발 아래에 작은 팻말(목표 텍스트, 말줄임) + 진행 바(오늘 누적/목표). 목표 달성 시 머리 위 🎉 3초.
+ * 5단계: 아바타는 파츠 객체 → AvatarKit(avatar.js) 이 레이어를 겹친 시트를 만들고, 씬은 그 시트를 텍스처로 등록해 한 스프라이트로 그린다
+ *        (레이어가 항상 같은 프레임을 보여 팻말·말풍선·상태 아이콘 위치는 그대로).
  */
 (function () {
   'use strict';
@@ -27,14 +29,6 @@
   const CORRECT_RATE = 10; // 서버 보정 시 초당 수렴 비율
   const FONTS = { hand: '"Gaegu", "Nanum Pen Script", cursive', sans: '"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif' };
   const STATUS_EMOJI = { study: '📖', rest: '🌿', coffee: '☕' }; // coffee: 커피머신 앞 E → 컵 든 모양
-  // 셔츠 색 변형 (player.png 의 셔츠 3톤을 바꿔 아바타 텍스처를 만든다)
-  const SHIRT_SRC = [[241, 238, 232], [201, 196, 187], [169, 163, 154]];
-  const SHIRT_VARIANTS = [
-    null, // 0: 원본(흰색)
-    [[255, 196, 110], [214, 152, 70], [178, 120, 52]], // 앰버
-    [[168, 196, 150], [122, 152, 106], [92, 120, 80]], // 세이지
-    [[150, 180, 220], [104, 134, 184], [78, 104, 150]], // 블루
-  ];
 
   const DEPTH = { sky: 0.5, stars: 0.6, windowDay: 1.5, zone: 2, screen: 2.5, shadow: 9, avatar: 10, label: 25, bubble: 26, darkness: 30, glow: 31 };
   const SIGN_MAX_W = 96; // 팻말 최대 폭(px) — 넘치면 말줄임
@@ -46,7 +40,7 @@
       this.scene = scene;
       this.id = p.id;
       this.nickname = p.nickname;
-      this.avatar = p.avatar || 0;
+      this.avatar = scene.avatarKit.normalize(p.avatar); // 파츠 객체
       this.facing = p.facing || 'down';
       this.status = p.status || 'rest';
       this.seated = Boolean(p.seatId);
@@ -57,7 +51,7 @@
       this.y = p.y;
       this.walking = false;
 
-      this.sprite = scene.add.sprite(p.x, p.y, scene.texKey(this.avatar), scene.idleFrame('down')).setOrigin(0.5, 1);
+      this.sprite = scene.add.sprite(p.x, p.y, scene.avatarTexture(this.id, this.avatar), scene.idleFrame('down')).setOrigin(0.5, 1);
       this.shadow = scene.add.ellipse(p.x, p.y - 2, 22, 8, 0x000000, 0.28).setDepth(DEPTH.shadow);
       // 닉네임은 발 아래, 상태 아이콘은 머리 위 오른쪽, 채팅/이모지는 머리 위
       this.name = scene.add.text(p.x, p.y + 3, this.labelText(), {
@@ -175,7 +169,7 @@
 
     setFacing(f) {
       this.facing = f;
-      if (this.walking) this.sprite.anims.play(this.scene.walkKey(f, this.avatar), true);
+      if (this.walking) this.sprite.anims.play(this.scene.walkKey(f, this.id), true);
       else this.sprite.setFrame(this.scene.idleFrame(this.seated ? 'down' : f));
     }
 
@@ -183,7 +177,7 @@
       if (this.seated) on = false;
       if (on) {
         this.walking = true;
-        this.sprite.anims.play(this.scene.walkKey(this.facing, this.avatar), true); // 같은 애니메이션이면 무시
+        this.sprite.anims.play(this.scene.walkKey(this.facing, this.id), true); // 같은 애니메이션이면 무시
       } else if (this.walking) {
         this.walking = false;
         this.sprite.anims.stop();
@@ -217,11 +211,10 @@
       this.name.setText(this.labelText());
     }
 
-    setAvatar(i) {
-      this.avatar = i;
-      const frame = this.sprite.frame.name;
-      this.sprite.setTexture(this.scene.texKey(i), frame);
-      if (this.walking) this.sprite.anims.play(this.scene.walkKey(this.facing, i), true);
+    /** 파츠가 바뀌면 같은 텍스처를 다시 그린다 → 프레임·애니메이션·머리 위 요소는 그대로 */
+    setAvatar(avatar) {
+      this.avatar = this.scene.avatarKit.normalize(avatar);
+      this.scene.avatarTexture(this.id, this.avatar);
     }
 
     showChat(text) {
@@ -266,6 +259,7 @@
       this.shadow.destroy();
       this.name.destroy();
       this.statusBubble.destroy();
+      this.scene.releaseAvatarTexture(this.id);
     }
   }
 
@@ -394,7 +388,8 @@
     init(data) {
       this.room = data.room;
       this.tilesMeta = data.tiles;
-      this.playerMeta = data.player;
+      this.avatarKit = data.avatarKit; // AvatarKit (catalog + 레이어 PNG)
+      this.playerMeta = { frameWidth: this.avatarKit.frame.width, frameHeight: this.avatarKit.frame.height, framesPerRow: this.avatarKit.frame.framesPerRow, rows: this.avatarKit.frame.rows };
       this.dogMeta = data.dog;
       this.onReady = data.onReady || (() => {});
       this.hooks = { onMove() {}, onSit() {}, onStand() {}, onPet() {}, onUse() {}, onInteract() {}, onEmojiKey() {}, onChatKey() {}, onPositions() {} };
@@ -425,10 +420,6 @@
     preload() {
       const v = this.room.assetVersion ? `?v=${this.room.assetVersion}` : '';
       this.load.image('tiles', `/assets/tiles.png${v}`);
-      this.load.spritesheet('player-0', `/assets/player.png${v}`, {
-        frameWidth: this.playerMeta.frameWidth,
-        frameHeight: this.playerMeta.frameHeight,
-      });
       this.load.spritesheet('dog', `/assets/dog.png${v}`, { frameWidth: this.dogMeta.frameWidth, frameHeight: this.dogMeta.frameHeight });
     }
 
@@ -444,7 +435,6 @@
       this.buildZones();
       this.buildLabels();
       this.buildLightTextures();
-      this.buildAvatarTextures();
       this.buildDogAnims();
       this.buildLighting();
       this.buildScreens();
@@ -1055,52 +1045,53 @@
       }
     }
 
-    // ── 아바타 텍스처/애니메이션 (셔츠 색 4종) ──────────────────────
-    texKey(avatar) {
-      return this.textures.exists(`player-${avatar}`) ? `player-${avatar}` : 'player-0';
+    // ── 아바타 텍스처/애니메이션 (플레이어마다 캔버스 텍스처 하나, 파츠가 바뀌면 다시 그려서 refresh) ──
+    /**
+     * 플레이어(ownerId)의 스프라이트시트 텍스처 키. 처음이면 캔버스 텍스처 + 16프레임 + 걷기 애니메이션을 만들고,
+     * 이후에는 같은 캔버스에 새 조합을 그려 GL 텍스처만 갱신한다 (텍스처 생성/삭제를 반복하지 않는다).
+     */
+    avatarTexture(ownerId, avatar) {
+      const key = `av:${ownerId}`;
+      const meta = this.playerMeta;
+      const sheet = this.avatarKit.composeSheet(avatar);
+      let tex = this.textures.exists(key) ? this.textures.get(key) : null;
+      if (!tex) {
+        tex = this.textures.createCanvas(key, sheet.width, sheet.height);
+        const per = meta.framesPerRow;
+        for (const dir of Object.keys(meta.rows)) {
+          const row = meta.rows[dir];
+          for (let i = 0; i < per; i++) tex.add(row * per + i, 0, i * meta.frameWidth, row * meta.frameHeight, meta.frameWidth, meta.frameHeight);
+          const start = row * per;
+          this.anims.create({ key: `walk-${dir}-${key}`, frames: this.anims.generateFrameNumbers(key, { start, end: start + per - 1 }), frameRate: 8, repeat: -1 });
+        }
+      }
+      const ctx = tex.context;
+      ctx.clearRect(0, 0, tex.width, tex.height);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(sheet, 0, 0);
+      tex.refresh();
+      return key;
     }
 
-    walkKey(dir, avatar) {
-      return `walk-${dir}-${this.textures.exists(`player-${avatar}`) ? avatar : 0}`;
+    texKey(ownerId) {
+      return `av:${ownerId}`;
+    }
+
+    walkKey(dir, ownerId) {
+      return `walk-${dir}-${this.texKey(ownerId)}`;
     }
 
     idleFrame(dir) {
       return this.playerMeta.rows[dir] * this.playerMeta.framesPerRow;
     }
 
-    buildAvatarTextures() {
-      const meta = this.playerMeta;
-      const src = this.textures.get('player-0').getSourceImage();
-      SHIRT_VARIANTS.forEach((variant, i) => {
-        if (i === 0 || this.textures.exists(`player-${i}`)) return;
-        const canvas = document.createElement('canvas');
-        canvas.width = src.width;
-        canvas.height = src.height;
-        const ctx = canvas.getContext('2d', { willReadFrequently: true });
-        ctx.drawImage(src, 0, 0);
-        const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const d = img.data;
-        for (let p = 0; p < d.length; p += 4) {
-          if (d[p + 3] === 0) continue;
-          for (let s = 0; s < SHIRT_SRC.length; s++) {
-            const [r, g, b] = SHIRT_SRC[s];
-            if (d[p] === r && d[p + 1] === g && d[p + 2] === b) {
-              [d[p], d[p + 1], d[p + 2]] = variant[s];
-              break;
-            }
-          }
-        }
-        ctx.putImageData(img, 0, 0);
-        this.textures.addSpriteSheet(`player-${i}`, canvas, { frameWidth: meta.frameWidth, frameHeight: meta.frameHeight });
-      });
-      const per = meta.framesPerRow;
-      SHIRT_VARIANTS.forEach((_v, i) => {
-        for (const dir of Object.keys(meta.rows)) {
-          const key = `walk-${dir}-${i}`;
-          if (this.anims.exists(key)) continue;
-          const start = meta.rows[dir] * per;
-          this.anims.create({ key, frames: this.anims.generateFrameNumbers(`player-${i}`, { start, end: start + per - 1 }), frameRate: 8, repeat: -1 });
-        }
+    /** 플레이어가 나가면 텍스처·애니메이션 정리 (렌더러가 이번 프레임에 쓰고 있을 수 있어 잠시 뒤에) */
+    releaseAvatarTexture(ownerId) {
+      const key = this.texKey(ownerId);
+      this.time.delayedCall(250, () => {
+        if (!this.textures.exists(key)) return;
+        for (const dir of Object.keys(this.playerMeta.rows)) this.anims.remove(`walk-${dir}-${key}`);
+        this.textures.remove(key);
       });
     }
 

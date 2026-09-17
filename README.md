@@ -2,13 +2,19 @@
 
 2D 탑뷰 멀티플레이 **스터디 메타버스**. 밤의 아늑한 스터디 카페 "우리의 스터디룸"에서 같이 공부하는 공간을 만듭니다.
 
-> **현재 단계: 4단계 — Supabase 영구 저장 + 공부 기록.** 닉네임으로 입장해 다른 접속자와 같은 방을 걸어다니고(서버 이동 검증),
+> **현재 단계: 5단계 — 아바타 커스터마이징.** 닉네임으로 입장해 다른 접속자와 같은 방을 걸어다니고(서버 이동 검증),
 > 의자·푸프·소파에 앉고(E), 채팅·이모지·공부/휴식 상태·공용 뽀모도로를 공유합니다. 끊겨도 30초 안에 같은 세션으로 이어집니다.
 > 라운지의 갈색 푸들 "사랑" 은 서버가 움직이는 NPC 로, 가까이 가면 쳐다보고 E 로 쓰다듬을 수 있습니다.
 > 3단계에서는 목업처럼 두께감 있는 유리 스터디룸·슬라이딩 문으로 맵을 정리하고, 책상에 앉으면 모니터가 켜지고,
 > 커피머신 앞에서 E 로 ☕ 휴식, 창밖은 실제 시각에 따라 낮/노을/밤으로 바뀌며, 뽀모도로 전환 연출과 유튜브 카드가 붙었습니다.
 > 4단계에서는 "앉아서 공부 중"인 시간이 **공부 세션**으로 Supabase(없으면 메모리)에 저장되고, 출석 스트릭·오늘 목표(책상 앞 팻말 + 진행 바)·
 > 랭킹(오늘/이번 주)·서버 저장 할 일(어제 것은 이월)이 생겼습니다.
+> 5단계에서는 캐릭터가 **피부·머리(12종)·상의(5종)·하의·신발·안경(3종)** 레이어로 나뉘고 색을 팔레트로 고를 수 있습니다.
+> 입장 화면과 설정의 아바타 빌더에서 고르면 `users.avatar` 에 저장되고 방 안 모두에게 즉시 반영됩니다.
+
+![머리 모양 12종](screenshots/s5_hair_row.png)
+
+![아바타 빌더](screenshots/s5_builder.png)
 
 ![목업과 게임 비교](screenshots/compare_mockup.png)
 
@@ -58,15 +64,18 @@ null-study-meta/
 │   ├── index.html, css/style.css
 │   ├── js/main.js            # 부트스트랩: 방 데이터 fetch → Phaser 생성 → Net·UI·씬·FX 연결, 입장/재입장 흐름
 │   ├── js/net.js             # 소켓 래퍼: join/재접속(세션 토큰 localStorage), 서버 시각 동기화, 20Hz 이동 전송
-│   ├── js/ui.js              # HUD(방 이름·인원·뽀모도로 배지·설정·멤버·알림·♪·나가기) + 사이드바(미니맵·오늘의 목표·할 일·뽀모도로·랭킹·유튜브·채팅) + 토스트·입장 모달
+│   ├── js/ui.js              # HUD(방 이름·인원·뽀모도로 배지·설정·멤버·알림·♪·나가기) + 사이드바(미니맵·오늘의 목표·할 일·뽀모도로·랭킹·유튜브·채팅) + 토스트·입장 모달 + 아바타 빌더(AvatarBuilder)
+│   ├── js/avatar-schema.js   # 아바타 값 검증 (catalog 기준, 서버와 같은 파일을 require)
+│   ├── js/avatar.js          # AvatarKit: catalog + 레이어 PNG 로드, 팔레트 리컬러, 레이어 합성 시트/프레임 그리기
 │   ├── js/daylight.js        # 시간대 가중치(낮/노을/밤, 경계 30분) + 하늘 팔레트 + 실내 연출 강도 (순수 함수, 테스트 공용)
 │   ├── js/music.js           # 유튜브 URL 파싱 · 최근 5개 (순수 함수, 테스트 공용)
 │   ├── js/fx.js              # Web Audio 합성 알림음 + 브라우저 알림 도우미
 │   ├── js/scenes/RoomScene.js# 타일맵(floor/furniture/windowDay/top), 아바타, 하늘 그라데이션·별, 유리 구역 틴트·밝기, 화면 on/off, 상호작용 지점, 조명·플래시
-│   └── assets/               # tiles.png / tiles.json (아틀라스), player.png / player.json, dog.png / dog.json, CREDITS.txt
+│   └── assets/               # tiles.png / tiles.json (아틀라스), dog.png / dog.json, avatar/ (catalog.json + 레이어별 PNG), player.png / player.json(옛 단일 시트, 빌드 산출물), CREDITS.txt
 ├── tools/
 │   ├── fetch_assets.py       # 외부 에셋 원본 다운로드 → tools/raw/ (git 제외)
 │   ├── build_assets.py       # 아틀라스 + 캐릭터 시트 빌드 (16px 논리 → 32px, nearest)
+│   ├── avatar_parts.py       # 5단계: 캐릭터 시트를 레이어로 분리 + 머리/상의/안경 드로잉 → public/assets/avatar/
 │   ├── recolor.py            # 팔레트 리컬러 (Kenney 원색 → 목업의 따뜻한 파스텔/우드 톤)
 │   ├── pixel.py              # 픽셀 드로잉 도우미 + 3x5 픽셀 폰트
 │   ├── props.py, props_room.py, props_v2.py, props_v3.py # 팩에 없는 소품을 코드로 그림 (창문 밤/낮, 보드, 소파, 유리 파티션·슬라이딩 문, 수납장 …)
@@ -120,8 +129,9 @@ npm test
 | `stage3.test.js` | 3단계: 커피머신 상호작용(거리·토글·앉으면 공부→일어나면 휴식), 듣는 중 제목, 소켓 `interact`/`listening` 브로드캐스트, oEmbed 프록시(가짜 fetch·캐시, 네트워크 없음), 시간대 가중치(경계 30분·합 1·팔레트), 유튜브 URL 파싱·최근 5개 |
 | `npc.test.js` | 강아지: 결정적 난수로 20분 돌려도 막힌 칸에 안 들어감·모든 상태 순환·산책, 틱당 이동량, 쳐다보기, 쓰다듬기 쿨다운, 이름 규칙 + 소켓: 두 클라이언트가 같은 `npc:update` 를 받음, 쓰다듬기/이름 브로드캐스트 |
 | `socket.test.js` | 소켓 E2E: 입장/중복 닉네임, playerMoved 가 발신자에게 안 감, move:correct 는 본인에게만, 착석/상태/아바타, 채팅/이모지, 뽀모도로 동기화, 토큰 재접속·옛 소켓 정리·유예 만료 |
+| `avatar.test.js` | 5단계: 카탈로그(머리 ≥10·상의 5·안경 3·색 6/10/12/8/6, 톤 수 = 팔레트 수), 검증(없는 id·잘못된 값 → 기본값, 옛 정수/`{shirt}` → 상의 색, 여분 필드 제거), `users.avatar` 저장/아바타 미전송 재입장 복원, `avatar:update` ack·본인 포함 브로드캐스트, 모든 레이어 PNG 존재 + 128×256(32×64 ×4×4) 규격 |
 | `latency.test.js` | TCP 지연 프록시(편도 300ms)로 두 명이 20Hz 이동 → 거부 0건, 상대·서버·새 입장자 모두 같은 최종 위치 |
-| `browser.test.js` | 헤드리스 Chrome 2탭(B 는 300ms 지연): 입장 → 키보드 이동이 상대 화면에 같은 위치 → 채팅(입력 중 이동 차단, HTML 미렌더) → 이모지 → 소파까지 걸어가 E 착석 → 강아지 옆까지 걸어가 E 쓰다듬기(두 탭 ❤️·채팅·같은 위치) → 책상 착석 시 두 탭 모두 모니터 켜짐/일어나면 꺼짐 → 커피머신까지 걸어가 E ☕ 휴식(상대 멤버 목록 반영) → 시각 고정으로 낮/노을/밤 전환·항상 밤 → 시스템 메시지 ×N → localStorage 할 일 서버 이전 → 목표 저장이 상대 화면 팻말에 → 출석 토스트·목표 달성 🎉·시스템 채팅 → 랭킹 카드(시간·🔥·메모리 배지) → 소켓 강제 종료 후 이어받기 → 나가기. Chrome 이 없으면 건너뜀 (`CHROME_PATH`) |
+| `browser.test.js` | 헤드리스 Chrome 2탭(B 는 300ms 지연): 입장 → 키보드 이동이 상대 화면에 같은 위치 → 채팅(입력 중 이동 차단, HTML 미렌더) → 이모지 → 소파까지 걸어가 E 착석 → 강아지 옆까지 걸어가 E 쓰다듬기(두 탭 ❤️·채팅·같은 위치) → 책상 착석 시 두 탭 모두 모니터 켜짐/일어나면 꺼짐 → 커피머신까지 걸어가 E ☕ 휴식(상대 멤버 목록 반영) → 시각 고정으로 낮/노을/밤 전환·항상 밤 → 시스템 메시지 ×N → localStorage 할 일 서버 이전 → 목표 저장이 상대 화면 팻말에 → 출석 토스트·목표 달성 🎉·시스템 채팅 → 랭킹 카드(시간·🔥·메모리 배지) → 아바타 꾸미기 모달에서 단발·핑크 선택이 상대 화면에 즉시 반영·localStorage 저장 → 소켓 강제 종료 후 이어받기 → 나가기. Chrome 이 없으면 건너뜀 (`CHROME_PATH`) |
 | `room.test.js`, `server.test.js`, `store.test.js` | 방 데이터·충돌·도달성, 유리 스터디룸 타일 구성·문·구역·화면·상호작용 지점·식물 수·낮 창문 레이어, HTTP 엔드포인트·socket.io 클라이언트 서빙, 저장소 폴백 |
 
 ## 소켓 프로토콜
@@ -130,10 +140,11 @@ npm test
 
 | 클라이언트 → 서버 | ack / 결과 |
 |---|---|
-| `join { nickname, token?, avatar? }` | `{ ok, resumed, token, self, players, seats, pomodoro, config, serverTime }` — `token` 이 살아 있으면 기존 플레이어를 이어받고 옛 소켓은 즉시 끊음 |
+| `join { nickname, token?, avatar? }` | `{ ok, resumed, token, self, players, seats, pomodoro, config, serverTime }` — `token` 이 살아 있으면 기존 플레이어를 이어받고 옛 소켓은 즉시 끊음. `avatar` 를 안 보내면(새 브라우저) `users.avatar` 에서 복원 |
 | `move { x, y, facing, moving }` (20Hz, volatile) | 통과 시 다른 사람에게만 `playerMoved`. 거부(예산 초과·벽·착석 중) 시 **본인에게만** `move:correct { x, y, reason }` |
 | `sit { seatId }` / `stand` | 점유·거리(56px) 검사 → 모두에게 `playerSat` / `playerStood` |
-| `status { study \| rest }`, `avatar { 0..3 }` | `playerStatus`, `playerAvatar` |
+| `status { study \| rest }` | `playerStatus` |
+| `avatar:update { avatar }` | `{ ok, avatar }` (catalog 기준으로 정규화된 값) → **본인 포함** 모두에게 `avatar:update { id, avatar }`. 옛 정수 아바타(0..3)도 받아 상의 색으로 옮김 |
 | `interact { id }` | 상호작용 지점(`room.interactables`) 거리 검사. `coffee` 면 상태 `coffee`(☕ 휴식) ↔ `rest` 토글 → 모두에게 `playerStatus`. 앉으면 공부 중, 일어나면 휴식(커피 아님) |
 | `listening { title \| null }` | 유튜브 재생 중 제목(≤80자) → 모두에게 `playerListening { id, listening }` (닉네임 옆 ♪, 멤버 목록 "듣는 중") |
 | `stats` | `{ ok, store, tz, date, rows: [{ nickname, todaySeconds, weekSeconds, streak, weekDays, live, online }] }` — 진행 중 세션 초 포함, 서버 3초 캐시. 클라이언트는 5초 폴링 + `leaderboard:refresh` |
@@ -180,6 +191,30 @@ HTTP: `GET /api/oembed?url=…` 은 유튜브 주소만 받아 서버가 oEmbed 
    테이블 `users` · `study_sessions` · `todos` · `daily_goals` · `attendance` 와 집계 함수 `study_totals(tz)` · `attendance_streaks(tz, only_nickname)` · `list_todos(nickname, tz)` 가 생깁니다.
    모든 테이블은 RLS 가 켜져 있고 정책이 없으며 함수도 anon/authenticated 에서 실행을 막아 두어, **service_role 키를 가진 서버만** 접근합니다.
 2. `.env` 에 `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`(service_role) 를 넣고 서버를 시작하면 로그에 `store=supabase` 가 찍힙니다. 연결에 실패하면 경고 후 메모리로 폴백합니다.
+
+## 아바타 (5단계)
+
+- **레이어**: `body`(피부 + 민머리 두상) → `top`(상의) → `bottom`(하의) → `shoes`(신발) → `hair`(머리) → `acc`(안경). 각 레이어는 `public/assets/avatar/<layer>/<id>.png`
+  (4열 걷기 × 4행 down/right/up/left, 32×64 프레임 = 논리 16×32 의 2배)이고 **모든 레이어가 같은 프레임 규격**이라 그대로 겹치면 됩니다.
+- **카탈로그** `public/assets/avatar/catalog.json`: 레이어별 아이템(id·표시명)·기준 팔레트·색상 필드, 색상 옵션(id·표시명·`tones`), 기본값, 옛 정수 아바타 → 상의 색 표.
+  서버(`server/game/avatar.js`)와 클라이언트가 같은 검증 코드(`public/js/avatar-schema.js`)를 씁니다: 없는 id·잘못된 값은 기본값, 여분 필드는 버림.
+- **색**: 레이어 PNG 는 기준 팔레트(예: 머리 `#6a4834 / #432e27 / #8c6a4e` = 기본·어두운·하이라이트)로 저장되어 있고, 클라이언트가 런타임에 픽셀 단위로
+  기준 톤 → 고른 색의 `tones` 로 치환합니다(명암 단계 유지). 피부 6 · 머리 10 · 상의 12 · 하의 8 · 신발 6 색. 모자·비니·안경은 고정색.
+- **파츠**: 머리 12종(기본·짧은 머리·가르마·곱슬·뾰족머리·단발·장발·포니테일·트윈테일·똥머리·모자·비니), 상의 5종(기본 튜닉·티셔츠·셔츠·후드·니트), 하의(바지), 신발(부츠),
+  안경 3종(동그란·각진·선글라스) + 없음. 기본 머리·상의·하의·신발·피부는 원본 시트(`tools/raw/oga_zelda/gfx/character.png`)를 `tools/avatar_parts.py` 가
+  **팔레트 + 위치 기준으로 분리**한 것이고(머리 자리는 민머리 두상 템플릿으로 채움), 새 머리·상의 디테일·안경은 같은 스크립트에서 16px 마스크로 그렸습니다
+  (오른쪽/아래 가장자리 검정 외곽선, 왼쪽/위는 어두운 톤, 피부에 닿는 가장자리는 부드럽게 — 원본 화풍 규칙).
+- **렌더**: `AvatarKit.composeSheet()` 가 레이어 6장을 한 캔버스에 겹치고, 씬은 플레이어마다 캔버스 텍스처 하나(`av:<id>`)를 만들어 파츠가 바뀌면 같은 캔버스를 다시 그려
+  `refresh()` 합니다(텍스처 생성/삭제 반복 없음). 스프라이트는 하나이므로 팻말·말풍선·상태 아이콘 위치는 그대로입니다.
+- **UI**: 입장 화면의 "아바타" 섹션과 설정 → "아바타 꾸미기" 모달이 같은 빌더 DOM 을 옮겨 씁니다. 좌: 4배 미리보기(걷기 애니메이션, 클릭으로 방향 회전),
+  우: 파츠 탭(머리/상의/하의/신발/피부/액세서리) → 썸네일(그 파츠만 바꾼 정면 아바타, 현재 선택 강조) → 색상 원형 버튼, 🎲 랜덤 · 초기화.
+- **저장**: `localStorage(nsm.avatar, JSON)` + 서버 `users.avatar`(jsonb). 방 안에서 바꾸면 200ms 디바운스로 `avatar:update` → 모두에게 즉시 반영.
+  localStorage 가 비어 있으면(새 브라우저) 입장 시 `avatar` 를 보내지 않아 서버가 저장된 값을 복원합니다. 4단계까지 저장된 정수(셔츠 색)·`{ shirt }` 도 그대로 호환.
+
+```bash
+python tools/avatar_parts.py     # public/assets/avatar/*, screenshots/s5_hair_row.png, tools/out/avatar_preview.png (검수용)
+node tools/screenshot_stage5.js  # s5_builder.png · s5_builder_top.png · s5_settings.png · s5_room.png (서버 먼저 실행)
+```
 
 ## 방 데이터 형식 (`GET /api/rooms/studyroom`)
 
@@ -235,7 +270,8 @@ HTTP: `GET /api/oembed?url=…` 은 유튜브 주소만 받아 서버가 oEmbed 
 | 용도 | 에셋 | 라이선스 |
 |---|---|---|
 | 의자·카운터·액자·작은 화분 | Kenney *Roguelike Indoors* | CC0 |
-| 캐릭터(치비 16×32, 4방향 4프레임 걷기) | ArMM1998 *Zelda-like tilesets and sprites* (OpenGameArt) | CC0 |
+| 캐릭터(치비 16×32, 4방향 4프레임 걷기) — 아바타 기본 파츠(피부·기본 머리·튜닉·바지·부츠)의 원본 | ArMM1998 *Zelda-like tilesets and sprites* (OpenGameArt) | CC0 |
+| 아바타 추가 파츠 (머리 11종·상의 디테일 4종·안경 3종·민머리 두상) | 이 저장소 오리지널 (`tools/avatar_parts.py`, 원본 화풍 규칙으로 코드 드로잉) | 프로젝트 라이선스 |
 | 강아지 NPC (16×24, 걷기 4방향×2·앉기·자기) | 이 저장소 오리지널 (`tools/dog_sprite.py`, 쿠션 위 푸들 그림 기준) | 프로젝트 라이선스 |
 | 나머지 대부분 (바닥·벽·창문 밤/낮·보드·소파·유리 파티션·슬라이딩 문·수납장·커피머신·벤치 …) | 이 저장소에서 코드로 그린 오리지널 | 프로젝트 라이선스 |
 
@@ -245,6 +281,7 @@ HTTP: `GET /api/oembed?url=…` 은 유튜브 주소만 받아 서버가 oEmbed 
 python tools/fetch_assets.py     # 원본 다운로드
 python tools/build_assets.py     # public/assets/tiles.png, tiles.json, player.png, player.json
 python tools/dog_sprite.py       # public/assets/dog.png, dog.json (원본 다운로드 불필요)
+python tools/avatar_parts.py     # public/assets/avatar/ (catalog.json + 레이어 PNG) — 원본 character.png 필요
 ```
 
 ## 환경변수
@@ -274,5 +311,5 @@ python tools/compare_mockup.py                                        # screensh
 
 - 뽀모도로 회차 기록, 주간 리포트
 - 유리문/입구 `doors` 로 방 이동, 실외 연결
-- 앉은 자세 프레임, 아바타 커스터마이즈 확장
+- 앉은 자세 프레임, 아바타 파츠 확장(치마·가방·모자 색)
 - 강아지 상호작용 확장 (간식 주기, 따라오기)

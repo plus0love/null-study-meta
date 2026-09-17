@@ -10,7 +10,7 @@
   const LS = { token: 'nsm.token', nickname: 'nsm.nickname', avatar: 'nsm.avatar' };
   const FORWARD = [
     'playerJoined', 'playerLeft', 'playerMoved', 'move:correct', 'playerSat', 'playerStood', 'playerStatus',
-    'playerAvatar', 'playerEmoji', 'chat', 'pomodoro', 'roomCount', 'playerDisconnected', 'playerReconnected',
+    'avatar:update', 'playerEmoji', 'chat', 'pomodoro', 'roomCount', 'playerDisconnected', 'playerReconnected',
     'npc:update', 'npc:pet', 'npc:name', 'playerListening',
     'playerGoal', 'leaderboard:refresh', 'attendance', 'goalReached',
   ];
@@ -20,7 +20,7 @@
       this.socket = null;
       this.listeners = new Map();
       this.session = null; // 마지막 join ack
-      this.credentials = null; // { nickname, avatar }
+      this.credentials = null; // { nickname, avatar(파츠 객체) }
       this.offset = 0; // serverTime - Date.now()
       this.corrections = 0; // 디버그/테스트용 카운터
       this.wasConnected = false;
@@ -37,16 +37,28 @@
       if (set) for (const fn of set) fn(data);
     }
 
+    /** 저장된 아바타: 5단계 파츠 객체(JSON) 또는 4단계까지의 정수(셔츠 색). 없으면 null → 서버가 users.avatar 에서 복원 */
+    static savedAvatar() {
+      const raw = localStorage.getItem(LS.avatar);
+      if (raw === null || raw === '') return null;
+      try {
+        const v = JSON.parse(raw);
+        return v && (typeof v === 'object' || Number.isInteger(v)) ? v : null;
+      } catch (_) {
+        const n = Number(raw);
+        return Number.isInteger(n) ? n : null;
+      }
+    }
+
     static saved() {
       try {
-        const avatar = Number(localStorage.getItem(LS.avatar));
         return {
           token: localStorage.getItem(LS.token) || null,
           nickname: localStorage.getItem(LS.nickname) || '',
-          avatar: Number.isInteger(avatar) ? avatar : 0,
+          avatar: Net.savedAvatar(),
         };
       } catch (_) {
-        return { token: null, nickname: '', avatar: 0 };
+        return { token: null, nickname: '', avatar: null };
       }
     }
 
@@ -54,7 +66,7 @@
       try {
         for (const [k, v] of Object.entries(patch)) {
           if (v === null || v === undefined) localStorage.removeItem(LS[k]);
-          else localStorage.setItem(LS[k], String(v));
+          else localStorage.setItem(LS[k], typeof v === 'object' ? JSON.stringify(v) : String(v));
         }
       } catch (_) { /* 시크릿 모드 등 */ }
     }
@@ -129,10 +141,14 @@
     sit(seatId) { return this.ask('sit', { seatId }); }
     stand() { return this.ask('stand', {}); }
     setStatus(status) { return this.ask('status', { status }); }
-    setAvatar(avatar) {
-      Net.save({ avatar });
-      if (this.credentials) this.credentials.avatar = avatar;
-      return this.ask('avatar', { avatar });
+    /** 아바타 변경 → 서버가 정규화한 값을 ack 로 돌려주고 모두에게 avatar:update 를 보낸다 */
+    async setAvatar(avatar) {
+      const res = await this.ask('avatar:update', { avatar });
+      if (res && res.ok) {
+        Net.save({ avatar: res.avatar });
+        if (this.credentials) this.credentials.avatar = res.avatar;
+      }
+      return res;
     }
     chat(text) { return this.ask('chat', { text }); }
     emoji(index) { return this.ask('emoji', { index }); }

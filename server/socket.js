@@ -7,7 +7,7 @@
  *   status    { status: 'study'|'rest' }     → 모두에게 playerStatus
  *   interact  { id }                         → ack { ok, kind, status?, error? }. coffee 면 모두에게 playerStatus (status 'coffee')
  *   listening { title|null }                 → 모두에게 playerListening { id, listening }
- *   avatar    { avatar }                     → 모두에게 playerAvatar
+ *   avatar:update { avatar }                 → ack { ok, avatar(정규화됨) }, 모두에게 avatar:update { id, avatar } (본인 포함)
  *   chat      { text }                       → ack { ok, error? }, 모두에게 chat { id, nickname, text, ts }
  *   emoji     { index }                      → 모두에게 playerEmoji { id, emoji }
  *   pomodoro:start / pomodoro:stop           → 모두에게 pomodoro { ...snapshot }
@@ -143,11 +143,10 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, log = console }
       if (res.ok) io.emit('playerListening', { id: player.id, listening: player.listening });
     }));
 
-    socket.on('avatar', requirePlayer((payload, ack) => {
+    socket.on('avatar:update', requirePlayer((payload, ack) => {
       const res = world.setAvatar(player, payload && payload.avatar);
-      if (!res.ok) return ack(res);
-      ack({ ok: true });
-      io.emit('playerAvatar', { id: player.id, avatar: player.avatar });
+      ack(res);
+      io.emit('avatar:update', { id: player.id, avatar: player.avatar });
     }));
 
     socket.on('chat', requirePlayer((payload, ack) => {

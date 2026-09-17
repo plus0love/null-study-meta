@@ -5,6 +5,7 @@
  *  - 이동 검증(예산 방식), 좌석 점유, 상태(공부/휴식/☕휴식), 채팅 검증, 뽀모도로
  *  - 상호작용 지점(커피머신 앞 E → 'coffee' 상태), 듣는 중(유튜브 제목) 표시
  *  - 4단계: 영구 데이터는 store(메모리/Supabase) — 공부 세션·출석·오늘 목표·할 일·강아지 이름. 실시간 상태는 계속 메모리.
+ *  - 5단계: 아바타는 파츠 객체(avatar.js 카탈로그 검증) — users.avatar 에 저장하고 재입장 시 복원.
  * 이벤트: 'playerLeft' (유예 시간이 지나 정리될 때), 'pomodoro' (상태 변화),
  *         'npcUpdate' (NPC 스냅샷, 10Hz), 'npcPet' ({ npc, by, nickname }), 'npcName' ({ npc, name }),
  *         'sessionSaved' { nickname, playerId, seconds }, 'attendance' { nickname, playerId, streak, weekDays, inserted },
@@ -22,6 +23,7 @@ const { StudyTracker } = require('./study');
 const { createMemoryStore } = require('../store/memory');
 const { DEFAULT_TZ, dateKey, isValidTz } = require('../store/stats');
 const { FACING_DELTA, interactableById } = require('../rooms/build');
+const { normalizeAvatar } = require('./avatar');
 
 const GRACE_MS = 30 * 1000; // 연결 끊김 후 플레이어를 유지하는 시간
 const SIT_RANGE_PX = 56; // 좌석 중심까지 이 거리 안이어야 앉을 수 있다 (대각선 인접 포함)
@@ -29,7 +31,6 @@ const STATUSES = ['study', 'rest', 'coffee']; // coffee = 커피머신 앞에서
 const MANUAL_STATUSES = ['study', 'rest'];
 const LISTENING_MAX = 80;
 const EMOJIS = ['👋', '😊', '👍', '❤️', '😂', '🔥'];
-const AVATAR_COUNT = 4;
 const FACINGS = Object.keys(FACING_DELTA);
 const GOAL_TEXT_MAX = 20;
 const GOAL_MIN = 30; // 분
@@ -98,7 +99,7 @@ class World extends EventEmitter {
   }
 
   get config() {
-    return { speed: SPEED, feetW: FEET_W, feetH: FEET_H, sendHz: 20, chatMax: CHAT_MAX, emojis: EMOJIS, avatarCount: AVATAR_COUNT, graceMs: this.graceMs };
+    return { speed: SPEED, feetW: FEET_W, feetH: FEET_H, sendHz: 20, chatMax: CHAT_MAX, emojis: EMOJIS, graceMs: this.graceMs };
   }
 
   /** 다른 클라이언트에 보내는 공개 정보 */
@@ -142,7 +143,8 @@ class World extends EventEmitter {
       token: newToken,
       socketId,
       nickname: name,
-      avatar: Number.isInteger(avatar) && avatar >= 0 && avatar < AVATAR_COUNT ? avatar : 0,
+      avatar: normalizeAvatar(avatar), // 5단계: 파츠 객체 (옛 정수 값도 상의 색으로 변환)
+      avatarProvided: avatar !== undefined && avatar !== null, // 안 보냈으면 loadProfile 에서 users.avatar 복원
       x: this.room.spawn.x,
       y: this.room.spawn.y,
       facing: 'down',
@@ -159,14 +161,19 @@ class World extends EventEmitter {
     };
     this.players.set(id, player);
     this.sessions.set(newToken, player);
-    this.store.upsertUser(name, { avatar: { shirt: player.avatar } }).catch((err) => this.log.warn(`[world] 사용자 저장 실패: ${err.message}`));
+    this.store.upsertUser(name, player.avatarProvided ? { avatar: player.avatar } : {}).catch((err) => this.log.warn(`[world] 사용자 저장 실패: ${err.message}`));
     return { ok: true, player, resumed: false, oldSocketId: null };
   }
 
-  /** 입장 ack 에 실을 영구 데이터: 오늘 목표 · 출석 스트릭 (실패해도 입장은 된다) */
+  /** 입장 ack 에 실을 영구 데이터: 오늘 목표 · 출석 스트릭 · (클라이언트가 아바타를 안 보냈으면) 저장된 아바타 복원. 실패해도 입장은 된다 */
   async loadProfile(player) {
     const out = { goal: null, streak: { streak: 0, weekDays: 0, attendedToday: false } };
     try {
+      if (!player.avatarProvided) {
+        const u = await this.store.getUser(player.nickname);
+        if (u && u.avatar !== null && u.avatar !== undefined) player.avatar = normalizeAvatar(u.avatar);
+        player.avatarProvided = true;
+      }
       const date = this.today();
       const g = await this.store.getGoal(player.nickname, date);
       if (g) this.goals.set(player.nickname, g);
@@ -307,10 +314,12 @@ class World extends EventEmitter {
     return { ok: true, listening: player.listening };
   }
 
+  /** 아바타 변경: catalog 기준으로 정규화(없는 id → 기본값)하고 users.avatar 에 저장 */
   setAvatar(player, avatar) {
-    if (!Number.isInteger(avatar) || avatar < 0 || avatar >= AVATAR_COUNT) return { ok: false, error: 'invalid' };
-    player.avatar = avatar;
-    return { ok: true };
+    player.avatar = normalizeAvatar(avatar);
+    player.avatarProvided = true;
+    this.store.upsertUser(player.nickname, { avatar: player.avatar }).catch((err) => this.log.warn(`[world] 아바타 저장 실패: ${err.message}`));
+    return { ok: true, avatar: player.avatar };
   }
 
   chat(player, raw) {
@@ -401,4 +410,4 @@ class World extends EventEmitter {
   }
 }
 
-module.exports = { World, GRACE_MS, SIT_RANGE_PX, EMOJIS, STATUSES, MANUAL_STATUSES, AVATAR_COUNT, LISTENING_MAX, GOAL_TEXT_MAX, GOAL_MIN, GOAL_MAX, GOAL_STEP, TODO_MAX, seatCenter };
+module.exports = { World, GRACE_MS, SIT_RANGE_PX, EMOJIS, STATUSES, MANUAL_STATUSES, LISTENING_MAX, GOAL_TEXT_MAX, GOAL_MIN, GOAL_MAX, GOAL_STEP, TODO_MAX, seatCenter };

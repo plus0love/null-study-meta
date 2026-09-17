@@ -14,7 +14,10 @@ Null Study Meta — 에셋 출처 / 제작자 / 라이선스
    - 제작자: ArMM1998
    - 출처:   https://opengameart.org/content/zelda-like-tilesets-and-sprites
    - 라이선스: CC0 1.0 (Public Domain)
-   - 사용 부분: gfx/character.png 의 4방향 걷기 4프레임(16x32). 머리색 → 흑발, 셔츠 → 흰색으로 리컬러 후 2배 확대
+   - 사용 부분: gfx/character.png 의 4방향 걷기 4프레임(16x32). 머리색 → 흑발, 셔츠 → 흰색으로 리컬러 후 2배 확대 (player.png)
+   - 5단계 (tools/avatar_parts.py): 같은 프레임을 팔레트·위치 기준으로 레이어 분리 → public/assets/avatar/ 의
+     body/base.png(피부·발밑 그림자, 머리 자리는 직접 그린 민머리 두상), hair/basic.png(원본 머리), top/basic.png(튜닉+벨트),
+     bottom/pants.png, shoes/boots.png. 색은 클라이언트가 런타임에 팔레트 치환(기준 톤은 원본 색 유지)
 
 3. 오리지널 픽셀아트 (이 저장소, tools/props.py · props_room.py · props_v2.py · props_v3.py 로 코드 생성)
    - 바닥/벽/창문(밤 야경 3프레임 + 낮 건물, 하늘은 클라이언트 그라데이션, 펜던트), 대형 칠판·세로 보드·유리 패널, 큰 책장·좁은 책장·사다리 선반,
@@ -24,6 +27,10 @@ Null Study Meta — 에셋 출처 / 제작자 / 라이선스
    - 강아지 쿠션(cushion)은 tools/sprites/cushion.png (poodle_cushion.png 에서 쿠션 부분만 분리, 오리지널)
    - 강아지 NPC 시트 dog.png (16x24 논리 → 32x48, 6행 x 2프레임: 걷기 4방향·앉기·자기) 는 tools/dog_sprite.py 로 생성.
      푸들 머리·팔레트는 tools/sprites/poodle_cushion.png (오리지널) 에서, 몸통·다리·꼬리·옆모습·자는 모습은 코드로 직접 그림
+   - 아바타 추가 파츠 public/assets/avatar/ (tools/avatar_parts.py, 원본 캐릭터 규격 16x32·4방향 4프레임, 화풍 규칙에 맞춰 16px 마스크로 직접 그림):
+     hair/ short·part·curly·spiky·bob·long·ponytail·twintail·bun·cap(네이비 야구모자)·beanie(머스터드 비니) 11종,
+     top/ tshirt·shirt(흰 카라·단추)·hoodie(후드·끈·주머니)·knit(터틀넥·케이블·밑단) 4종 (원본 튜닉 레이어를 프레임별로 가공),
+     acc/ glasses_round·glasses_square·sunglasses 3종, body/base.png 의 민머리 두상(4방향)
    - 라이선스: 프로젝트 라이선스를 따름
 
 4. UI 라인 아이콘 (public/index.html 의 인라인 SVG <symbol>) — 이 저장소에서 직접 그린 오리지널 (24px 그리드, stroke 기반)

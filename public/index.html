@@ -60,8 +60,8 @@
       <div class="popover" id="pop-settings" hidden>
         <h3>설정</h3>
         <div class="field">
-          <label>아바타 셔츠 색</label>
-          <div class="swatches" id="settings-avatars"></div>
+          <label>아바타</label>
+          <div class="row"><canvas id="settings-avatar-thumb" width="32" height="64" class="avatar-thumb"></canvas><button class="btn small" id="btn-avatar" type="button">아바타 꾸미기</button></div>
         </div>
         <div class="field">
           <label>닉네임</label>
@@ -186,17 +186,40 @@
   </aside>
 
   <div id="login" class="modal" hidden>
-    <form class="modal-box" id="login-form" autocomplete="off">
+    <form class="modal-box wide" id="login-form" autocomplete="off">
       <h1>📚 우리의 스터디룸</h1>
       <p class="muted">닉네임을 정하고 입장하세요. 문자·숫자·공백·_ - 12자 이내.</p>
       <input id="login-nick" type="text" maxlength="12" placeholder="닉네임" required />
       <div class="field">
-        <label>셔츠 색</label>
-        <div class="swatches" id="login-avatars"></div>
+        <label>아바타</label>
+        <div id="login-avatar-slot"></div>
       </div>
       <p class="error" id="login-error" hidden></p>
       <button class="btn primary" type="submit" id="login-submit">입장</button>
     </form>
+  </div>
+
+  <!-- 아바타 빌더: 입장 모달과 설정(아바타 모달) 사이를 옮겨 다니는 하나의 요소 -->
+  <div id="avatar-modal" class="modal" hidden>
+    <div class="modal-box wide">
+      <header class="row"><h1>아바타 꾸미기</h1><span class="muted">바꾸면 바로 모두에게 보여요</span><button class="icon-btn small ghost" id="avatar-modal-close" type="button" title="닫기"><svg class="icon"><use href="#i-x"/></svg></button></header>
+      <div id="avatar-modal-slot"></div>
+    </div>
+  </div>
+  <div id="avatar-builder" class="avatar-builder">
+    <div class="ab-left">
+      <canvas id="ab-preview" width="128" height="256" title="클릭하면 방향이 바뀌어요"></canvas>
+      <p class="hint">클릭 → 방향 회전</p>
+      <div class="row">
+        <button class="btn small" id="ab-random" type="button">🎲 랜덤</button>
+        <button class="btn small ghost" id="ab-reset" type="button">초기화</button>
+      </div>
+    </div>
+    <div class="ab-right">
+      <div class="tabs ab-tabs" id="ab-tabs" role="tablist"></div>
+      <div class="ab-grid" id="ab-grid"></div>
+      <div class="ab-colors" id="ab-colors"></div>
+    </div>
   </div>
 
   <div id="loading">불러오는 중…</div>
@@ -206,6 +229,8 @@
   <script src="/js/daylight.js"></script>
   <script src="/js/music.js"></script>
   <script src="/js/fx.js"></script>
+  <script src="/js/avatar-schema.js"></script>
+  <script src="/js/avatar.js"></script>
   <script src="/js/net.js"></script>
   <script src="/js/ui.js"></script>
   <script src="/js/scenes/RoomScene.js"></script>

@@ -534,6 +534,45 @@ input::placeholder { color: var(--cream-faint); }
 }
 .modal-box h1 { font-size: 20px; font-weight: 700; color: var(--amber-2); }
 .modal-box input[type="text"] { padding: 11px 12px; font-size: 15px; }
+.modal-box.wide { width: min(560px, calc(100vw - 32px)); }
+.modal-box header.row { align-items: center; gap: 10px; }
+.modal-box header.row h1 { flex: 1; }
+
+/* ── 아바타 빌더 (입장 모달 · 설정 모달 공용) ──────────────────────── */
+.avatar-builder { display: flex; gap: 16px; align-items: flex-start; }
+.avatar-builder .ab-left { display: flex; flex-direction: column; align-items: center; gap: 8px; flex: 0 0 auto; }
+.avatar-builder .ab-left .hint { font-size: 11px; color: var(--cream-faint); margin: 0; }
+#ab-preview {
+  width: 128px;
+  height: 256px;
+  image-rendering: pixelated;
+  border-radius: 12px;
+  background: radial-gradient(ellipse at 50% 85%, rgba(255, 184, 92, 0.16), transparent 60%), var(--panel-2);
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+.avatar-builder .ab-right { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.ab-tabs { margin-left: 0; flex-wrap: wrap; }
+.ab-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); gap: 6px; max-height: 200px; overflow: auto; padding: 2px; }
+.ab-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 2px;
+  border-radius: 9px;
+  border: 2px solid transparent;
+  background: var(--panel-2);
+  font-size: 10px;
+  color: var(--cream-dim);
+  line-height: 1.1;
+}
+.ab-item canvas { width: 32px; height: 64px; image-rendering: pixelated; }
+.ab-item:hover { border-color: var(--line); }
+.ab-item.selected { border-color: var(--amber); color: var(--amber-2); box-shadow: 0 0 0 2px var(--amber-dim); }
+.ab-colors { display: flex; flex-wrap: wrap; gap: 7px; min-height: 26px; }
+.ab-colors .swatch { width: 24px; height: 24px; }
+.avatar-thumb { width: 32px; height: 64px; image-rendering: pixelated; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--line); }
 
 #loading {
   position: fixed;

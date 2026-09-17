@@ -1,0 +1,575 @@
+{
+ "version": 1,
+ "frame": {
+  "width": 32,
+  "height": 64,
+  "framesPerRow": 4,
+  "rows": {
+   "down": 0,
+   "right": 1,
+   "up": 2,
+   "left": 3
+  }
+ },
+ "order": [
+  "body",
+  "top",
+  "bottom",
+  "shoes",
+  "hair",
+  "acc"
+ ],
+ "layers": {
+  "body": {
+   "label": "피부",
+   "field": null,
+   "item": "base",
+   "colorField": "skin",
+   "palette": [
+    "#e8d4b2",
+    "#bfa787"
+   ],
+   "items": [
+    {
+     "id": "base",
+     "label": "기본"
+    }
+   ]
+  },
+  "top": {
+   "label": "상의",
+   "field": "top",
+   "colorField": "topColor",
+   "palette": [
+    "#c43c3c",
+    "#882e2e",
+    "#681c1c"
+   ],
+   "items": [
+    {
+     "id": "basic",
+     "label": "기본 튜닉"
+    },
+    {
+     "id": "tshirt",
+     "label": "티셔츠"
+    },
+    {
+     "id": "shirt",
+     "label": "셔츠"
+    },
+    {
+     "id": "hoodie",
+     "label": "후드"
+    },
+    {
+     "id": "knit",
+     "label": "니트"
+    }
+   ]
+  },
+  "bottom": {
+   "label": "하의",
+   "field": "bottom",
+   "colorField": "bottomColor",
+   "palette": [
+    "#65659b",
+    "#5586b9"
+   ],
+   "items": [
+    {
+     "id": "pants",
+     "label": "바지"
+    }
+   ]
+  },
+  "shoes": {
+   "label": "신발",
+   "field": "shoes",
+   "colorField": "shoesColor",
+   "palette": [
+    "#6a4834",
+    "#432e27"
+   ],
+   "items": [
+    {
+     "id": "boots",
+     "label": "부츠"
+    }
+   ]
+  },
+  "hair": {
+   "label": "머리",
+   "field": "hair",
+   "colorField": "hairColor",
+   "palette": [
+    "#6a4834",
+    "#432e27",
+    "#8c6a4e"
+   ],
+   "items": [
+    {
+     "id": "basic",
+     "label": "기본"
+    },
+    {
+     "id": "short",
+     "label": "짧은 머리"
+    },
+    {
+     "id": "part",
+     "label": "가르마"
+    },
+    {
+     "id": "curly",
+     "label": "곱슬"
+    },
+    {
+     "id": "spiky",
+     "label": "뾰족머리"
+    },
+    {
+     "id": "bob",
+     "label": "단발"
+    },
+    {
+     "id": "long",
+     "label": "장발"
+    },
+    {
+     "id": "ponytail",
+     "label": "포니테일"
+    },
+    {
+     "id": "twintail",
+     "label": "트윈테일"
+    },
+    {
+     "id": "bun",
+     "label": "똥머리"
+    },
+    {
+     "id": "cap",
+     "label": "모자"
+    },
+    {
+     "id": "beanie",
+     "label": "비니"
+    }
+   ]
+  },
+  "acc": {
+   "label": "액세서리",
+   "field": "acc",
+   "colorField": null,
+   "palette": [],
+   "items": [
+    {
+     "id": "none",
+     "label": "없음",
+     "file": null
+    },
+    {
+     "id": "glasses_round",
+     "label": "동그란 안경"
+    },
+    {
+     "id": "glasses_square",
+     "label": "각진 안경"
+    },
+    {
+     "id": "sunglasses",
+     "label": "선글라스"
+    }
+   ]
+  }
+ },
+ "colors": {
+  "skin": [
+   {
+    "id": "peach",
+    "label": "복숭아",
+    "tones": [
+     "#e8d4b2",
+     "#bfa787"
+    ]
+   },
+   {
+    "id": "fair",
+    "label": "밝은 살구",
+    "tones": [
+     "#f6e3cf",
+     "#d9b9a0"
+    ]
+   },
+   {
+    "id": "warm",
+    "label": "따뜻한 베이지",
+    "tones": [
+     "#e9c39a",
+     "#c99a72"
+    ]
+   },
+   {
+    "id": "tan",
+    "label": "탄",
+    "tones": [
+     "#d4a274",
+     "#a97a52"
+    ]
+   },
+   {
+    "id": "brown",
+    "label": "브라운",
+    "tones": [
+     "#a5673f",
+     "#7d4b2c"
+    ]
+   },
+   {
+    "id": "deep",
+    "label": "딥 브라운",
+    "tones": [
+     "#6e4128",
+     "#4d2b19"
+    ]
+   }
+  ],
+  "hairColor": [
+   {
+    "id": "black",
+    "label": "흑발",
+    "tones": [
+     "#3d3540",
+     "#2b2530",
+     "#544a58"
+    ]
+   },
+   {
+    "id": "darkbrown",
+    "label": "다크 브라운",
+    "tones": [
+     "#6a4834",
+     "#432e27",
+     "#8c6a4e"
+    ]
+   },
+   {
+    "id": "brown",
+    "label": "브라운",
+    "tones": [
+     "#8b5a3c",
+     "#5e3a26",
+     "#a9775a"
+    ]
+   },
+   {
+    "id": "auburn",
+    "label": "적갈색",
+    "tones": [
+     "#a0522d",
+     "#6f3519",
+     "#c47a52"
+    ]
+   },
+   {
+    "id": "blonde",
+    "label": "금발",
+    "tones": [
+     "#e2c27a",
+     "#b08f4a",
+     "#f2dca3"
+    ]
+   },
+   {
+    "id": "ash",
+    "label": "애쉬",
+    "tones": [
+     "#d9d3c8",
+     "#a49d92",
+     "#f0ece5"
+    ]
+   },
+   {
+    "id": "red",
+    "label": "레드",
+    "tones": [
+     "#d3653b",
+     "#9a4222",
+     "#eb8f66"
+    ]
+   },
+   {
+    "id": "pink",
+    "label": "핑크",
+    "tones": [
+     "#e88fb5",
+     "#b95f88",
+     "#f5b6d0"
+    ]
+   },
+   {
+    "id": "blue",
+    "label": "블루",
+    "tones": [
+     "#5a7fc4",
+     "#3a5590",
+     "#86a5dd"
+    ]
+   },
+   {
+    "id": "purple",
+    "label": "퍼플",
+    "tones": [
+     "#8e6bc4",
+     "#62468f",
+     "#b394dd"
+    ]
+   }
+  ],
+  "topColor": [
+   {
+    "id": "white",
+    "label": "화이트",
+    "tones": [
+     "#f1eee8",
+     "#c9c4bb",
+     "#a9a39a"
+    ]
+   },
+   {
+    "id": "amber",
+    "label": "앰버",
+    "tones": [
+     "#ffc46e",
+     "#d69846",
+     "#b27834"
+    ]
+   },
+   {
+    "id": "sage",
+    "label": "세이지",
+    "tones": [
+     "#a8c496",
+     "#7a986a",
+     "#5c7850"
+    ]
+   },
+   {
+    "id": "blue",
+    "label": "블루",
+    "tones": [
+     "#96b4dc",
+     "#6886b8",
+     "#4e6896"
+    ]
+   },
+   {
+    "id": "charcoal",
+    "label": "차콜",
+    "tones": [
+     "#4a4650",
+     "#332f38",
+     "#221f26"
+    ]
+   },
+   {
+    "id": "red",
+    "label": "레드",
+    "tones": [
+     "#d9534f",
+     "#a33632",
+     "#7a2422"
+    ]
+   },
+   {
+    "id": "navy",
+    "label": "네이비",
+    "tones": [
+     "#3e4d78",
+     "#2b3556",
+     "#1c2340"
+    ]
+   },
+   {
+    "id": "mint",
+    "label": "민트",
+    "tones": [
+     "#8fd3c1",
+     "#5ea895",
+     "#3f7d6d"
+    ]
+   },
+   {
+    "id": "lavender",
+    "label": "라벤더",
+    "tones": [
+     "#c0a6e0",
+     "#8f74b3",
+     "#674f86"
+    ]
+   },
+   {
+    "id": "pink",
+    "label": "핑크",
+    "tones": [
+     "#f2b3c6",
+     "#c9819a",
+     "#9a5c73"
+    ]
+   },
+   {
+    "id": "mustard",
+    "label": "머스터드",
+    "tones": [
+     "#d9b24c",
+     "#a8842f",
+     "#7b5f1f"
+    ]
+   },
+   {
+    "id": "brown",
+    "label": "브라운",
+    "tones": [
+     "#a0764e",
+     "#775535",
+     "#543a22"
+    ]
+   }
+  ],
+  "bottomColor": [
+   {
+    "id": "denim",
+    "label": "데님",
+    "tones": [
+     "#65659b",
+     "#5586b9"
+    ]
+   },
+   {
+    "id": "black",
+    "label": "블랙",
+    "tones": [
+     "#2f2c36",
+     "#4a4652"
+    ]
+   },
+   {
+    "id": "navy",
+    "label": "네이비",
+    "tones": [
+     "#2c3e6e",
+     "#3f5a95"
+    ]
+   },
+   {
+    "id": "khaki",
+    "label": "카키",
+    "tones": [
+     "#b7a47a",
+     "#cdbb90"
+    ]
+   },
+   {
+    "id": "gray",
+    "label": "그레이",
+    "tones": [
+     "#8a8a95",
+     "#a8a8b2"
+    ]
+   },
+   {
+    "id": "brown",
+    "label": "브라운",
+    "tones": [
+     "#7a5236",
+     "#98693f"
+    ]
+   },
+   {
+    "id": "olive",
+    "label": "올리브",
+    "tones": [
+     "#6b7a4b",
+     "#889a60"
+    ]
+   },
+   {
+    "id": "cream",
+    "label": "크림",
+    "tones": [
+     "#e8e2d4",
+     "#f6f2e8"
+    ]
+   }
+  ],
+  "shoesColor": [
+   {
+    "id": "brown",
+    "label": "브라운",
+    "tones": [
+     "#6a4834",
+     "#432e27"
+    ]
+   },
+   {
+    "id": "black",
+    "label": "블랙",
+    "tones": [
+     "#2b2830",
+     "#1a171e"
+    ]
+   },
+   {
+    "id": "white",
+    "label": "화이트",
+    "tones": [
+     "#e9e6e0",
+     "#b5b0a8"
+    ]
+   },
+   {
+    "id": "red",
+    "label": "레드",
+    "tones": [
+     "#c0392b",
+     "#7e2419"
+    ]
+   },
+   {
+    "id": "navy",
+    "label": "네이비",
+    "tones": [
+     "#34456e",
+     "#22304d"
+    ]
+   },
+   {
+    "id": "tan",
+    "label": "탄",
+    "tones": [
+     "#c39a6b",
+     "#8e6b45"
+    ]
+   }
+  ]
+ },
+ "defaults": {
+  "skin": "peach",
+  "hair": "basic",
+  "hairColor": "black",
+  "top": "basic",
+  "topColor": "white",
+  "bottom": "pants",
+  "bottomColor": "denim",
+  "shoes": "boots",
+  "shoesColor": "brown",
+  "acc": "none"
+ },
+ "legacyShirt": [
+  "white",
+  "amber",
+  "sage",
+  "blue"
+ ]
+}
