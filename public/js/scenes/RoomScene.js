@@ -18,6 +18,8 @@
  * 4단계: 앉아 있고 오늘 목표가 있으면 발 아래에 작은 팻말(목표 텍스트, 말줄임) + 진행 바(오늘 누적/목표). 목표 달성 시 머리 위 🎉 3초.
  * 5단계: 아바타는 파츠 객체 → AvatarKit(avatar.js) 이 레이어를 겹친 시트를 만들고, 씬은 그 시트를 텍스처로 등록해 한 스프라이트로 그린다
  *        (레이어가 항상 같은 프레임을 보여 팻말·말풍선·상태 아이콘 위치는 그대로).
+ * 8단계: 개인 뽀모도로가 돌면 상태 아이콘 왼쪽에 "🍅 18:32" / "☕ 4:10" (서버가 준 endsAt 으로 각자 계산, 1초마다 갱신 — 남의 것도 보인다).
+ *        코인이 들어오면 머리 위 "+1 🪙" 가 떠오른다 (onCoins). hooks.serverNow 로 서버 시각을 받는다.
  */
 (function () {
   'use strict';
@@ -29,6 +31,8 @@
   const CORRECT_RATE = 10; // 서버 보정 시 초당 수렴 비율
   const FONTS = { hand: '"Gaegu", "Nanum Pen Script", cursive', sans: '"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif' };
   const STATUS_EMOJI = { study: '📖', rest: '🌿', coffee: '☕' }; // coffee: 커피머신 앞 E → 컵 든 모양
+  const POMO_EMOJI = { focus: '🍅', break: '☕' };
+  const POMO_TICK = 1000; // ms — 머리 위 타이머 글자 갱신 주기
 
   const DEPTH = { sky: 0.5, stars: 0.6, windowDay: 1.5, zone: 2, screen: 2.5, shadow: 9, avatar: 10, label: 25, bubble: 26, darkness: 30, glow: 31 };
   const SIGN_MAX_W = 96; // 팻말 최대 폭(px) — 넘치면 말줄임
@@ -60,6 +64,14 @@
       }).setOrigin(0.5, 0).setDepth(DEPTH.label);
       this.statusBubble = this.makeBubble(STATUS_EMOJI[this.status], { pad: 3, fontSize: 10, radius: 6 });
       this.statusBubble.setDepth(DEPTH.label);
+      // 뽀모도로 남은 시간 (상태 아이콘 왼쪽, 진행 중일 때만 보임)
+      this.pomo = null; // { phase, endsAt } | null
+      this.pomoText = scene.add.text(0, 0, '', {
+        fontFamily: FONTS.sans, fontSize: '9px', fontStyle: 'bold', color: '#ffd08a',
+        stroke: '#14111a', strokeThickness: 3, resolution: ZOOM,
+      }).setOrigin(1, 0.5).setDepth(DEPTH.label).setVisible(false);
+      this.coinText = null;
+      this.coinTimer = null;
       this.chatBubble = null;
       this.chatTimer = null;
       this.emojiText = null;
@@ -68,6 +80,47 @@
       this.setPosition(p.x, p.y);
       this.setFacing(this.facing);
       this.setSeated(this.seated);
+      this.setPomodoro(p.pomodoro || null);
+    }
+
+    // ── 뽀모도로 머리 위 표시 / 코인 (8단계) ──────────────────────────
+    /** 서버가 준 { phase, endsAt } (진행 중) 또는 null. 글자는 tickPomo 가 1초마다 채운다 */
+    setPomodoro(pomo) {
+      this.pomo = pomo && pomo.endsAt ? { phase: pomo.phase, endsAt: pomo.endsAt } : null;
+      this.pomoText.setVisible(Boolean(this.pomo));
+      this.tickPomo(this.scene.hooks.serverNow());
+    }
+
+    /** 남은 시간 텍스트 갱신 ("🍅 18:32" / "☕ 4:10"). 바뀌었을 때만 setText */
+    tickPomo(now) {
+      if (!this.pomo) return;
+      const remain = Math.max(0, this.pomo.endsAt - now);
+      const s = Math.ceil(remain / 1000);
+      const txt = `${POMO_EMOJI[this.pomo.phase] || '⏱'} ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+      if (this.pomoText.text !== txt) this.pomoText.setText(txt);
+    }
+
+    /** 코인 증감: 머리 위 "+1 🪙" 가 1.4초 동안 떠오르며 사라진다 (음수는 붉게) */
+    showCoin(delta) {
+      this.clearCoin();
+      const plus = delta > 0;
+      const t = this.scene.add.text(0, 0, `${plus ? '+' : ''}${delta} 🪙`, {
+        fontFamily: FONTS.sans, fontSize: '12px', fontStyle: 'bold', color: plus ? '#ffd08a' : '#ff8a7a',
+        stroke: '#14111a', strokeThickness: 3, resolution: ZOOM,
+      }).setOrigin(0.5, 1).setDepth(DEPTH.bubble);
+      t.rise = 0;
+      this.coinText = t;
+      this.setPosition(this.x, this.y);
+      this.scene.tweens.add({ targets: t, rise: 22, duration: 1400, ease: 'Sine.easeOut', onUpdate: () => this.setPosition(this.x, this.y) });
+      this.scene.tweens.add({ targets: t, alpha: 0, delay: 800, duration: 600 });
+      this.coinTimer = this.scene.time.delayedCall(1400, () => this.clearCoin());
+    }
+
+    clearCoin() {
+      if (this.coinTimer) this.coinTimer.remove(false);
+      this.coinTimer = null;
+      if (this.coinText) this.coinText.destroy();
+      this.coinText = null;
     }
 
     // ── 목표 팻말 ────────────────────────────────────────────────────
@@ -163,8 +216,10 @@
       this.name.setPosition(rx, ry + 3);
       if (this.sign) this.sign.setPosition(rx, ry + 19);
       this.statusBubble.setPosition(rx + 16, ry - 66);
+      this.pomoText.setPosition(rx + 16 - this.statusBubble.bubbleW / 2 - 2, ry - 66);
       if (this.chatBubble) this.chatBubble.setPosition(rx, ry - 78 - this.chatBubble.bubbleH / 2);
       if (this.emojiText) this.emojiText.setPosition(rx, ry - 74 - (this.emojiText.rise || 0));
+      if (this.coinText) this.coinText.setPosition(rx - 14, ry - 70 - (this.coinText.rise || 0));
     }
 
     setFacing(f) {
@@ -254,11 +309,13 @@
     destroy() {
       this.clearChat();
       this.clearEmoji();
+      this.clearCoin();
       if (this.sign) this.sign.destroy();
       this.sprite.destroy();
       this.shadow.destroy();
       this.name.destroy();
       this.statusBubble.destroy();
+      this.pomoText.destroy();
       this.scene.releaseAvatarTexture(this.id);
     }
   }
@@ -392,7 +449,8 @@
       this.playerMeta = { frameWidth: this.avatarKit.frame.width, frameHeight: this.avatarKit.frame.height, framesPerRow: this.avatarKit.frame.framesPerRow, rows: this.avatarKit.frame.rows };
       this.dogMeta = data.dog;
       this.onReady = data.onReady || (() => {});
-      this.hooks = { onMove() {}, onSit() {}, onStand() {}, onPet() {}, onUse() {}, onInteract() {}, onEmojiKey() {}, onChatKey() {}, onPositions() {} };
+      this.hooks = { onMove() {}, onSit() {}, onStand() {}, onPet() {}, onUse() {}, onInteract() {}, onEmojiKey() {}, onChatKey() {}, onPositions() {}, serverNow: () => Date.now() };
+      this.pomoAcc = 0;
       this.npcs = new Map();
       this.nearNpc = null;
       this.nearItem = null; // 가까운 상호작용 지점 (커피머신·음악 패널)
@@ -593,6 +651,25 @@
       if (a) a.setStatus(d.status);
     }
 
+    /** 8단계: 누군가의 뽀모도로가 시작/정지/전환됐다 → 머리 위 표시 */
+    onPlayerPomodoro(d) {
+      const a = this.avatarOf(d.id);
+      if (a) a.setPomodoro(d.pomodoro);
+    }
+
+    /** 8단계: 코인 증감 → 머리 위 "+N 🪙" */
+    onCoins(d) {
+      const a = this.avatarOf(d.id);
+      if (a && d.delta) a.showCoin(d.delta);
+    }
+
+    /** 머리 위 타이머 글자 (1초마다) */
+    tickPomodoros() {
+      const now = this.hooks.serverNow();
+      if (this.me) this.me.tickPomo(now);
+      for (const r of this.remotes.values()) r.avatar.tickPomo(now);
+    }
+
     onAvatar(d) {
       const a = this.avatarOf(d.id);
       if (a) a.setAvatar(d.avatar);
@@ -767,6 +844,11 @@
       }
       this.updateRemotes();
       for (const n of this.npcs.values()) n.update();
+      this.pomoAcc += delta;
+      if (this.pomoAcc >= POMO_TICK) {
+        this.pomoAcc = 0;
+        this.tickPomodoros();
+      }
       this.daylightAcc += delta;
       if (this.daylightAcc >= DAYLIGHT_TICK) {
         this.daylightAcc = 0;

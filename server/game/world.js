@@ -6,10 +6,14 @@
  *  - 상호작용 지점(커피머신 앞 E → 'coffee' 상태), 듣는 중(유튜브 제목) 표시
  *  - 4단계: 영구 데이터는 store(메모리/Supabase) — 공부 세션·출석·오늘 목표·할 일·강아지 이름. 실시간 상태는 계속 메모리.
  *  - 5단계: 아바타는 파츠 객체(avatar.js 카탈로그 검증) — users.avatar 에 저장하고 재입장 시 복원.
+ *  - 8단계: 코인 — 세션 저장 시 10분당 1코인(남은 초는 users.coin_carry_seconds 로 이월), 집중 사이클 완주(앉아서 공부 중 유지) 시 5코인 (coins.js).
+ *    잔액·원장·이월 초·인벤토리는 store.
+ *    상점(shop.js)은 카탈로그가 비어 있는 뼈대 — purchase 는 잔액 확인·차감·원장·인벤토리까지 한다.
  * 이벤트: 'playerLeft' (유예 시간이 지나 정리될 때), 'pomodoro' (snap, reason, player — 개인 타이머 상태 변화),
  *         'npcUpdate' (NPC 스냅샷, 10Hz), 'npcPet' ({ npc, by, nickname }), 'npcName' ({ npc, name }),
  *         'sessionSaved' { nickname, playerId, seconds }, 'attendance' { nickname, playerId, streak, weekDays, inserted },
- *         'goalReached' { nickname, playerId, todaySeconds, targetMinutes }
+ *         'goalReached' { nickname, playerId, todaySeconds, targetMinutes },
+ *         'coins' { nickname, playerId, delta, reason, balance } (코인 증감이 저장된 뒤)
  */
 const EventEmitter = require('node:events');
 const crypto = require('node:crypto');
@@ -24,6 +28,8 @@ const { createMemoryStore } = require('../store/memory');
 const { DEFAULT_TZ, dateKey, isValidTz } = require('../store/stats');
 const { FACING_DELTA, interactableById } = require('../rooms/build');
 const { normalizeAvatar } = require('./avatar');
+const { settleStudy, focusBonusFor } = require('./coins');
+const { createShop } = require('./shop');
 
 const GRACE_MS = 30 * 1000; // 연결 끊김 후 플레이어를 유지하는 시간
 const SIT_RANGE_PX = 56; // 좌석 중심까지 이 거리 안이어야 앉을 수 있다 (대각선 인접 포함)
@@ -43,7 +49,7 @@ function seatCenter(room, seat) {
 }
 
 class World extends EventEmitter {
-  constructor(room, { graceMs = GRACE_MS, pomodoro = {}, npc = {}, now = () => Date.now(), store = null, tz = DEFAULT_TZ, study = {}, log = console } = {}) {
+  constructor(room, { graceMs = GRACE_MS, pomodoro = {}, npc = {}, now = () => Date.now(), store = null, tz = DEFAULT_TZ, study = {}, shop = undefined, log = console } = {}) {
     super();
     this.room = room;
     this.now = now;
@@ -53,7 +59,7 @@ class World extends EventEmitter {
     this.tz = isValidTz(tz) ? tz : DEFAULT_TZ;
     this.goals = new Map(); // nickname → { date, goalText, targetMinutes } (오늘 것만 캐시)
     this.study = new StudyTracker({ store: this.store, tz: this.tz, now, log, goalOf: (n) => this.goalOf(n), ...study });
-    this.study.on('saved', (e) => this.emit('sessionSaved', e));
+    this.study.on('saved', (e) => { this.emit('sessionSaved', e); this.settleSession(e); });
     this.study.on('attendance', (e) => this.emit('attendance', e));
     this.study.on('goalReached', (e) => this.emit('goalReached', e));
     this.players = new Map(); // id → player
@@ -63,6 +69,8 @@ class World extends EventEmitter {
     this.chatLimiter = createRateLimiter();
     this.pomodoroOpts = { ...pomodoro, now }; // 개인 타이머 기본값 (테스트: focusMs/breakMs)
     this.pomodoros = new Map(); // playerId → Pomodoro (7단계: 개인별, 퇴장하면 정리)
+    this.shop = createShop(shop); // 8단계: 카탈로그 (기본은 비어 있음, 테스트가 아이템을 넣는다)
+    this.pendingAwards = new Set(); // 진행 중인 코인 저장 Promise (dispose 가 기다림)
 
     // 강아지 NPC: 접속 중인 플레이어 위치를 보고 행동한다. npc.autoStart === false 면 테스트가 직접 tick() 한다.
     this.dog = new DogNpc(room, { ...npc, now });
@@ -104,7 +112,13 @@ class World extends EventEmitter {
 
   /** 다른 클라이언트에 보내는 공개 정보 */
   publicPlayer(p) {
-    return { id: p.id, nickname: p.nickname, avatar: p.avatar, x: p.x, y: p.y, facing: p.facing, moving: p.moving, status: p.status, seatId: p.seatId, connected: p.connected, listening: p.listening || null, goal: this.publicGoal(p.nickname) };
+    return { id: p.id, nickname: p.nickname, avatar: p.avatar, x: p.x, y: p.y, facing: p.facing, moving: p.moving, status: p.status, seatId: p.seatId, connected: p.connected, listening: p.listening || null, goal: this.publicGoal(p.nickname), pomodoro: this.publicPomodoro(p) };
+  }
+
+  /** 머리 위 타이머 표시용 (8단계): 진행 중이면 { phase, endsAt }, 아니면 null. 남은 시간은 각자 서버 시각으로 계산한다 */
+  publicPomodoro(p) {
+    const pomo = this.pomodoros.get(p.id);
+    return pomo && pomo.running ? { phase: pomo.phase, endsAt: pomo.endsAt } : null;
   }
 
   listPlayers() {
@@ -170,9 +184,9 @@ class World extends EventEmitter {
     return { ok: true, player, resumed: false, oldSocketId: null };
   }
 
-  /** 입장 ack 에 실을 영구 데이터: 오늘 목표 · 출석 스트릭 · (클라이언트가 아바타를 안 보냈으면) 저장된 아바타 복원. 실패해도 입장은 된다 */
+  /** 입장 ack 에 실을 영구 데이터: 오늘 목표 · 출석 스트릭 · 코인 잔액 · (클라이언트가 아바타를 안 보냈으면) 저장된 아바타 복원. 실패해도 입장은 된다 */
   async loadProfile(player) {
-    const out = { goal: null, streak: { streak: 0, weekDays: 0, attendedToday: false } };
+    const out = { goal: null, streak: { streak: 0, weekDays: 0, attendedToday: false }, coins: 0 };
     try {
       if (!player.avatarProvided) {
         const u = await this.store.getUser(player.nickname);
@@ -185,6 +199,7 @@ class World extends EventEmitter {
       else this.goals.delete(player.nickname);
       out.goal = this.publicGoal(player.nickname);
       out.streak = await this.store.attendanceOf(player.nickname, { tz: this.tz, now: this.now() });
+      out.coins = await this.store.getCoins(player.nickname);
     } catch (err) {
       this.log.warn(`[world] 프로필 로드 실패 (${player.nickname}): ${err.message}`);
     }
@@ -349,6 +364,7 @@ class World extends EventEmitter {
     if (!p) {
       p = new Pomodoro(this.pomodoroOpts);
       p.on('change', (snap, reason) => this.emit('pomodoro', snap, reason, player));
+      p.on('phaseEnd', (cycle) => this.settleFocusCycle(player, cycle));
       this.pomodoros.set(player.id, p);
     }
     return p;
@@ -373,6 +389,83 @@ class World extends EventEmitter {
     const pomo = this.pomodoros.get(player.id);
     if (!pomo || !pomo.stop(player.nickname)) return { ok: false, error: 'not_running' };
     return { ok: true, ...pomo.snapshot() };
+  }
+
+  // ── 코인 / 상점 (8단계) ────────────────────────────────────────────
+  /** 코인 증감을 저장소에 기록하고 'coins' 이벤트. 실패(잔액 부족·저장소 오류)는 null. 저장이 끝날 때까지 dispose 가 기다린다 */
+  award(nickname, playerId, delta, reason) {
+    const p = (async () => {
+      const r = await this.store.adjustCoins(nickname, delta, reason, this.now());
+      if (!r.ok) return null;
+      const e = { nickname, playerId, delta, reason, balance: r.balance };
+      this.emit('coins', e);
+      return e;
+    })().catch((err) => {
+      this.log.warn(`[world] 코인 저장 실패 (${nickname}, ${delta}, ${reason}): ${err.message}`);
+      return null;
+    });
+    this.pendingAwards.add(p);
+    p.finally(() => this.pendingAwards.delete(p));
+    return p;
+  }
+
+  /**
+   * 세션이 저장됐다 → 이월 초 + 이번 세션 초를 10분 단위로 정산 (coins.js settleStudy). 남은 초는 다시 이월.
+   * 지급을 먼저 하고 이월을 갱신한다 (이월 저장이 실패하면 다음에 다시 세는 쪽이 코인을 잃는 쪽보다 낫다).
+   * 반환: Promise<{ coins, carry } | null(저장소 오류)>
+   */
+  settleSession({ nickname, playerId, seconds }) {
+    const p = (async () => {
+      const prev = await this.store.getCoinCarry(nickname);
+      const { coins, carry } = settleStudy(prev, seconds);
+      if (coins > 0) await this.award(nickname, playerId, coins, 'study');
+      if (carry !== prev) await this.store.setCoinCarry(nickname, carry, this.now());
+      return { coins, carry };
+    })().catch((err) => {
+      this.log.warn(`[world] 코인 정산 실패 (${nickname}, ${seconds}s): ${err.message}`);
+      return null;
+    });
+    this.pendingAwards.add(p);
+    p.finally(() => this.pendingAwards.delete(p));
+    return p;
+  }
+
+  /**
+   * 집중 사이클이 끝까지 진행됐다 (Pomodoro 'phaseEnd') → 시작부터 지금까지 앉아서 공부 중이었으면 5코인.
+   * 같은 사이클(startedAt)은 한 번만 지급한다. 반환: 지급 Promise 또는 null(조건 미달·이미 지급)
+   */
+  settleFocusCycle(player, cycle) {
+    if (!cycle || cycle.phase !== 'focus' || player.removed) return null;
+    if (player.focusBonusAt === cycle.startedAt) return null; // 이중 지급 방지
+    const bonus = focusBonusFor(cycle, this.study.live.get(player.nickname) || null);
+    if (!bonus) return null;
+    player.focusBonusAt = cycle.startedAt;
+    return this.award(player.nickname, player.id, bonus, 'focus');
+  }
+
+  /** 지갑: 잔액 · 이월 초(다음 코인까지 계산용) · 최근 거래 10건 · 인벤토리 · 카탈로그(탭 + 아이템) */
+  async wallet(player) {
+    const [coins, carrySeconds, ledger, inventory] = await Promise.all([
+      this.store.getCoins(player.nickname),
+      this.store.getCoinCarry(player.nickname),
+      this.store.coinLedger(player.nickname, 10),
+      this.store.listInventory(player.nickname),
+    ]);
+    return { ok: true, coins, carrySeconds, ledger, inventory, tabs: this.shop.tabs, items: this.shop.items };
+  }
+
+  /**
+   * 구매: 카탈로그 확인 → 잔액 확인·차감(저장소가 원자적으로) → 원장 기록 → 인벤토리 저장.
+   * @returns {{ ok: true, balance, item, inventory } | { ok: false, error: 'no_item' | 'insufficient', balance? }}
+   */
+  async purchase(player, itemId) {
+    const item = this.shop.get(itemId);
+    if (!item) return { ok: false, error: 'no_item' };
+    const r = await this.store.adjustCoins(player.nickname, -item.price, `purchase:${item.id}`, this.now());
+    if (!r.ok) return { ok: false, error: r.error, balance: r.balance };
+    const inv = await this.store.addInventory(player.nickname, item.id, { name: item.name, price: item.price, tab: item.tab, ...item.meta }, this.now());
+    this.emit('coins', { nickname: player.nickname, playerId: player.id, delta: -item.price, reason: `purchase:${item.id}`, balance: r.balance });
+    return { ok: true, balance: r.balance, item, inventory: inv };
   }
 
   // ── 오늘 목표 / 랭킹 / 할 일 (영구 데이터) ──────────────────────────
@@ -401,7 +494,7 @@ class World extends EventEmitter {
   }
 
   /**
-   * 내 기록 초기화(7단계): 공부 세션·출석·오늘 목표·할 일을 지운다 (아바타·강아지 이름은 유지).
+   * 내 기록 초기화(7단계): 공부 세션·출석·오늘 목표·할 일을 지우고 코인 이월 초를 0으로 (아바타·강아지 이름·코인 잔액·인벤토리는 유지).
    * 본인 확인: 세션 토큰 + 닉네임이 모두 일치해야 한다. 앉아서 공부 중이면 지금부터 새 세션을 센다.
    * @returns {{ ok: true, counts } | { ok: false, error: 'confirm_mismatch' }}
    */
@@ -415,9 +508,22 @@ class World extends EventEmitter {
     return { ok: true, counts };
   }
 
+  /** 랭킹: 공부 통계 + 코인(잔액 · 이번 주 획득). 코인 조회가 실패해도 공부 통계는 돌려준다 */
   async stats() {
     const rows = await this.study.stats([...this.players.values()]);
-    return { ok: true, store: this.store.kind, tz: this.tz, date: this.today(), rows };
+    let coinRows = [];
+    try {
+      coinRows = await this.store.coinStats({ tz: this.tz, now: this.now() });
+    } catch (err) {
+      this.log.warn(`[world] 코인 통계 실패: ${err.message}`);
+    }
+    const coins = new Map(coinRows.map((c) => [c.nickname, c]));
+    const out = rows.map((r) => {
+      const c = coins.get(r.nickname);
+      return { ...r, coins: c ? c.coins : 0, weekCoins: c ? c.weekCoins : 0 };
+    });
+    for (const c of coinRows) if (!rows.some((r) => r.nickname === c.nickname) && c.weekCoins > 0) out.push({ nickname: c.nickname, todaySeconds: 0, weekSeconds: 0, streak: 0, weekDays: 0, live: false, online: false, coins: c.coins, weekCoins: c.weekCoins });
+    return { ok: true, store: this.store.kind, tz: this.tz, date: this.today(), rows: out };
   }
 
   todoOpts() {
@@ -463,6 +569,7 @@ class World extends EventEmitter {
     this.pomodoros.clear();
     for (const n of this.npcs) n.dispose();
     await this.study.flushAll('shutdown');
+    await Promise.all([...this.pendingAwards]); // flushAll 이 저장한 세션의 코인까지
   }
 }
 

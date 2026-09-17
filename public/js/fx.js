@@ -1,16 +1,19 @@
 /**
  * 뽀모도로 전환 연출 도우미: Web Audio 합성 알림음(파일 없음) + 브라우저 알림.
  * AudioContext 는 사용자 제스처(클릭/키) 뒤에만 소리가 나므로 첫 제스처에서 미리 열어 둔다.
+ * 8단계: 코인 획득음(coin) — 알림 소리와 따로 끌 수 있다 (nsm.sound.coin).
  */
 (function () {
   'use strict';
 
   const LS_SOUND = 'nsm.sound';
+  const LS_COIN = 'nsm.sound.coin';
 
   class Sound {
     constructor() {
       this.ctx = null;
       try { this.enabled = localStorage.getItem(LS_SOUND) !== '0'; } catch (_) { this.enabled = true; }
+      try { this.coinEnabled = localStorage.getItem(LS_COIN) !== '0'; } catch (_) { this.coinEnabled = true; }
       const unlock = () => this.unlock();
       document.addEventListener('pointerdown', unlock, { capture: true });
       document.addEventListener('keydown', unlock, { capture: true });
@@ -19,6 +22,37 @@
     setEnabled(on) {
       this.enabled = Boolean(on);
       try { localStorage.setItem(LS_SOUND, on ? '1' : '0'); } catch (_) { /* ignore */ }
+    }
+
+    setCoinEnabled(on) {
+      this.coinEnabled = Boolean(on);
+      try { localStorage.setItem(LS_COIN, on ? '1' : '0'); } catch (_) { /* ignore */ }
+    }
+
+    /** 코인 획득음: 짧은 두 음(E6 → A6, 0.2초). 구매(delta < 0)는 낮은 한 음 */
+    coin(delta = 1) {
+      if (!this.coinEnabled || !this.ctx || this.ctx.state !== 'running') return false;
+      const ctx = this.ctx;
+      const notes = delta > 0 ? [1318.5, 1760] : [659.25];
+      const t0 = ctx.currentTime + 0.01;
+      const master = ctx.createGain();
+      master.gain.value = 0.12;
+      master.connect(ctx.destination);
+      notes.forEach((f, i) => {
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.value = f;
+        const t = t0 + i * 0.08;
+        g.gain.setValueAtTime(0, t);
+        g.gain.linearRampToValueAtTime(1, t + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+        osc.connect(g);
+        g.connect(master);
+        osc.start(t);
+        osc.stop(t + 0.25);
+      });
+      return true;
     }
 
     unlock() {

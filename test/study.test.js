@@ -240,8 +240,8 @@ test('랭킹 통계: 저장분 + 진행 중 초, 진행 중/접속 표시, 스�
   assert.equal(st.tz, TZ);
   assert.equal(st.date, '2026-09-16');
   const rows = Object.fromEntries(st.rows.map((r) => [r.nickname, r]));
-  assert.deepEqual(rows.A, { nickname: 'A', todaySeconds: 100, weekSeconds: 100, streak: 1, weekDays: 1, live: false, online: true });
-  assert.deepEqual(rows.B, { nickname: 'B', todaySeconds: 30, weekSeconds: 30, streak: 0, weekDays: 0, live: true, online: true });
+  assert.deepEqual(rows.A, { nickname: 'A', todaySeconds: 100, weekSeconds: 100, streak: 1, weekDays: 1, live: false, online: true, coins: 0, weekCoins: 0 });
+  assert.deepEqual(rows.B, { nickname: 'B', todaySeconds: 30, weekSeconds: 30, streak: 0, weekDays: 0, live: true, online: true, coins: 0, weekCoins: 0 });
   await world.dispose();
 });
 
@@ -268,7 +268,7 @@ test('소켓 E2E: 입장 ack 프로필/저장소, 목표 브로드캐스트, 세
   await joinAs(b, { nickname: '영희' });
   assert.equal(ja.store, 'memory');
   assert.equal(ja.tz, 'Asia/Seoul');
-  assert.deepEqual(ja.profile, { goal: null, streak: { streak: 0, weekDays: 0, attendedToday: false } });
+  assert.deepEqual(ja.profile, { goal: null, streak: { streak: 0, weekDays: 0, attendedToday: false }, coins: 0 });
 
   // 목표 설정 → 모두에게 playerGoal, 다른 사람 입장 목록에도 포함
   const goalSeen = once(b, 'playerGoal');

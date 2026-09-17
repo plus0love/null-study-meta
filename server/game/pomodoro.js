@@ -3,6 +3,8 @@
  * 뽀모도로 타이머 (7단계부터 **개인별** — World 가 플레이어마다 하나씩 든다). 기본 25분 집중 / 5분 휴식, 자동 전환.
  * 시작 전에는 집중(20~90분)/휴식(5~20분) 시간을 바꿀 수 있고(configure), 진행 중에는 바꿀 수 없다.
  * 상태는 서버 시각(ms) 기준이고, 클라이언트는 serverTime 과 자기 시계의 차이로 남은 시간을 계산한다.
+ * 이벤트: 'change' (snapshot, reason: start | stop | switch | config),
+ *         'phaseEnd' { phase, startedAt, endsAt, durationMs } — 자동 전환으로 단계가 **끝까지** 진행됐을 때 (정지는 아님). 8단계 집중 완주 보너스 판정용.
  */
 const EventEmitter = require('node:events');
 
@@ -96,7 +98,9 @@ class Pomodoro extends EventEmitter {
   /** 단계 종료 → 반대 단계로 자동 전환 */
   advance() {
     if (!this.running) return;
+    const done = { phase: this.phase, startedAt: this.startedAt, endsAt: this.endsAt, durationMs: this.durationOf(this.phase) };
     this.beginPhase(this.phase === 'focus' ? 'break' : 'focus');
+    this.emit('phaseEnd', done);
     this.emit('change', this.snapshot(), 'switch');
   }
 

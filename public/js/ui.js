@@ -1,7 +1,8 @@
 /* global Music */
 /**
  * HUD + 사이드바 (DOM). 게임 씬/네트워크와는 콜백(this.on*)으로만 연결한다.
- *  - 좌상단: 방 이름 + 인원 + (뽀모도로 진행 중) 남은 시간 배지   우상단: 설정·멤버·알림·♪·나가기 (팝오버)
+ *  - 좌상단: 방 이름 + 인원 + (뽀모도로 진행 중) 남은 시간 배지 + 🪙 잔액   우상단: 설정·멤버·알림·♪·🪙 지갑·나가기 (팝오버)
+ *  - 지갑 모달(8단계 뼈대): 탭 가구/펫/펫 꾸미기/탈것 (아이템 없으면 "준비 중") + 최근 거래 10건. 잔액은 서버 coins 이벤트로만 바뀐다
  *  - 사이드바: 미니맵 · 오늘의 목표 · 오늘의 할 일(서버 저장, 이월 배지) · 뽀모도로(개인 타이머, 원형 게이지) · 랭킹(오늘/이번 주) · 유튜브 · 채팅
  *    카드마다 접기/펼치기(제목 줄만 남음, localStorage nsm.card.<id>)
  *  - 토스트: 출석 스트릭 ("N일 연속 출석 🔥") 등 짧은 안내
@@ -18,6 +19,7 @@
   const STATUS_LABEL = { study: '공부 중', rest: '휴식 중', coffee: '☕ 휴식 중' };
   const STATUS_ICON = { study: 'i-book', rest: 'i-leaf', coffee: 'i-coffee' };
   const HINT_LABEL = { sit: '앉기', stand: '일어나기', pet: '쓰다듬기', coffee: '커피 마시기', music: '음악 듣기' };
+  const COIN_REASON = { study: '공부 10분마다', focus: '집중 완주 보너스' }; // 원장 reason → 표시. purchase:<id> 는 "구매 · <id>"
   const TODO_KEY = 'nsm.todos'; // 3단계까지의 localStorage 할 일 — 첫 접속 때 서버로 옮기고 지운다
   const GOAL_MINUTES = Array.from({ length: 16 }, (_, i) => (i + 1) * 30); // 30분 ~ 8시간
   const LS_NIGHT = 'nsm.alwaysNight';
@@ -99,8 +101,14 @@
       this.onZoom = () => {};
       this.onWide = () => {};
       this.onReset = async () => ({ ok: false });
+      this.onWallet = async () => ({ ok: false }); // 8단계: 지갑 데이터 요청
+      this.onBuy = async () => ({ ok: false });
+      this.onCoinSound = () => {};
 
       this.todos = [];
+      this.coins = 0;
+      this.walletTab = 'furniture';
+      this.wallet = null; // 마지막 wallet 응답
       this.goal = null; // { text, targetMinutes }
       this.todaySeconds = 0;
       this.rankTab = 'today';
@@ -114,6 +122,7 @@
       this.bindSidebar();
       this.bindMusic();
       this.bindGoalAndRank();
+      this.bindWallet();
       this.buildMinimapBase();
       this.renderTodos();
       setInterval(() => this.tickPomodoro(), 250);
@@ -175,6 +184,8 @@
       night.addEventListener('change', () => { this.saveFlag(LS_NIGHT, night.checked); this.onAlwaysNight(night.checked); });
       const sound = $('opt-sound');
       sound.addEventListener('change', () => this.onSound(sound.checked));
+      const coinSound = $('opt-coin-sound');
+      coinSound.addEventListener('change', () => this.onCoinSound(coinSound.checked));
       $('btn-notify-perm').addEventListener('click', () => this.onNotifyPerm());
 
       // 화면 크기(줌) · 넓게 보기 (7단계, localStorage)
@@ -278,6 +289,10 @@
 
     setSoundEnabled(on) {
       $('opt-sound').checked = Boolean(on);
+    }
+
+    setCoinSoundEnabled(on) {
+      $('opt-coin-sound').checked = Boolean(on);
     }
 
     /** 브라우저 알림 권한 상태를 설정 버튼에 표시 */
@@ -616,10 +631,11 @@
       list.innerHTML = '';
       for (const b of document.querySelectorAll('#rank-tabs button')) b.classList.toggle('active', b.dataset.tab === this.rankTab);
       if (!this.stats) return;
-      const key = this.rankTab === 'week' ? 'weekSeconds' : 'todaySeconds';
-      const rows = this.stats.rows.filter((r) => r[key] > 0 || r.live || r.online).sort((a, b) => b[key] - a[key] || a.nickname.localeCompare(b.nickname));
+      const coins = this.rankTab === 'coins'; // 8단계: 이번 주 획득 코인 (구매로 쓴 건 빼지 않는다)
+      const key = coins ? 'weekCoins' : this.rankTab === 'week' ? 'weekSeconds' : 'todaySeconds';
+      const rows = this.stats.rows.filter((r) => (r[key] || 0) > 0 || r.live || r.online).sort((a, b) => (b[key] || 0) - (a[key] || 0) || a.nickname.localeCompare(b.nickname));
       if (!rows.length) {
-        list.appendChild(el('li', { class: 'empty', text: this.rankTab === 'week' ? '이번 주 기록이 아직 없어요.' : '오늘 기록이 아직 없어요. 자리에 앉아 공부를 시작해 보세요.' }));
+        list.appendChild(el('li', { class: 'empty', text: coins ? '이번 주에 코인을 모은 사람이 아직 없어요.' : this.rankTab === 'week' ? '이번 주 기록이 아직 없어요.' : '오늘 기록이 아직 없어요. 자리에 앉아 공부를 시작해 보세요.' }));
         return;
       }
       rows.slice(0, 20).forEach((r, i) => {
@@ -628,9 +644,135 @@
           el('span', { class: `dot-live ${r.live ? 'on' : ''}`, title: r.live ? '공부 중' : '' }),
           el('span', { class: 'name', text: r.nickname }),
           r.streak > 0 ? el('span', { class: 'streak', text: `🔥${r.streak}`, title: `${r.streak}일 연속 출석` }) : null,
-          el('span', { class: 'time mono', text: fmtDuration(r[key]) }),
+          coins ? el('span', { class: 'coin mono', text: `🪙 ${r.weekCoins || 0}`, title: `보유 ${r.coins || 0}` }) : el('span', { class: 'time mono', text: fmtDuration(r[key]) }),
         ]));
       });
+    }
+
+    // ── 코인 / 지갑 (8단계) ──────────────────────────────────────────
+    bindWallet() {
+      const modal = $('wallet-modal');
+      $('btn-wallet').addEventListener('click', () => this.openWallet());
+      $('coin-badge').addEventListener('click', () => this.openWallet());
+      $('wallet-close').addEventListener('click', () => this.closeWallet());
+      modal.addEventListener('click', (e) => { if (e.target === modal) this.closeWallet(); });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !modal.hidden) this.closeWallet(); });
+    }
+
+    /** 잔액 (입장 ack · coins 이벤트). bump 면 배지가 살짝 튄다 */
+    setCoins(n, { bump = false } = {}) {
+      this.coins = Math.max(0, Number(n) || 0);
+      const badge = $('coin-badge');
+      badge.hidden = false;
+      badge.querySelector('span').textContent = String(this.coins);
+      $('wallet-balance').textContent = String(this.coins);
+      if (bump) {
+        badge.classList.remove('bump');
+        void badge.offsetWidth; // 애니메이션 재시작
+        badge.classList.add('bump');
+      }
+    }
+
+    isWalletOpen() {
+      return !$('wallet-modal').hidden;
+    }
+
+    async openWallet() {
+      $('wallet-modal').hidden = false;
+      this.renderWalletTabs();
+      this.renderWalletItems();
+      this.renderLedger();
+      await this.refreshWallet();
+    }
+
+    closeWallet() {
+      $('wallet-modal').hidden = true;
+    }
+
+    /** 서버에서 지갑 데이터를 다시 받는다 (열 때, 코인이 바뀔 때) */
+    async refreshWallet() {
+      try {
+        const r = await this.onWallet();
+        if (!r || !r.ok) return;
+        this.wallet = r;
+        this.setCoins(r.coins);
+        this.renderCarry(r.carrySeconds);
+        this.renderWalletTabs();
+        this.renderWalletItems();
+        this.renderLedger();
+      } catch (_) { /* 오프라인 */ }
+    }
+
+    /** 이월 초 → "다음 코인까지 N분 N초" (모달 안내 줄 뒤에) */
+    renderCarry(carrySeconds) {
+      const el2 = $('wallet-carry');
+      const left = Math.max(0, 600 - (Number(carrySeconds) || 0));
+      el2.textContent = ` · 다음 코인까지 ${Math.floor(left / 60)}분 ${String(left % 60).padStart(2, '0')}초`;
+    }
+
+    renderWalletTabs() {
+      const box = $('wallet-tabs');
+      const tabs = (this.wallet && this.wallet.tabs) || [{ id: 'furniture', label: '가구' }, { id: 'pet', label: '펫' }, { id: 'petDeco', label: '펫 꾸미기' }, { id: 'mount', label: '탈것' }];
+      if (!tabs.some((t) => t.id === this.walletTab)) this.walletTab = tabs[0].id;
+      box.innerHTML = '';
+      for (const t of tabs) {
+        box.appendChild(el('button', { type: 'button', role: 'tab', 'data-tab': t.id, text: t.label, class: t.id === this.walletTab ? 'active' : '', onclick: () => { this.walletTab = t.id; this.renderWalletTabs(); this.renderWalletItems(); } }));
+      }
+    }
+
+    /** 탭의 아이템. 카탈로그가 비어 있으면(지금) "준비 중" */
+    renderWalletItems() {
+      const box = $('wallet-items');
+      box.innerHTML = '';
+      const items = ((this.wallet && this.wallet.items) || []).filter((it) => it.tab === this.walletTab);
+      if (!items.length) {
+        box.appendChild(el('span', { text: '준비 중이에요. 코인을 모아 두세요 🪙' }));
+        return;
+      }
+      const owned = new Set(((this.wallet && this.wallet.inventory) || []).map((i) => i.itemId));
+      const grid = el('div', { class: 'grid' });
+      for (const it of items) {
+        const has = owned.has(it.id);
+        grid.appendChild(el('div', { class: `wallet-item ${has ? 'owned' : ''}` }, [
+          el('span', { class: 'name', text: it.name }),
+          el('span', { class: 'price', text: has ? '보유 중' : `🪙 ${it.price}` }),
+          has ? null : el('button', { class: 'btn small', type: 'button', text: '구매', onclick: () => this.buy(it) }),
+        ]));
+      }
+      box.appendChild(grid);
+    }
+
+    async buy(item) {
+      const r = await this.onBuy(item.id);
+      if (!r || !r.ok) {
+        this.toast(r && r.error === 'insufficient' ? `코인이 부족해요 (보유 ${r.balance ?? this.coins})` : '구매하지 못했어요.');
+        return;
+      }
+      this.toast(`${item.name} 을(를) 샀어요 🎁`);
+      await this.refreshWallet();
+    }
+
+    static coinReasonLabel(reason) {
+      if (COIN_REASON[reason]) return COIN_REASON[reason];
+      if (typeof reason === 'string' && reason.startsWith('purchase:')) return `구매 · ${reason.slice(9)}`;
+      return reason || '';
+    }
+
+    renderLedger() {
+      const list = $('wallet-ledger');
+      list.innerHTML = '';
+      const entries = (this.wallet && this.wallet.ledger) || [];
+      if (!entries.length) {
+        list.appendChild(el('li', { class: 'empty', text: '아직 거래가 없어요. 자리에 앉아 공부하면 코인이 쌓여요.' }));
+        return;
+      }
+      for (const e of entries) {
+        list.appendChild(el('li', {}, [
+          el('span', { class: `delta ${e.delta > 0 ? 'plus' : 'minus'}`, text: `${e.delta > 0 ? '+' : ''}${e.delta}` }),
+          el('span', { class: 'reason', text: UI.coinReasonLabel(e.reason) }),
+          el('span', { class: 'time', text: fmtWhen(e.createdAt) }),
+        ]));
+      }
     }
 
     /** 짧은 안내 토스트 (3초). 연달아 오면 차례로 보여준다 */
@@ -1152,6 +1294,14 @@
   function fmt(ms) {
     const s = Math.ceil(ms / 1000);
     return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  }
+
+  /** 거래 시각: 오늘이면 HH:MM, 아니면 M/D HH:MM */
+  function fmtWhen(ts) {
+    const d = new Date(ts);
+    const now = new Date();
+    const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+    return sameDay ? hhmm(ts) : `${d.getMonth() + 1}/${d.getDate()} ${hhmm(ts)}`;
   }
 
   /** 30 → "30분", 90 → "1시간 30분", 120 → "2시간" */

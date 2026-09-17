@@ -13,6 +13,7 @@
     'avatar:update', 'playerEmoji', 'chat', 'pomodoro', 'roomCount', 'playerDisconnected', 'playerReconnected',
     'npc:update', 'npc:pet', 'npc:name', 'playerListening',
     'playerGoal', 'leaderboard:refresh', 'attendance', 'goalReached',
+    'coins', 'playerPomodoro',
   ];
 
   class Net {
@@ -173,6 +174,10 @@
     /** 내 뽀모도로 시작 (7단계: 개인 타이머, 집중/휴식 분을 함께 보낸다) */
     pomodoroStart(cfg = {}) { return this.ask('pomodoro:start', cfg); }
     pomodoroStop() { return this.ask('pomodoro:stop', {}); }
+    /** 지갑 (8단계): 잔액 · 최근 거래 · 인벤토리 · 카탈로그 */
+    wallet() { return this.ask('wallet', {}); }
+    /** 구매: 서버가 잔액 확인·차감·원장·인벤토리까지 처리한다 */
+    buy(itemId) { return this.ask('shop:buy', { itemId }); }
     /** 내 기록 초기화: 서버가 세션 토큰 + 닉네임을 확인한다 */
     resetProfile(nickname) { return this.ask('profile:reset', { nickname, token: Net.saved().token }); }
 

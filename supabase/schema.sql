@@ -10,6 +10,10 @@ create table if not exists public.users (
   dog_name    text
 );
 alter table public.users add column if not exists updated_at timestamptz not null default now();
+-- 8단계: 코인 잔액 (모든 증감은 coin_ledger 에 남고, adjust_coins() 로만 바꾼다)
+alter table public.users add column if not exists coins integer not null default 0;
+-- 코인으로 바뀌지 못하고 남은 공부 초 (세션마다 10분 단위로 내림하고 나머지를 이월, 다음 정산 때 합산. 기록 초기화 시 0)
+alter table public.users add column if not exists coin_carry_seconds integer not null default 0;
 
 create table if not exists public.study_sessions (
   id          bigint generated always as identity primary key,
@@ -44,11 +48,33 @@ create table if not exists public.attendance (
   primary key (nickname, date)
 );
 
+-- 8단계: 코인 원장 — 증감 이력 전부 (reason: study | focus | purchase:<itemId>)
+create table if not exists public.coin_ledger (
+  id          bigint generated always as identity primary key,
+  nickname    text not null references public.users(nickname) on delete cascade,
+  delta       integer not null check (delta <> 0),
+  reason      text not null,
+  created_at  timestamptz not null default now()
+);
+create index if not exists coin_ledger_nickname_created_at on public.coin_ledger (nickname, created_at);
+
+-- 8단계: 인벤토리 — 구매한 아이템 (카탈로그는 서버 코드 shop.js)
+create table if not exists public.inventory (
+  id           bigint generated always as identity primary key,
+  nickname     text not null references public.users(nickname) on delete cascade,
+  item_id      text not null,
+  acquired_at  timestamptz not null default now(),
+  meta         jsonb not null default '{}'::jsonb
+);
+create index if not exists inventory_nickname_acquired_at on public.inventory (nickname, acquired_at);
+
 alter table public.users          enable row level security;
 alter table public.study_sessions enable row level security;
 alter table public.todos          enable row level security;
 alter table public.daily_goals    enable row level security;
 alter table public.attendance     enable row level security;
+alter table public.coin_ledger    enable row level security;
+alter table public.inventory      enable row level security;
 
 -- ── 집계 함수 ─────────────────────────────────────────────────────────
 -- 시간대(tz, 기본 Asia/Seoul) 기준 0시에 날이 바뀌고 주는 월요일에 시작한다 (date_trunc('week') = ISO 월요일).
@@ -116,7 +142,60 @@ as $$
   order by carried desc, t.created_at asc
 $$;
 
+-- 8단계: 코인 증감 — 잔액 확인·차감·원장 기록을 한 트랜잭션으로. 잔액이 모자라면 ok=false 로 돌려주고 아무것도 바꾸지 않는다.
+-- (행 잠금이 걸린 update 로 확인·차감을 동시에 하므로 같은 사람의 동시 구매도 음수가 되지 않는다)
+create or replace function public.adjust_coins(p_nickname text, p_delta integer, p_reason text, p_at timestamptz default now())
+returns table (ok boolean, balance integer, entry_id bigint, created_at timestamptz)
+language plpgsql
+as $$
+declare
+  v_balance integer;
+  v_id bigint;
+begin
+  if p_delta is null or p_delta = 0 then
+    raise exception 'delta must be non-zero';
+  end if;
+  insert into public.users (nickname) values (p_nickname) on conflict (nickname) do nothing;
+  update public.users u
+     set coins = u.coins + p_delta, updated_at = now()
+   where u.nickname = p_nickname and u.coins + p_delta >= 0
+  returning u.coins into v_balance;
+  if not found then
+    select u.coins into v_balance from public.users u where u.nickname = p_nickname;
+    return query select false, coalesce(v_balance, 0), null::bigint, null::timestamptz;
+    return;
+  end if;
+  insert into public.coin_ledger (nickname, delta, reason, created_at)
+  values (p_nickname, p_delta, coalesce(p_reason, ''), coalesce(p_at, now()))
+  returning coin_ledger.id into v_id;
+  return query select true, v_balance, v_id, coalesce(p_at, now());
+end
+$$;
+
+-- 8단계: 닉네임별 잔액 + 이번 주 획득 코인(양수 delta 합, 월요일부터). 랭킹 "이번 주 코인" 탭
+create or replace function public.coin_stats(tz text default 'Asia/Seoul')
+returns table (nickname text, coins integer, week_coins bigint)
+language sql stable
+as $$
+  with bounds as (
+    select (now() at time zone tz)::date as today,
+           date_trunc('week', (now() at time zone tz)::date)::date as week_start
+  )
+  select u.nickname,
+         u.coins,
+         coalesce((select sum(l.delta) from public.coin_ledger l, bounds b
+                    where l.nickname = u.nickname and l.delta > 0
+                      and (l.created_at at time zone tz)::date between b.week_start and b.today), 0)::bigint as week_coins
+  from public.users u
+  where u.coins > 0
+     or exists (select 1 from public.coin_ledger l, bounds b
+                 where l.nickname = u.nickname and l.delta > 0
+                   and (l.created_at at time zone tz)::date between b.week_start and b.today)
+$$;
+
 -- 집계 함수도 anon/authenticated 에서는 못 부르게 (PostgREST rpc 차단). service_role 은 그대로.
 revoke execute on function public.study_totals(text) from public, anon, authenticated;
 revoke execute on function public.attendance_streaks(text, text) from public, anon, authenticated;
 revoke execute on function public.list_todos(text, text) from public, anon, authenticated;
+revoke execute on function public.adjust_coins(text, integer, text, timestamptz) from public, anon, authenticated;
+revoke execute on function public.coin_stats(text) from public, anon, authenticated;

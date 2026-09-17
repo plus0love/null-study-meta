@@ -111,6 +111,13 @@ body.wide #btn-wide { color: var(--amber-2); border-color: var(--line-strong); b
 .badge-pomo .icon { width: 15px; height: 15px; color: var(--amber); }
 .badge-pomo.break { color: var(--ok); border-color: rgba(159, 211, 154, 0.4); }
 .badge-pomo.break .icon { color: var(--ok); }
+/* 8단계: 코인 잔액 배지 (좌상단, 클릭하면 지갑) */
+.badge-coin { padding: 6px 10px; font-variant-numeric: tabular-nums; font-size: 13px; color: var(--amber-2); cursor: pointer; pointer-events: auto; font-family: var(--font); transition: transform 0.15s, background 0.15s; }
+.badge-coin em { font-style: normal; font-size: 14px; line-height: 1; }
+.badge-coin:hover { background: var(--amber-dim); border-color: var(--line-strong); }
+.badge-coin.bump { animation: coin-bump 0.45s ease-out; }
+@keyframes coin-bump { 0% { transform: scale(1); } 35% { transform: scale(1.18); } 100% { transform: scale(1); } }
+.emoji-icon { font-size: 16px; line-height: 1; }
 
 #hud-tl {
   position: absolute;
@@ -418,6 +425,43 @@ input::placeholder { color: var(--cream-faint); }
 .rank-foot { display: flex; justify-content: flex-end; }
 .store-badge { font-size: 11px; color: var(--cream-faint); }
 .store-badge.warn { color: #ffb27a; }
+
+#rank-list .coin { font-size: 12px; color: var(--amber-2); font-variant-numeric: tabular-nums; }
+
+/* ── 지갑 · 상점 (8단계 뼈대) ──────────────────────────────────────── */
+.modal-box.wallet { gap: 12px; }
+.modal-box.wallet .hint { margin: 0; }
+.wallet-balance { font-size: 13px; color: var(--cream-dim); white-space: nowrap; }
+.wallet-balance b { color: var(--amber-2); font-size: 16px; font-variant-numeric: tabular-nums; }
+.wallet-tabs { margin-left: 0; }
+.wallet-tabs button { padding: 5px 12px; font-size: 12px; }
+.wallet-items {
+  min-height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--line);
+  background: var(--panel-2);
+  color: var(--cream-faint);
+  font-size: 13px;
+  text-align: center;
+  padding: 16px;
+}
+.wallet-items .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; width: 100%; }
+.wallet-item { display: flex; flex-direction: column; gap: 4px; align-items: center; padding: 8px; border-radius: var(--radius-sm); background: var(--panel); border: 1px solid var(--line); color: var(--cream); font-size: 12px; }
+.wallet-item .price { color: var(--amber-2); font-size: 12px; }
+.wallet-item button { font-size: 11px; padding: 3px 8px; }
+.wallet-item.owned .price { color: var(--ok); }
+.wallet-ledger h3 { font-size: 13px; font-weight: 700; color: var(--amber-2); margin: 0 0 6px; }
+.wallet-ledger h3 .muted { font-weight: 500; font-size: 11px; }
+#wallet-ledger { max-height: 200px; overflow: auto; }
+#wallet-ledger li { gap: 10px; padding: 6px 9px; font-size: 12px; }
+#wallet-ledger .delta { font-variant-numeric: tabular-nums; font-weight: 700; min-width: 36px; text-align: right; }
+#wallet-ledger .delta.plus { color: var(--ok); }
+#wallet-ledger .delta.minus { color: var(--danger); }
+#wallet-ledger .reason { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#wallet-ledger .empty { justify-content: center; color: var(--cream-faint); background: transparent; font-size: 12px; }
 
 /* 토스트 */
 #toast {

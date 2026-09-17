@@ -51,6 +51,7 @@
       <div id="room-name" class="badge">우리의 스터디룸</div>
       <div id="room-count" class="badge badge-count"><svg class="icon"><use href="#i-users"/></svg><span>0</span></div>
       <div id="pomo-badge" class="badge badge-pomo" hidden title="뽀모도로 남은 시간"><svg class="icon"><use href="#i-timer"/></svg><span>25:00</span></div>
+      <button id="coin-badge" class="badge badge-coin" type="button" title="내 코인 (지갑 열기)" hidden><em>🪙</em><span>0</span></button>
     </div>
 
     <div id="hud-tr">
@@ -58,6 +59,7 @@
       <button class="icon-btn" id="btn-members" title="멤버" aria-label="멤버"><svg class="icon"><use href="#i-users"/></svg></button>
       <button class="icon-btn" id="btn-notify" title="알림" aria-label="알림"><svg class="icon"><use href="#i-bell"/></svg><span class="dot" id="notify-dot" hidden></span></button>
       <button class="icon-btn" id="btn-music" title="음악 (유튜브)" aria-label="음악"><svg class="icon"><use href="#i-music"/></svg></button>
+      <button class="icon-btn" id="btn-wallet" title="지갑 · 상점" aria-label="지갑"><span class="emoji-icon">🪙</span></button>
       <button class="icon-btn" id="btn-wide" title="넓게 보기 (사이드바 접기)" aria-label="넓게 보기"><svg class="icon"><use href="#i-expand"/></svg></button>
       <button class="icon-btn danger" id="btn-leave" title="나가기" aria-label="나가기"><svg class="icon"><use href="#i-logout"/></svg></button>
 
@@ -87,6 +89,7 @@
           <label>연출</label>
           <label class="opt"><input type="checkbox" id="opt-night" /><svg class="icon"><use href="#i-moon"/></svg><span>창밖 항상 밤으로 고정</span></label>
           <label class="opt"><input type="checkbox" id="opt-sound" checked /><svg class="icon"><use href="#i-bell"/></svg><span>뽀모도로 알림 소리</span></label>
+          <label class="opt"><input type="checkbox" id="opt-coin-sound" checked /><span class="emoji-icon">🪙</span><span>코인 획득 소리</span></label>
           <button class="btn small ghost" id="btn-notify-perm" type="button">브라우저 알림 허용</button>
         </div>
         <div class="field">
@@ -166,7 +169,7 @@
     <section class="card" id="card-rank">
       <header>
         <svg class="icon"><use href="#i-trophy"/></svg><h2>랭킹</h2>
-        <div id="rank-tabs" class="tabs"><button type="button" data-tab="today" class="active">오늘</button><button type="button" data-tab="week">이번 주</button></div>
+        <div id="rank-tabs" class="tabs"><button type="button" data-tab="today" class="active">오늘</button><button type="button" data-tab="week">이번 주</button><button type="button" data-tab="coins">이번 주 코인</button></div>
       </header>
       <ul class="list" id="rank-list"></ul>
       <div class="rank-foot"><span id="rank-store" class="store-badge">저장소 확인 중…</span></div>
@@ -235,6 +238,20 @@
         <button class="btn danger" type="submit" id="reset-submit" disabled>삭제</button>
       </div>
     </form>
+  </div>
+
+  <!-- 지갑 · 상점 (8단계 뼈대): 탭은 있지만 아이템은 아직 없다 -->
+  <div id="wallet-modal" class="modal" hidden>
+    <div class="modal-box wide wallet">
+      <header class="row"><h1>🪙 지갑</h1><span class="wallet-balance">보유 <b id="wallet-balance">0</b> 코인</span><button class="icon-btn small ghost" id="wallet-close" type="button" title="닫기"><svg class="icon"><use href="#i-x"/></svg></button></header>
+      <p class="hint">앉아서 공부 10분마다 1코인 (남은 시간은 이월) · 뽀모도로 집중을 자리에서 끝까지 채우면 +5 (20분 이상)<span id="wallet-carry"></span></p>
+      <div class="tabs wallet-tabs" id="wallet-tabs" role="tablist"></div>
+      <div id="wallet-items" class="wallet-items"></div>
+      <section class="wallet-ledger">
+        <h3>최근 거래 <span class="muted">10건</span></h3>
+        <ul class="list" id="wallet-ledger"></ul>
+      </section>
+    </div>
   </div>
 
   <!-- 아바타 빌더: 입장 모달과 설정(아바타 모달) 사이를 옮겨 다니는 하나의 요소 -->

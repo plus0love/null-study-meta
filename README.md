@@ -11,6 +11,9 @@
 > 랭킹(오늘/이번 주)·서버 저장 할 일(어제 것은 이월)이 생겼습니다.
 > 5단계에서는 캐릭터가 **피부·머리(12종)·상의(5종)·하의·신발·안경(3종)** 레이어로 나뉘고 색을 팔레트로 고를 수 있습니다.
 > 입장 화면과 설정의 아바타 빌더에서 고르면 `users.avatar` 에 저장되고 방 안 모두에게 즉시 반영됩니다.
+> 8단계에서는 **코인**이 생겼습니다. 앉아서 공부 10분마다 1코인, 뽀모도로 집중 사이클을 자리에서 끝까지 채우면 +5. 잔액은 좌상단 🪙 배지,
+> 우상단 🪙 로 지갑·상점 모달(가구/펫/펫 꾸미기/탈것 탭은 아직 "준비 중", 최근 거래 10건)이 열리고, 랭킹에 "이번 주 코인" 탭이 붙었습니다.
+> 개인 뽀모도로가 돌면 머리 위에 "🍅 18:32" / "☕ 4:10" 이 남에게도 보입니다.
 
 ![머리 모양 12종](screenshots/s5_hair_row.png)
 
@@ -47,7 +50,7 @@ null-study-meta/
 ├── supabase/schema.sql       # 영구 데이터 스키마 + 집계 SQL 함수 (여러 번 실행 안전, RLS on · 정책 없음)
 ├── server/
 │   ├── index.js              # Express 부트스트랩, /healthz, /api/rooms/studyroom, /api/oembed(유튜브 제목 프록시), Socket.io 부착, SIGTERM 시 세션 저장
-│   ├── socket.js             # 소켓 프로토콜 배선 (join/move/sit/status/interact/listening/chat/emoji/pomodoro/profile:reset/time:ping/leave/npc:*)
+│   ├── socket.js             # 소켓 프로토콜 배선 (join/move/sit/status/interact/listening/chat/emoji/pomodoro/profile:reset/wallet/shop:buy/time:ping/leave/npc:*)
 │   ├── game/
 │   │   ├── world.js          # 방 실시간 상태: 플레이어·세션 토큰·좌석 점유·상태(공부/휴식/☕)·상호작용·듣는 중·유예 정리 (순수 로직)
 │   │   ├── movement.js       # 발 박스 충돌 + "경과 시간 × 최대 속도 × 1.5" 이동 예산 검증
@@ -55,6 +58,8 @@ null-study-meta/
 │   │   ├── chat.js           # 200자·HTML 이스케이프·300ms 도배 방지
 │   │   ├── pomodoro.js       # 개인 뽀모도로 (기본 25/5, 집중 20~90·휴식 5~20분, 자동 전환, 서버 시각 기준)
 │   │   ├── study.js          # 공부 세션(앉아서 공부 중, 60초 미만 폐기) · 출석 · 오늘 목표 달성 · 랭킹 통계 (저장소 인터페이스만 사용)
+│   │   ├── coins.js          # 8단계: 코인 규칙 (세션 10분당 1, 집중 완주 보너스 5 · 20분 미만 없음) — 순수 함수
+│   │   ├── shop.js           # 8단계: 상점 카탈로그 뼈대 (탭 4개, 아이템 비어 있음) — 구매 검증에 사용
 │   │   └── npc.js            # 강아지 NPC: 어슬렁/앉기/자기/산책 상태기계, BFS 경로(충돌 준수), 쳐다보기, 쓰다듬기 쿨다운, 이름
 │   ├── rooms/
 │   │   ├── build.js          # RoomBuilder: tiles.json 기준으로 레이어 배열 + 충돌/의자/문/조명/창문/구역/화면/상호작용 지점 생성
@@ -69,7 +74,7 @@ null-study-meta/
 │   ├── js/avatar.js          # AvatarKit: catalog + 레이어 PNG 로드, 팔레트 리컬러, 레이어 합성 시트/프레임 그리기
 │   ├── js/daylight.js        # 시간대 가중치(낮/노을/밤, 경계 30분) + 하늘 팔레트 + 실내 연출 강도 (순수 함수, 테스트 공용)
 │   ├── js/music.js           # 유튜브 URL 파싱 · 최근 5개 (순수 함수, 테스트 공용)
-│   ├── js/fx.js              # Web Audio 합성 알림음 + 브라우저 알림 도우미
+│   ├── js/fx.js              # Web Audio 합성 알림음(뽀모도로·목표·코인, 각각 끌 수 있음) + 브라우저 알림 도우미
 │   ├── js/scenes/RoomScene.js# 타일맵(floor/furniture/windowDay/top), 아바타, 하늘 그라데이션·별, 유리 구역 틴트·밝기, 화면 on/off, 상호작용 지점, 조명·플래시
 │   └── assets/               # tiles.png / tiles.json (아틀라스), dog.png / dog.json, avatar/ (catalog.json + 레이어별 PNG), player.png / player.json(옛 단일 시트, 빌드 산출물), CREDITS.txt
 ├── tools/
@@ -125,6 +130,7 @@ npm test
 | 파일 | 내용 |
 |---|---|
 | `game.test.js` | 단위: 닉네임 규칙/중복, 이동 예산(정상 속도 허용·순간이동 거부·벽), 채팅 이스케이프/도배, 뽀모도로 자동 전환, 월드(좌석 점유·상태 복귀·유예 재접속) |
+| `stage8.test.js` | 8단계: 적립 계산(10분 경계 599/600·이월 정산 `settleStudy`·세션 분할 9+9 = 1코인+480초 이월·59초 폐기는 이월에도 안 들어감·재시작 뒤 이월 유지·사람마다 따로·기록 초기화 시 이월 0), 집중 완주 보너스(시작 전부터 끝까지 앉아 공부 중일 때만 · 중간에 일어나면 없음 · 20분 미만 없음 · 정지/휴식 종료 없음), 이중 지급 방지(같은 사이클 두 번 정산 · 세션 end 두 번), 저장소 `adjustCoins` 원자성(음수 불가·거부는 원장 없음)·최근순 원장·이번 주 획득 합계·인벤토리·초기화는 코인 유지, 구매(없는 아이템·잔액 부족 거부·성공 시 차감/원장/인벤토리), stats 의 coins/weekCoins, 소켓 E2E(`coins` 본인 balance/남은 없음·`wallet`·`shop:buy`·`playerPomodoro` 동기화·늦게 들어온 사람도 봄·재입장 잔액), 브라우저(배지·머리 위 "+2 🪙"·지갑 모달 탭 4개 "준비 중"·거래 내역·머리 위 🍅 남은 시간·랭킹 코인 탭·코인 소리 설정) |
 | `stage7.test.js` | 7단계: 뽀모도로 configure 범위(20~90/5~20)·진행 중 거부, 월드 개인 타이머(따로 돌고·시작 때 설정·퇴장 정리·재접속 유지), 기록 초기화(메모리 저장소 resetUser 는 세션·출석·목표·할 일만, StudyTracker.reset 은 진행 중 세션 폐기, World.resetProfile 토큰·닉네임 확인), 소켓 `profile:reset` E2E(거부·삭제·playerGoal null·leaderboard:refresh·랭킹 0), 브라우저(카드 접기 새로고침 유지·채팅 높이·뽀모도로 입력 범위/잠김·줌 2.5 텍스트 해상도·넓게 보기 캔버스 전체·초기화 모달 닉네임 확인) |
 | `study.test.js` | 4단계: 날짜 규칙(시간대 0시·월요일 주 시작·세션은 시작 날짜), 출석 스트릭(경계일·끊김·주 경계), 메모리 저장소(세션·출석·목표·할 일 이월·강아지 이름), 세션 규칙(60초 폐기·휴식/커피 전환·일어나기·퇴장·재접속 유지·종료 저장), 출석 이벤트, 목표 달성(검증·한 번만·다음 날 리셋), 랭킹 통계, 저장소 폴백·인터페이스 동일성, 소켓 E2E(프로필·playerGoal·leaderboard:refresh·attendance·goalReached·할 일 CRUD·강아지 이름 저장) |
 | `stage3.test.js` | 3단계: 커피머신 상호작용(거리·토글·앉으면 공부→일어나면 휴식), 듣는 중 제목, 소켓 `interact`/`listening` 브로드캐스트, oEmbed 프록시(가짜 fetch·캐시, 네트워크 없음), 시간대 가중치(경계 30분·합 1·팔레트), 유튜브 URL 파싱·최근 5개 |
@@ -154,7 +160,9 @@ npm test
 | `todo:list` / `todo:add { text }` / `todo:toggle { id, done }` / `todo:delete { id }` | 본인 닉네임의 할 일. 목록은 미완료 전부 + 오늘 완료한 것, 어제 이전 미완료는 `carried: true`(이월) 로 맨 위 |
 | `chat { text }` | 200자·이스케이프·300ms 검사 → 모두에게 `chat { id, nickname, text, ts }` |
 | `emoji { index 0..5 }` | `playerEmoji { id, emoji }` |
-| `pomodoro:start { focusMinutes?, breakMinutes? }` / `pomodoro:stop` | **개인 타이머** (7단계). ack `{ ok, ...snapshot }` 또는 `{ ok:false, error: running \| not_running \| invalid_focus \| invalid_break }`. 집중 20~90분 · 휴식 5~20분(정수), 진행 중엔 설정 변경 불가. 자동 전환 때 **본인에게만** `pomodoro { running, phase, startedAt, endsAt, startedBy, focusMs, breakMs, serverTime }` |
+| `pomodoro:start { focusMinutes?, breakMinutes? }` / `pomodoro:stop` | **개인 타이머** (7단계). ack `{ ok, ...snapshot }` 또는 `{ ok:false, error: running \| not_running \| invalid_focus \| invalid_break }`. 집중 20~90분 · 휴식 5~20분(정수), 진행 중엔 설정 변경 불가. 자동 전환 때 **본인에게만** `pomodoro { running, phase, startedAt, endsAt, startedBy, focusMs, breakMs, serverTime }`. 8단계: 시작·정지·전환 때 **모두에게** `playerPomodoro { id, pomodoro: { phase, endsAt } \| null }` (머리 위 남은 시간, `publicPlayer.pomodoro` 에도 실림) |
+| `wallet` | 8단계 지갑: `{ ok, coins, carrySeconds, ledger: [{ id, delta, reason, createdAt }](최근 10건), inventory: [{ id, itemId, acquiredAt, meta }], tabs, items }` |
+| `shop:buy { itemId }` | 8단계 구매: 카탈로그 확인 → 잔액 확인·차감(저장소가 원자적으로) → `coin_ledger` → `inventory`. `{ ok, balance, item, inventory }` 또는 `{ ok:false, error: no_item \| insufficient, balance? }`. 카탈로그가 비어 있어 지금은 항상 `no_item` |
 | `profile:reset { nickname, token }` | 내 기록 초기화 (7단계): 세션 토큰·닉네임이 모두 맞아야 `{ ok, counts: { sessions, attendance, goals, todos } }`, 아니면 `confirm_mismatch`. 공부 세션·출석·오늘 목표·할 일 삭제(아바타·강아지 이름 유지), 진행 중 세션은 버리고 앉아 있으면 새로 센다 → 모두에게 `playerGoal { id, goal: null }` + `leaderboard:refresh` |
 | `time:ping { t0 }` | `{ t0, serverTime }` — 클라이언트가 왕복/2 를 빼서 시계 차이를 맞춤 |
 | `leave` | 즉시 정리 → `playerLeft` |
@@ -167,7 +175,8 @@ npm test
 
 그 밖에 `playerJoined`, `playerLeft { id, nickname, reason }`, `playerDisconnected`, `playerReconnected`, `roomCount { count }`,
 `leaderboard:refresh { nickname, seconds }`(세션 저장 시), `attendance { streak, weekDays }`(본인, 출석 기록 시), `goalReached { id, nickname }` + 시스템 `chat`.
-입장 ack 에는 `profile { goal, streak: { streak, weekDays, attendedToday } }`, `store`, `tz` 가 함께 옵니다 (오늘 출석했으면 "N일 연속 출석 🔥" 토스트).
+`coins { id, delta, reason, balance? }`(8단계: 코인 증감 — 모두에게 보내되 `balance` 는 본인에게만. 머리 위 "+N 🪙", 본인은 배지·소리·토스트).
+입장 ack 에는 `profile { goal, streak: { streak, weekDays, attendedToday }, coins }`, `store`, `tz` 가 함께 옵니다 (오늘 출석했으면 "N일 연속 출석 🔥" 토스트).
 HTTP: `GET /api/oembed?url=…` 은 유튜브 주소만 받아 서버가 oEmbed 제목을 대신 가져옵니다(10분 캐시, 브라우저 CORS 우회). 테스트는 fetch 를 주입해 네트워크를 쓰지 않습니다.
 `GET /api/config` → `{ passwordRequired }` 로 클라이언트가 입장 화면에 비밀번호 칸을 보일지 정합니다 (값은 내려가지 않음).
 
@@ -191,8 +200,9 @@ HTTP: `GET /api/oembed?url=…` 은 유튜브 주소만 받아 서버가 oEmbed 
 
 ### Supabase 설정
 
-1. Supabase 프로젝트 → SQL Editor 에서 [`supabase/schema.sql`](supabase/schema.sql) 실행 (여러 번 실행해도 안전).
-   테이블 `users` · `study_sessions` · `todos` · `daily_goals` · `attendance` 와 집계 함수 `study_totals(tz)` · `attendance_streaks(tz, only_nickname)` · `list_todos(nickname, tz)` 가 생깁니다.
+1. Supabase 프로젝트 → SQL Editor 에서 [`supabase/schema.sql`](supabase/schema.sql) 실행 (여러 번 실행해도 안전 — `if not exists` / `add column if not exists`).
+   테이블 `users`(8단계: `coins` · `coin_carry_seconds` 컬럼) · `study_sessions` · `todos` · `daily_goals` · `attendance` · `coin_ledger` · `inventory` 와
+   함수 `study_totals(tz)` · `attendance_streaks(tz, only_nickname)` · `list_todos(nickname, tz)` · `adjust_coins(nickname, delta, reason, at)`(잔액 확인·차감·원장 기록을 한 트랜잭션으로) · `coin_stats(tz)` 가 생깁니다.
    모든 테이블은 RLS 가 켜져 있고 정책이 없으며 함수도 anon/authenticated 에서 실행을 막아 두어, **service_role 키를 가진 서버만** 접근합니다.
 2. `.env` 에 `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`(service_role) 를 넣고 서버를 시작하면 로그에 `store=supabase` 가 찍힙니다. 연결에 실패하면 경고 후 메모리로 폴백합니다.
 
@@ -212,6 +222,23 @@ HTTP: `GET /api/oembed?url=…` 은 유튜브 주소만 받아 서버가 oEmbed 
 - **내 기록 초기화**: 설정 → "내 기록 초기화" → 모달에 닉네임을 똑같이 입력해야 삭제 버튼이 살아납니다. 서버는 세션 토큰 + 닉네임을 확인한 뒤 공부 세션·출석·오늘 목표·할 일을 지웁니다(아바타·강아지 이름은 유지).
 - **화면 크기**: 설정의 작게/보통/크게 = 카메라 줌 1.5/2/2.5 (`nsm.zoom`). 줌을 바꾸면 씬의 모든 텍스트 해상도를 줌과 같게 다시 그려 흐려지지 않습니다.
 - **넓게 보기**: 설정 토글 또는 우상단 ⤢ 버튼으로 사이드바를 접고 캔버스가 화면 전체를 씁니다(`nsm.wide`). Enter(채팅)·♪(음악) 을 누르면 사이드바가 다시 펼쳐집니다.
+
+## 코인 (8단계)
+
+- **적립은 서버가 판정**하고 클라이언트는 결과(`coins` 이벤트)만 받습니다 (`server/game/coins.js`).
+  - **공부**: 세션이 저장될 때 **10분당 1코인**. 60초 미만 세션은 이전처럼 폐기. 세션마다 내림 계산하고 **남은 초는 `users.coin_carry_seconds` 에 이월**해 다음 세션 정산 때 합산합니다
+    (9분 + 9분 = 1코인, 480초 이월). 지갑 안내 줄에 "다음 코인까지 N분 N초". "내 기록 초기화"는 이월을 0으로 되돌립니다.
+  - **집중 완주 보너스**: 개인 뽀모도로의 **집중 사이클이 끝까지 진행**됐을 때(`Pomodoro 'phaseEnd'`), 그 사이클이 시작하기 전부터 끝날 때까지 **앉아서 공부 중**이었으면 **+5**.
+    중간에 일어나거나 휴식으로 바꾸면(다시 앉아도) 없음, 수동 정지는 없음, 집중 시간이 20분 미만인 사이클은 없음. 같은 사이클은 한 번만 지급합니다(사이클 시작 시각으로 기억).
+- **저장**: `users.coins`(잔액) · `users.coin_carry_seconds`(이월 초) + `coin_ledger(id, nickname, delta, reason, created_at)` 에 모든 증감. reason 은 `study` / `focus` / `purchase:<itemId>`.
+  Supabase 는 `adjust_coins()` 함수가 잔액 확인·차감·원장 기록을 한 트랜잭션으로 처리해 동시 구매에도 음수가 되지 않습니다. 메모리 저장소도 같은 인터페이스(`getCoins` / `adjustCoins` / `getCoinCarry` / `setCoinCarry` / `coinLedger` / `coinStats` / `addInventory` / `listInventory`).
+  "내 기록 초기화"는 코인 잔액·인벤토리는 건드리지 않고 이월 초만 0으로 합니다.
+- **연출**: 코인이 들어오면 머리 위 "+1 🪙" 가 떠오르고(남의 것도 보임) 본인은 짧은 소리(설정 → "코인 획득 소리" 로 끔) + 좌상단 🪙 배지가 튑니다.
+- **머리 위 타이머**: 개인 뽀모도로가 돌면 상태 아이콘 옆에 "🍅 18:32"(집중) / "☕ 4:10"(휴식). 서버는 시작·정지·전환 때만 `playerPomodoro { id, pomodoro: { phase, endsAt } }` 를 모두에게 보내고,
+  남은 시간은 각 클라이언트가 서버 시각 기준으로 1초마다 계산합니다 — 매분 보내는 것보다 트래픽이 적고 정확합니다. 타이머가 없으면 표시하지 않습니다.
+- **지갑·상점 뼈대**: 우상단 🪙(또는 좌상단 배지) → 모달. 탭 가구 / 펫 / 펫 꾸미기 / 탈것 — 카탈로그(`server/game/shop.js`)가 비어 있어 "준비 중". 하단에 최근 거래 10건.
+  구매 API(`shop:buy { itemId }`)는 잔액 확인 → 차감 → 원장 → `inventory(id, nickname, item_id, acquired_at, meta)` 저장까지 동작합니다 (테스트는 `World` 옵션 `shop: [...]` 로 아이템을 넣어 검증).
+- **랭킹**: "이번 주 코인" 탭 — 월요일부터 획득한 코인 합(양수 delta 만, 구매로 쓴 건 빼지 않음). `stats` 행에 `coins`(잔액)·`weekCoins` 가 붙습니다.
 
 ## 아바타 (5단계)
 
@@ -331,6 +358,7 @@ python tools/compare_mockup.py                                        # screensh
 
 ## 다음 단계
 
+- 상점 카탈로그 채우기 (가구 배치 · 펫 · 펫 꾸미기 · 탈것) — 구매·인벤토리 API 는 준비됨
 - 뽀모도로 회차 기록, 주간 리포트
 - 유리문/입구 `doors` 로 방 이동, 실외 연결
 - 앉은 자세 프레임, 아바타 파츠 확장(치마·가방·모자 색)

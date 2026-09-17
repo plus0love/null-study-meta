@@ -13,7 +13,10 @@
  *   chat      { text }                       → ack { ok, error? }, 모두에게 chat { id, nickname, text, ts }
  *   emoji     { index }                      → 모두에게 playerEmoji { id, emoji }
  *   pomodoro:start { focusMinutes?, breakMinutes? } / pomodoro:stop → ack { ok, ...snapshot | error }. 7단계: **개인 타이머** —
- *             본인에게만 pomodoro { ...snapshot } (자동 전환 때도). 집중 20~90분 · 휴식 5~20분, 진행 중엔 설정 변경 불가
+ *             본인에게만 pomodoro { ...snapshot } (자동 전환 때도). 집중 20~90분 · 휴식 5~20분, 진행 중엔 설정 변경 불가.
+ *             8단계: 시작·정지·전환 때 모두에게 playerPomodoro { id, pomodoro: { phase, endsAt } | null } (머리 위 남은 시간 — 각자 서버 시각으로 계산)
+ *   wallet                                   → ack { ok, coins, ledger[≤10], inventory, tabs, items } (8단계 지갑·상점)
+ *   shop:buy  { itemId }                     → ack { ok, balance, item, inventory } | { ok:false, error: no_item | insufficient, balance? }
  *   profile:reset { nickname, token }        → ack { ok, counts?, error?: confirm_mismatch }. 본인 토큰·닉네임 확인 후 세션·출석·목표·할 일 삭제,
  *                                              모두에게 playerGoal { id, goal: null } + leaderboard:refresh
  *   time:ping { t0 }                         → ack { t0, serverTime }
@@ -26,7 +29,8 @@
  * 서버 → npc:update { id, kind, name, x, y, facing, state } (10Hz, 바뀔 때)
  * 서버 → leaderboard:refresh { nickname, seconds } (세션 저장 시), attendance { streak, weekDays } (본인에게, 출석 기록 시),
  *        goalReached { id, nickname } + 시스템 chat (오늘 목표 달성)
- * 입장 ack 에 profile { goal, streak }, store('memory'|'supabase'), tz 가 포함된다.
+ * 서버 → coins { id, delta, reason, balance? } (8단계: 코인 증감 — 모두에게 보내되 balance 는 본인에게만)
+ * 입장 ack 에 profile { goal, streak, coins }, store('memory'|'supabase'), tz 가 포함된다.
  * 서버 → 클라이언트 알림: playerJoined { player }, playerLeft { id, nickname, reason }, playerReconnected { id }, playerDisconnected { id }
  */
 const { Server } = require('socket.io');
@@ -46,7 +50,17 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, gate = createGa
     io.emit('playerLeft', { id: player.id, nickname: player.nickname, reason });
     io.emit('roomCount', { count: world.connectedCount });
   });
-  world.on('pomodoro', (snap, _reason, player) => io.sockets.sockets.get(player.socketId)?.emit('pomodoro', snap));
+  world.on('pomodoro', (snap, reason, player) => {
+    io.sockets.sockets.get(player.socketId)?.emit('pomodoro', snap);
+    if (reason !== 'config') io.emit('playerPomodoro', { id: player.id, pomodoro: world.publicPomodoro(player) });
+  });
+  world.on('coins', ({ playerId, delta, reason, balance }) => {
+    const p = world.players.get(playerId);
+    const self = p && io.sockets.sockets.get(p.socketId);
+    if (self) self.emit('coins', { id: playerId, delta, reason, balance });
+    (self ? self.broadcast : io).emit('coins', { id: playerId, delta, reason });
+    if (delta > 0) io.emit('leaderboard:refresh', { nickname: p ? p.nickname : null, seconds: 0 });
+  });
   world.on('npcUpdate', (snap) => io.emit('npc:update', snap));
   world.on('npcPet', ({ npc, by, playerId, name }) => {
     io.emit('npc:pet', { id: npc, by, playerId });
@@ -208,6 +222,8 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, gate = createGa
       return res;
     })));
     socket.on('todo:list', requirePlayer(safe(async () => ({ ok: true, todos: await world.listTodos(player) }))));
+    socket.on('wallet', requirePlayer(safe(() => world.wallet(player))));
+    socket.on('shop:buy', requirePlayer(safe((payload) => world.purchase(player, payload && payload.itemId))));
     socket.on('todo:add', requirePlayer(safe((payload) => world.addTodo(player, payload && payload.text))));
     socket.on('todo:toggle', requirePlayer(safe((payload) => world.setTodoDone(player, payload && payload.id, payload && payload.done))));
     socket.on('todo:delete', requirePlayer(safe((payload) => world.deleteTodo(player, payload && payload.id))));

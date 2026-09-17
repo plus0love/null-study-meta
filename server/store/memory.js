@@ -8,22 +8,25 @@
  *  recordAttendance / attendanceOf / attendanceStats
  *  listTodos / addTodo / setTodoDone / deleteTodo
  *  getGoal / setGoal
- *  resetUser (세션·출석·목표·할 일 삭제, users 행은 유지)
+ *  resetUser (세션·출석·목표·할 일 삭제 + 코인 이월 초 0, users 행·코인 잔액·인벤토리는 유지)
+ *  getCoins / adjustCoins / getCoinCarry / setCoinCarry / coinLedger / coinStats / addInventory / listInventory (8단계)
  */
-const { DEFAULT_TZ, dateKey, streakOf, totalsOf } = require('./stats');
+const { DEFAULT_TZ, dateKey, weekStart, streakOf, totalsOf } = require('./stats');
 
 function createMemoryStore() {
-  const users = new Map(); // nickname → { nickname, avatar, dogName, createdAt, updatedAt }
+  const users = new Map(); // nickname → { nickname, avatar, dogName, coins, coinCarrySeconds, createdAt, updatedAt }
   const sessions = []; // { id, nickname, startedAt, endedAt, seconds }
   const attendance = new Set(); // `${nickname}|${date}`
   const todos = []; // { id, nickname, text, done, createdAt, doneAt }
   const goals = new Map(); // `${nickname}|${date}` → { nickname, date, goalText, targetMinutes }
+  const ledger = []; // { id, nickname, delta, reason, createdAt } — 모든 코인 증감
+  const inventory = []; // { id, nickname, itemId, acquiredAt, meta }
   let seq = 1;
 
   const ensureUser = (nickname, now = Date.now()) => {
     let u = users.get(nickname);
     if (!u) {
-      u = { nickname, avatar: null, dogName: null, createdAt: now, updatedAt: now };
+      u = { nickname, avatar: null, dogName: null, coins: 0, coinCarrySeconds: 0, createdAt: now, updatedAt: now };
       users.set(nickname, u);
     }
     return u;
@@ -135,10 +138,70 @@ function createMemoryStore() {
       return { ...g };
     },
 
+    // ── 코인 / 인벤토리 (8단계) ────────────────────────────────────────
+    async getCoins(nickname) {
+      const u = users.get(nickname);
+      return u ? u.coins : 0;
+    },
+    /**
+     * 잔액을 delta 만큼 바꾸고 원장에 남긴다 (0 아래로는 못 내려간다 → { ok:false, error:'insufficient' }, 원장 기록 없음).
+     * @returns {{ ok: true, balance, entry } | { ok: false, error: 'insufficient' | 'invalid', balance }}
+     */
+    async adjustCoins(nickname, delta, reason, now = Date.now()) {
+      const d = Number(delta);
+      const u = ensureUser(nickname, now);
+      if (!Number.isInteger(d) || d === 0) return { ok: false, error: 'invalid', balance: u.coins };
+      if (u.coins + d < 0) return { ok: false, error: 'insufficient', balance: u.coins };
+      u.coins += d;
+      u.updatedAt = now;
+      const entry = { id: seq++, nickname, delta: d, reason: String(reason || ''), createdAt: now };
+      ledger.push(entry);
+      return { ok: true, balance: u.coins, entry: { ...entry } };
+    },
+    /** 코인으로 바뀌지 못하고 남은 공부 초 (다음 세션 정산 때 합산) */
+    async getCoinCarry(nickname) {
+      const u = users.get(nickname);
+      return u ? u.coinCarrySeconds : 0;
+    },
+    async setCoinCarry(nickname, seconds, now = Date.now()) {
+      const u = ensureUser(nickname, now);
+      u.coinCarrySeconds = Math.max(0, Math.floor(Number(seconds) || 0));
+      u.updatedAt = now;
+      return u.coinCarrySeconds;
+    },
+    /** 최근 거래 (새 것부터) */
+    async coinLedger(nickname, limit = 10) {
+      return ledger.filter((e) => e.nickname === nickname).slice(-limit).reverse().map((e) => ({ ...e }));
+    },
+    /** 닉네임별 잔액 + 이번 주 획득(양수 delta 합, 월요일부터) */
+    async coinStats({ tz = DEFAULT_TZ, now = Date.now() } = {}) {
+      const today = dateKey(now, tz);
+      const ws = weekStart(today);
+      const out = new Map();
+      for (const u of users.values()) out.set(u.nickname, { nickname: u.nickname, coins: u.coins, weekCoins: 0 });
+      for (const e of ledger) {
+        if (e.delta <= 0) continue;
+        const day = dateKey(e.createdAt, tz);
+        if (day >= ws && day <= today) out.get(e.nickname).weekCoins += e.delta;
+      }
+      return [...out.values()].filter((r) => r.coins > 0 || r.weekCoins > 0);
+    },
+    async addInventory(nickname, itemId, meta = {}, now = Date.now()) {
+      ensureUser(nickname, now);
+      const row = { id: seq++, nickname, itemId, acquiredAt: now, meta: { ...meta } };
+      inventory.push(row);
+      return { ...row, meta: { ...row.meta } };
+    },
+    async listInventory(nickname) {
+      return inventory.filter((i) => i.nickname === nickname).map((i) => ({ ...i, meta: { ...i.meta } }));
+    },
+
     // ── 기록 초기화 (7단계) ───────────────────────────────────────────
-    /** 닉네임의 공부 세션·출석·목표·할 일을 지운다. users(아바타·강아지 이름)는 남긴다. 반환: 지운 개수 */
+    /** 닉네임의 공부 세션·출석·목표·할 일을 지우고 코인 이월 초를 0으로. users(아바타·강아지 이름·코인 잔액)·인벤토리는 남긴다. 반환: 지운 개수 */
     async resetUser(nickname) {
       const counts = { sessions: 0, attendance: 0, goals: 0, todos: 0 };
+      const u = users.get(nickname);
+      if (u) u.coinCarrySeconds = 0;
       for (let i = sessions.length - 1; i >= 0; i--) if (sessions[i].nickname === nickname) { sessions.splice(i, 1); counts.sessions++; }
       for (const k of [...attendance]) if (k.startsWith(`${nickname}|`)) { attendance.delete(k); counts.attendance++; }
       for (const k of [...goals.keys()]) if (k.startsWith(`${nickname}|`)) { goals.delete(k); counts.goals++; }

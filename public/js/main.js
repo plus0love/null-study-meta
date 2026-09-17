@@ -75,6 +75,7 @@
   scene.hooks.onEmojiKey = (i) => net.emoji(i).catch(() => {});
   scene.hooks.onChatKey = () => ui.focusChat();
   scene.hooks.onPositions = (map) => ui.drawMinimap(map);
+  scene.hooks.serverNow = () => net.serverNow(); // 머리 위 뽀모도로 남은 시간 (8단계)
 
   // 채팅/할 일 입력 중엔 게임 키 차단
   const isField = (el) => Boolean(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'));
@@ -179,11 +180,26 @@
     sound.chime('goal');
     if (scene.me && d.id === scene.me.id) ui.toast('오늘 목표 달성 🎉');
   });
-  // 설정: 항상 밤 / 알림 소리 / 브라우저 알림
+  // 설정: 항상 밤 / 알림 소리 / 코인 소리 / 브라우저 알림
   scene.setAlwaysNight(ui.alwaysNight);
   ui.onAlwaysNight = (on) => scene.setAlwaysNight(on);
   ui.setSoundEnabled(sound.enabled);
   ui.onSound = (on) => sound.setEnabled(on);
+  ui.setCoinSoundEnabled(sound.coinEnabled);
+  ui.onCoinSound = (on) => sound.setCoinEnabled(on);
+
+  // ── 코인 / 지갑 (8단계): 판정은 서버, 여기서는 결과만 보여준다 ──────────
+  ui.onWallet = () => net.wallet();
+  ui.onBuy = (itemId) => net.buy(itemId).catch(() => ({ ok: false }));
+  net.on('coins', (d) => {
+    scene.onCoins(d); // 머리 위 "+N 🪙" (남의 것도)
+    if (!scene.me || d.id !== scene.me.id) return;
+    if (d.balance !== undefined) ui.setCoins(d.balance, { bump: true });
+    sound.coin(d.delta);
+    if (d.delta > 0) ui.toast(d.reason === 'focus' ? `집중 완주 보너스 +${d.delta} 🪙` : `+${d.delta} 🪙`);
+    if (ui.isWalletOpen()) ui.refreshWallet();
+  });
+  net.on('playerPomodoro', (d) => scene.onPlayerPomodoro(d));
   ui.setNotifyPermission(FX.Notify.permission());
   ui.onNotifyPerm = () => FX.Notify.request().then((st) => ui.setNotifyPermission(st));
 
@@ -202,6 +218,7 @@
     ui.setNpcs(ack.npcs || []);
     const profile = ack.profile || {};
     ui.setGoal(profile.goal || null);
+    ui.setCoins(profile.coins || 0);
     if (profile.streak && profile.streak.attendedToday) ui.toast(`${profile.streak.streak}일 연속 출석 🔥`);
     migrateTodos();
     startStatsPolling();
