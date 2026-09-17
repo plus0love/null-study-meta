@@ -756,3 +756,62 @@ input::placeholder { color: var(--cream-faint); }
 .shared-pets li.empty { justify-content: center; color: var(--cream-faint); background: transparent; }
 .shared-pets .furn-icon { width: 28px; height: 28px; cursor: default; }
 .wallet-item .skill-target { width: 100%; font: 11px var(--font); color: var(--cream); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 3px 4px; }
+
+/* ── 11단계: 스터디 로비 · 스터디 배지/팝오버 ─────────────────────────── */
+.badge-study { cursor: pointer; pointer-events: auto; font-family: var(--font); max-width: 260px; transition: background 0.15s, border-color 0.15s; }
+.badge-study:hover, .badge-study.active { background: var(--amber-dim); border-color: var(--line-strong); }
+.badge-study #study-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.badge-study .study-lock { font-size: 12px; }
+#hud-tl .popover { pointer-events: auto; }
+.popover.left { left: 0; right: auto; width: 320px; }
+.study-code { font-size: 18px; font-weight: 700; letter-spacing: 0.18em; color: var(--amber-2); }
+.week-bar { height: 100%; width: 0; background: var(--amber); border-radius: 999px; transition: width 0.4s ease; box-shadow: 0 0 6px rgba(255, 184, 92, 0.5); }
+.week-bar.done { background: var(--ok); box-shadow: 0 0 6px rgba(159, 211, 154, 0.5); }
+#study-members { max-height: 200px; overflow: auto; }
+#study-members li .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#study-members li .time { margin-left: 0; font-size: 12px; color: var(--cream-dim); }
+#study-members li .btn { margin-left: 4px; }
+.owner-only summary { cursor: pointer; font-size: 12px; color: var(--amber-2); font-weight: 700; }
+.owner-only form { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.owner-only form input[type="text"], .owner-only form input[type="password"], .owner-only form input[type="number"], .owner-only form select,
+.study-edit-row input[type="number"], #sc-name, #sc-pass, #sc-max, #sc-goal, #sp-pass, #lobby-code {
+  padding: 8px 10px; border-radius: 9px; border: 1px solid var(--line); background: rgba(14, 11, 18, 0.55); color: var(--cream); font: inherit;
+}
+.owner-only form label { font-size: 12px; color: var(--cream-dim); display: flex; align-items: center; gap: 6px; }
+.study-edit-row { gap: 12px; flex-wrap: wrap; }
+.study-edit-row input[type="number"] { width: 72px; }
+.owner-only #study-delete { margin-top: 10px; align-self: flex-start; }
+.login-target { font-size: 13px; color: var(--amber-2); background: var(--amber-dim); border-radius: 9px; padding: 8px 10px; }
+.login-target b { color: var(--cream); }
+
+.modal-box.lobby { width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; gap: 16px; }
+.modal-box.lobby header.row h1 { flex: 1; }
+.lobby-actions { flex-wrap: wrap; gap: 10px; }
+.lobby-actions form { margin-left: auto; }
+#lobby-code { width: 150px; letter-spacing: 0.15em; text-transform: uppercase; }
+.lobby-section h3 { font-size: 13px; font-weight: 700; color: var(--amber-2); letter-spacing: 0.03em; margin-bottom: 8px; }
+.lobby-section h3 .muted { font-weight: 400; margin-left: 6px; }
+.lobby-empty { margin: 0; }
+.study-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.study-card {
+  display: flex; flex-direction: column; gap: 7px; text-align: left; padding: 12px 14px; border-radius: var(--radius);
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--cream); font: inherit; cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.15s;
+}
+.study-card:hover { background: var(--amber-dim); border-color: var(--line-strong); transform: translateY(-1px); }
+.study-card.live { border-color: rgba(159, 211, 154, 0.45); }
+.study-card-head { display: flex; align-items: baseline; gap: 8px; }
+.study-card-name { flex: 1; min-width: 0; font-size: 15px; font-weight: 700; color: var(--amber-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.study-card-count { font-size: 12px; color: var(--cream-dim); font-variant-numeric: tabular-nums; }
+.study-card.live .study-card-count { color: var(--ok); }
+.study-card-stats { display: flex; gap: 10px; font-size: 12px; color: var(--cream-dim); flex-wrap: wrap; }
+.study-card-owner { color: var(--amber-2); }
+.study-card .hint { font-size: 11px; margin: 0; }
+.study-others li .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.study-others li .time { margin-left: 0; font-size: 12px; color: var(--cream-dim); }
+.study-others li .btn { margin-left: 6px; }
+.study-others li.empty { justify-content: center; color: var(--cream-faint); background: transparent; font-size: 12px; }
+#card-rank header .tabs + .tabs { margin-left: 0; }
+#card-rank header { flex-wrap: wrap; row-gap: 6px; }
+label.field > span { font-size: 12px; color: var(--cream-dim); }
+label.field .muted { margin-left: 4px; }

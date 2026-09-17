@@ -1,6 +1,7 @@
 'use strict';
 /**
  * Express 서버: 정적 파일(public/) + /healthz + 방 데이터(JSON) + 유튜브 oEmbed 프록시 + Socket.io (server/socket.js).
+ * 11단계: 스터디(방 인스턴스)는 Hub(server/game/hub.js) 가 관리한다. startServer 는 { hub } 를 돌려준다.
  */
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -68,7 +69,7 @@ async function fetchOembedTitle(url, fetcher, cache) {
   return value;
 }
 
-/** ctx: { store, world, gate, fetch? } — world 는 소켓을 붙인 뒤 채워진다 */
+/** ctx: { store, hub, shop, gate, fetch? } — hub 는 소켓을 붙인 뒤 채워진다 */
 function createApp(ctx) {
   const app = express();
   app.disable('x-powered-by');
@@ -88,7 +89,7 @@ function createApp(ctx) {
   });
 
   app.get('/healthz', (_req, res) => {
-    res.json({ ok: true, store: ctx.store.kind, uptime: Math.round(process.uptime()), node: process.version, players: ctx.world ? ctx.world.connectedCount : 0 });
+    res.json({ ok: true, store: ctx.store.kind, uptime: Math.round(process.uptime()), node: process.version, players: ctx.hub ? ctx.hub.connectedCount : 0, studies: ctx.hub ? ctx.hub.studies.size : 0, worlds: ctx.hub ? ctx.hub.worlds.size : 0 });
   });
 
   // 9단계: 배치 규칙은 서버 모듈을 그대로 브라우저에도 내려보낸다 (window.Layout) — 미리보기 초록/빨강 판정이 서버와 같다
@@ -100,7 +101,7 @@ function createApp(ctx) {
   // 9단계: 상점 카탈로그 (탭·카테고리·아이템 + 스프라이트 메타) — 씬이 가구를 그리고 배치 규칙을 미리 판정하는 데 쓴다
   app.get('/api/shop', (_req, res) => {
     res.set('Cache-Control', 'no-cache');
-    const shop = ctx.world ? ctx.world.shop : createShop();
+    const shop = ctx.shop || createShop();
     res.json({ tabs: shop.tabs, categories: shop.categories, items: shop.items });
   });
 
@@ -116,36 +117,37 @@ function createApp(ctx) {
 }
 
 /**
- * opts.world: World 옵션 (테스트용 — graceMs, pomodoro: { focusMs, breakMs })
- * opts.gate:  게이트 옵션 (테스트용 — maxFailures, lockMs, now). 비밀번호 자체는 env.ROOM_PASSWORD 에서만 읽는다.
+ * opts.world: World 옵션 (테스트용 — graceMs, pomodoro: { focusMs, breakMs }, study: { autoTick }, npc, shop)
+ * opts.hub:   허브 옵션 (테스트용 — releaseMs, inactiveMs, goalCheckMs, gate: { maxFailures, lockMs }, now)
+ * opts.gate:  사이트 게이트 옵션 (테스트용 — maxFailures, lockMs, now). 비밀번호 자체는 env.ROOM_PASSWORD 에서만 읽는다.
  */
-async function startServer({ port = Number(process.env.PORT) || 3000, env = process.env, log = console, world: worldOpts = {}, gate: gateOpts = {}, fetch: fetcher = null } = {}) {
+async function startServer({ port = Number(process.env.PORT) || 3000, env = process.env, log = console, world: worldOpts = {}, hub: hubOpts = {}, gate: gateOpts = {}, fetch: fetcher = null } = {}) {
   const store = await createStore(env, log);
   const gate = createGate({ password: env.ROOM_PASSWORD || '', log, ...gateOpts });
   // Socket.io 는 기존 request 리스너를 감싸므로 Express 를 먼저 붙이고 나서 attach 한다
-  const ctx = { store, world: null, gate, fetch: fetcher };
+  const ctx = { store, hub: null, shop: createShop(worldOpts.shop), gate, fetch: fetcher };
   const app = createApp(ctx);
   const server = http.createServer(app);
-  const { io, world } = attachSocket(server, { room: getStudyRoom(), gate, world: { store, tz: env.STATS_TZ || undefined, log, ...worldOpts }, log });
-  ctx.world = world;
-  await world.init(); // 강아지 이름 · 저장된 공부 합계
+  const { io, hub } = attachSocket(server, { room: getStudyRoom(), gate, world: { store, tz: env.STATS_TZ || undefined, log, ...worldOpts }, hub: hubOpts, log });
+  ctx.hub = hub;
+  await hub.init(); // 스터디 목록 · 저장된 공부 합계 · 옛 데이터 마이그레이션
   await new Promise((resolve) => server.listen(port, resolve));
   const actualPort = server.address().port;
-  log.log(`[server] http://localhost:${actualPort}  store=${store.kind}${store.kind === 'memory' ? ' (영구 저장 없음)' : ''}  tz=${world.tz}  password=${gate.enabled ? 'on' : 'off'}  node=${process.version}`);
+  log.log(`[server] http://localhost:${actualPort}  store=${store.kind}${store.kind === 'memory' ? ' (영구 저장 없음)' : ''}  tz=${hub.tz}  password=${gate.enabled ? 'on' : 'off'}  studies=${hub.studies.size}  node=${process.version}`);
 
   // 종료: 진행 중인 공부 세션을 먼저 저장(SIGTERM 포함)하고 소켓·저장소를 닫는다
   let closing = null;
   const close = () => {
     if (!closing) {
       closing = (async () => {
-        await world.dispose();
+        await hub.dispose();
         await new Promise((resolve) => io.close(() => resolve()));
         await store.close().catch(() => {});
       })();
     }
     return closing;
   };
-  return { app, server, io, world, store, gate, port: actualPort, close };
+  return { app, server, io, hub, store, gate, port: actualPort, close };
 }
 
 if (require.main === module) {

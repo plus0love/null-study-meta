@@ -15,6 +15,11 @@
  *  - 10단계: 펫. 개인 펫(FollowerNpc 'p:<playerId>', users.pet_config: 활성 펫·이름·꾸미기·스킬) · 공용 펫(SharedPetNpc/FishNpc 's:<roomPetId>',
  *    room_pets, 최대 3마리, 푼 사람만 이름/회수) · 기존 강아지의 꾸미기/스킬은 room_pets 의 item_id 'dog' 행. 쓰다듬기는 종별 반응 이모지.
  *    스킬은 펫별 1회 구매(shop:buy target): 'come'(채팅에 이름 → comeTo) · 'sleep_beside' · 'high_five'.
+ *  - 11단계: 스터디. World 하나 = 스터디 하나 (Hub 가 지연 생성·비면 해제). 플레이어·채팅·좌석·가구·공용 펫·강아지는 스터디마다 따로,
+ *    사람에게 붙은 것(코인·인벤토리·개인 펫·아바타·공부 기록·출석·목표·할 일)은 전역 — StudyTracker 와 goals 맵은 Hub 것을 공유한다
+ *    (studyId 로 자기 스터디의 이벤트만 골라 쓴다). 저장소의 가구·펫 키는 studyId (독립 실행이면 room.id).
+ *    편집 권한(editPolicy 'owner' 면 방장만) · 그룹 주간 목표(멤버 전원의 이번 주 합이 목표에 닿으면 주 1회 'weeklyGoal' + 접속 중 멤버 10코인,
+ *    오프라인 멤버는 다음 입장 때 loadProfile 이 지급) · 랭킹 scope('study' = 멤버만 / 'all').
  * 이벤트: 'playerLeft' (유예 시간이 지나 정리될 때), 'pomodoro' (snap, reason, player — 개인 타이머 상태 변화),
  *         'npcUpdate' (NPC 스냅샷, 10Hz), 'npcPet' ({ npc, by, playerId, name, reaction, highFive }), 'npcName' ({ npc, name }), 'npcRemoved' ({ id }),
  *         'sessionSaved' { nickname, playerId, seconds }, 'attendance' { nickname, playerId, streak, weekDays, inserted },
@@ -22,6 +27,7 @@
  *         'coins' { nickname, playerId, delta, reason, balance } (코인 증감이 저장된 뒤)
  *         'layout' { op: 'add'|'move'|'remove'|'grab'|'release', entry?, id?, by } (배치 변경 — 소켓이 layout:update 로 방송)
  *         'desk' { player } (책상 소품 변경), 'editing' { player } (편집 모드 on/off)
+ *         'weeklyGoal' { weekStart, totalSeconds, targetSeconds, bonus, awarded: [playerId] } (11단계 그룹 목표 달성)
  */
 const EventEmitter = require('node:events');
 const crypto = require('node:crypto');
@@ -33,7 +39,7 @@ const { Pomodoro } = require('./pomodoro');
 const { DogNpc, SharedPetNpc, FishNpc, FollowerNpc, SPECIES: PET_SPECIES } = require('./npc');
 const { StudyTracker } = require('./study');
 const { createMemoryStore } = require('../store/memory');
-const { DEFAULT_TZ, dateKey, isValidTz } = require('../store/stats');
+const { DEFAULT_TZ, dateKey, weekStart, isValidTz } = require('../store/stats');
 const { FACING_DELTA, interactableById } = require('../rooms/build');
 const { normalizeAvatar } = require('./avatar');
 const { settleStudy, focusBonusFor } = require('./coins');
@@ -57,28 +63,53 @@ const DESK_SLOTS = 3;
 const RESTING_SEATS = new Set(['bed', 'massage']); // 앉으면 자동 휴식 (공부로 못 바꿈)
 const MAX_SHARED_PETS = 3;
 const PET_NAME_MAX = 8;
+const WEEKLY_BONUS = 10; // 11단계: 그룹 주간 목표 달성 보너스 (멤버마다)
 
 function seatCenter(room, seat) {
   return { x: (seat.x + 0.5) * room.tileSize, y: (seat.y + 1) * room.tileSize };
 }
 
 class World extends EventEmitter {
-  constructor(room, { graceMs = GRACE_MS, pomodoro = {}, npc = {}, now = () => Date.now(), store = null, tz = DEFAULT_TZ, study = {}, shop = undefined, log = console } = {}) {
+  /**
+   * 11단계 옵션: studyId(스터디 번호, Hub 가 준다) · study(공유 StudyTracker 인스턴스 또는 트래커 옵션) · goals(공유 Map) ·
+   *   studyInfo(() => 스터디 행: ownerNickname·editPolicy·weeklyGoalMinutes·name) · members(async () => 멤버 닉네임[]) ·
+   *   takenNicknames(() => 다른 스터디까지 포함해 쓰고 있는 닉네임[])
+   */
+  constructor(room, { graceMs = GRACE_MS, pomodoro = {}, npc = {}, now = () => Date.now(), store = null, tz = DEFAULT_TZ, study = {}, shop = undefined, log = console, studyId = null, goals = null, studyInfo = () => null, members = null, takenNicknames = null, allPlayers = null } = {}) {
     super();
     // 충돌 맵은 배치 가구에 따라 바뀌므로 방 데이터를 얕게 복사하고 collision 만 새로 만든다 (NPC 도 같은 객체를 본다)
     this.baseRoom = room;
     this.room = { ...room, collision: room.collision.map((r) => r.slice()) };
     this.roomId = room.id;
+    this.studyId = studyId;
+    this.scopeId = studyId ?? room.id; // 저장소의 가구·펫 키 (스터디 번호, 독립 실행이면 방 템플릿 id)
+    this.studyInfo = studyInfo;
+    this.membersOf = members;
+    this.takenNicknames = takenNicknames;
+    this.allPlayers = allPlayers; // 모든 스터디의 접속자 (랭킹 '전체' online 표시)
     this.now = now;
     this.log = log;
     this.graceMs = graceMs;
     this.store = store || createMemoryStore();
     this.tz = isValidTz(tz) ? tz : DEFAULT_TZ;
-    this.goals = new Map(); // nickname → { date, goalText, targetMinutes } (오늘 것만 캐시)
-    this.study = new StudyTracker({ store: this.store, tz: this.tz, now, log, goalOf: (n) => this.goalOf(n), ...study });
-    this.study.on('saved', (e) => { this.emit('sessionSaved', e); this.settleSession(e); });
-    this.study.on('attendance', (e) => this.emit('attendance', e));
-    this.study.on('goalReached', (e) => this.emit('goalReached', e));
+    this.goals = goals || new Map(); // nickname → { date, goalText, targetMinutes } (오늘 것만 캐시). 11단계: Hub 와 공유
+    if (study instanceof StudyTracker) {
+      this.study = study; // 11단계: 모든 스터디가 공유 (전역 공부 기록)
+      this.ownsStudy = false;
+    } else {
+      this.study = new StudyTracker({ store: this.store, tz: this.tz, now, log, goalOf: (n) => this.goalOf(n), ...study });
+      this.ownsStudy = true;
+    }
+    // 공유 트래커면 내 스터디의 이벤트만 (세션에 실린 studyId 로 구분)
+    const mine = (fn) => (e) => { if (e.studyId === this.studyId) fn(e); };
+    this.studyListeners = {
+      saved: mine((e) => { this.emit('sessionSaved', e); this.settleSession(e); this.checkWeeklyGoal().catch(() => {}); }),
+      attendance: mine((e) => this.emit('attendance', e)),
+      goalReached: mine((e) => this.emit('goalReached', e)),
+    };
+    for (const [ev, fn] of Object.entries(this.studyListeners)) this.study.on(ev, fn);
+    this.weeklyReached = null; // 이번 주 그룹 목표를 이미 달성했으면 그 주의 월요일 키
+    this.weeklyChecking = null;
     this.players = new Map(); // id → player
     this.sessions = new Map(); // token → player
     this.seatOwners = new Map(); // seatId → playerId
@@ -121,14 +152,18 @@ class World extends EventEmitter {
     return n;
   }
 
-  /** 저장소에서 초기 상태 로드 (강아지 이름, 저장된 합계). 서버 시작 시 한 번 */
+  /** 저장소에서 초기 상태 로드 (강아지 이름·꾸미기, 가구, 공용 펫, 저장된 합계). 스터디 월드가 만들어질 때 한 번 */
   async init() {
     try {
-      const name = await this.store.getLatestDogName();
-      if (name) this.dog.setName(name);
-      await this.study.refreshTotals();
+      if (this.ownsStudy) await this.study.refreshTotals();
       await this.loadLayout();
       await this.loadPets();
+      // 강아지 이름: 스터디의 'dog' 행. 독립 실행(스터디 없음)이면 옛 users.dog_name 의 마지막 값
+      if (this.dogRow && this.dogRow.name) this.dog.setName(this.dogRow.name);
+      else if (this.studyId === null) {
+        const name = await this.store.getLatestDogName();
+        if (name) this.dog.setName(name);
+      }
     } catch (err) {
       this.log.warn(`[world] 저장소 초기 로드 실패: ${err.message}`);
     }
@@ -201,13 +236,14 @@ class World extends EventEmitter {
     }
     const norm = normalizeNickname(nickname);
     if (!norm.ok) return { ok: false, error: norm.error };
-    const name = uniqueNickname(norm.name, [...this.players.values()].map((p) => p.nickname));
+    const name = uniqueNickname(norm.name, this.takenNicknames ? this.takenNicknames() : [...this.players.values()].map((p) => p.nickname));
     const id = crypto.randomBytes(6).toString('hex');
     const newToken = crypto.randomBytes(24).toString('base64url');
     const player = {
       id,
       token: newToken,
       socketId,
+      studyId: this.studyId, // 11단계: 공유 트래커의 세션·이벤트를 스터디별로 구분
       nickname: name,
       avatar: normalizeAvatar(avatar), // 5단계: 파츠 객체 (옛 정수 값도 상의 색으로 변환)
       avatarProvided: avatar !== undefined && avatar !== null, // 안 보냈으면 loadProfile 에서 users.avatar 복원
@@ -234,9 +270,12 @@ class World extends EventEmitter {
     return { ok: true, player, resumed: false, oldSocketId: null };
   }
 
-  /** 입장 ack 에 실을 영구 데이터: 오늘 목표 · 출석 스트릭 · 코인 잔액 · (클라이언트가 아바타를 안 보냈으면) 저장된 아바타 복원. 실패해도 입장은 된다 */
+  /**
+   * 입장 ack 에 실을 영구 데이터: 오늘 목표 · 출석 스트릭 · 코인 잔액 · (클라이언트가 아바타를 안 보냈으면) 저장된 아바타 복원 ·
+   * 11단계: 오프라인 사이 달성된 그룹 목표 보너스(rewards) 지급. 실패해도 입장은 된다
+   */
   async loadProfile(player) {
-    const out = { goal: null, streak: { streak: 0, weekDays: 0, attendedToday: false }, coins: 0 };
+    const out = { goal: null, streak: { streak: 0, weekDays: 0, attendedToday: false }, coins: 0, rewards: [] };
     try {
       if (!player.avatarProvided) {
         const u = await this.store.getUser(player.nickname);
@@ -249,10 +288,23 @@ class World extends EventEmitter {
       else this.goals.delete(player.nickname);
       out.goal = this.publicGoal(player.nickname);
       out.streak = await this.store.attendanceOf(player.nickname, { tz: this.tz, now: this.now() });
+      out.rewards = await this.claimRewards(player);
       out.coins = await this.store.getCoins(player.nickname);
       await this.loadDesk(player);
     } catch (err) {
       this.log.warn(`[world] 프로필 로드 실패 (${player.nickname}): ${err.message}`);
+    }
+    return out;
+  }
+
+  /** 아직 못 받은 그룹 목표 보너스를 지급하고 [{ studyId, studyName, weekStart, coins }] 를 돌려준다 */
+  async claimRewards(player) {
+    const rows = await this.store.claimRewards(player.nickname, this.now());
+    const out = [];
+    for (const r of rows) {
+      await this.award(player.nickname, player.id, WEEKLY_BONUS, 'weekly_goal');
+      const info = r.studyId === this.scopeId ? this.studyInfo() : await this.store.getStudy(r.studyId).catch(() => null);
+      out.push({ studyId: r.studyId, studyName: info ? info.name : null, weekStart: r.weekStart, coins: WEEKLY_BONUS });
     }
     return out;
   }
@@ -598,8 +650,16 @@ class World extends EventEmitter {
     return { ok: true, layoutLock: player.layoutLock };
   }
 
-  /** 편집 모드 on/off — 끄면 잡고 있던 가구를 모두 놓는다 */
+  /** 가구 편집 권한 (11단계): editPolicy 'owner' 면 방장만. 스터디 없이 돌면 누구나 */
+  canEditLayout(player) {
+    const info = this.studyInfo();
+    if (!info || info.editPolicy !== 'owner') return true;
+    return Boolean(info.ownerNickname) && info.ownerNickname === player.nickname;
+  }
+
+  /** 편집 모드 on/off — 끄면 잡고 있던 가구를 모두 놓는다. 권한이 없으면 forbidden */
   setEditing(player, on) {
+    if (on && !this.canEditLayout(player)) return { ok: false, error: 'forbidden' };
     player.editing = Boolean(on);
     if (!player.editing) this.releaseLocks(player);
     this.emit('editing', { player });
@@ -607,7 +667,7 @@ class World extends EventEmitter {
   }
 
   async loadLayout() {
-    const rows = await this.store.roomLayout(this.roomId);
+    const rows = await this.store.roomLayout(this.scopeId);
     this.layout.clear();
     for (const e of rows) if (this.shop.get(e.itemId)) this.layout.set(e.id, e);
     this.rebuildCollision();
@@ -679,6 +739,7 @@ class World extends EventEmitter {
    * @returns {{ ok: true, entry } | { ok: false, error: 'no_item' | 'not_placeable' | 'already_placed' | 배치 규칙 오류 }}
    */
   async placeFurniture(player, { inventoryId, x, y, rotation = 0 } = {}) {
+    if (!this.canEditLayout(player)) return { ok: false, error: 'forbidden' };
     const inv = await this.store.getInventoryItem(player.nickname, inventoryId);
     if (!inv) return { ok: false, error: 'no_item' };
     const item = this.shop.get(inv.itemId);
@@ -686,7 +747,7 @@ class World extends EventEmitter {
     if ([...this.layout.values()].some((e) => e.inventoryId === inv.id)) return { ok: false, error: 'already_placed' };
     const v = this.validateLayout(item, { x, y, rotation });
     if (!v.ok) return v;
-    const entry = await this.store.addLayout(this.roomId, { itemId: item.id, inventoryId: inv.id, x: Number(x), y: Number(y), rotation: Number(rotation) || 0, meta: { variant: inv.meta.variant || null }, placedBy: player.nickname }, this.now());
+    const entry = await this.store.addLayout(this.scopeId, { itemId: item.id, inventoryId: inv.id, x: Number(x), y: Number(y), rotation: Number(rotation) || 0, meta: { variant: inv.meta.variant || null }, placedBy: player.nickname, roomId: this.roomId }, this.now());
     this.layout.set(entry.id, entry);
     this.rebuildCollision();
     this.emit('layout', { op: 'add', entry: this.publicLayout(entry), by: player.id });
@@ -697,7 +758,7 @@ class World extends EventEmitter {
   async grabFurniture(player, id) {
     const entry = this.layout.get(Number(id));
     if (!entry) return { ok: false, error: 'not_found' };
-    if (!(await this.canEditEntry(player, entry))) return { ok: false, error: 'forbidden' };
+    if (!this.canEditLayout(player) || !(await this.canEditEntry(player, entry))) return { ok: false, error: 'forbidden' };
     if (this.seatOccupied(entry)) return { ok: false, error: 'occupied' };
     const owner = this.lockOwner(entry.id);
     if (owner && owner !== player.id) return { ok: false, error: 'locked', by: owner };
@@ -725,7 +786,7 @@ class World extends EventEmitter {
     const next = { id: entry.id, x: x ?? entry.x, y: y ?? entry.y, rotation: rotation ?? entry.rotation ?? 0 };
     const v = this.validateLayout(item, next);
     if (!v.ok) return v;
-    const saved = await this.store.updateLayout(this.roomId, entry.id, { x: Number(next.x), y: Number(next.y), rotation: Number(next.rotation) || 0 });
+    const saved = await this.store.updateLayout(this.scopeId, entry.id, { x: Number(next.x), y: Number(next.y), rotation: Number(next.rotation) || 0 });
     if (!saved) return { ok: false, error: 'not_found' };
     Object.assign(entry, { x: saved.x, y: saved.y, rotation: saved.rotation });
     this.locks.set(entry.id, { by: player.id, at: this.now() });
@@ -740,7 +801,7 @@ class World extends EventEmitter {
     if (!entry) return { ok: false, error: 'not_found' };
     const g = await this.grabFurniture(player, entry.id);
     if (!g.ok) return g;
-    await this.store.removeLayout(this.roomId, entry.id);
+    await this.store.removeLayout(this.scopeId, entry.id);
     this.layout.delete(entry.id);
     this.locks.delete(entry.id);
     this.rebuildCollision();
@@ -818,9 +879,19 @@ class World extends EventEmitter {
     return { ok: true, counts };
   }
 
-  /** 랭킹: 공부 통계 + 코인(잔액 · 이번 주 획득). 코인 조회가 실패해도 공부 통계는 돌려준다 */
-  async stats() {
-    const rows = await this.study.stats([...this.players.values()]);
+  /** 스터디 멤버 닉네임 (소속 기록 + 지금 접속 중). 스터디 없이 돌면 접속 중인 사람 */
+  async memberNicknames() {
+    const set = new Set(this.membersOf ? await this.membersOf() : []);
+    for (const p of this.players.values()) set.add(p.nickname);
+    return [...set];
+  }
+
+  /**
+   * 랭킹: 공부 통계 + 코인(잔액 · 이번 주 획득). 코인 조회가 실패해도 공부 통계는 돌려준다.
+   * 11단계: scope 'study' 면 이 스터디 멤버만, 'all'(기본) 이면 전체
+   */
+  async stats({ scope = 'all' } = {}) {
+    const rows = await this.study.stats(scope === 'all' && this.allPlayers ? this.allPlayers() : [...this.players.values()]);
     let coinRows = [];
     try {
       coinRows = await this.store.coinStats({ tz: this.tz, now: this.now() });
@@ -833,7 +904,53 @@ class World extends EventEmitter {
       return { ...r, coins: c ? c.coins : 0, weekCoins: c ? c.weekCoins : 0 };
     });
     for (const c of coinRows) if (!rows.some((r) => r.nickname === c.nickname) && c.weekCoins > 0) out.push({ nickname: c.nickname, todaySeconds: 0, weekSeconds: 0, streak: 0, weekDays: 0, live: false, online: false, coins: c.coins, weekCoins: c.weekCoins });
-    return { ok: true, store: this.store.kind, tz: this.tz, date: this.today(), rows: out };
+    if (scope === 'study') {
+      const names = new Set(await this.memberNicknames());
+      return { ok: true, store: this.store.kind, tz: this.tz, date: this.today(), scope, rows: out.filter((r) => names.has(r.nickname)) };
+    }
+    return { ok: true, store: this.store.kind, tz: this.tz, date: this.today(), scope: 'all', rows: out };
+  }
+
+  // ── 그룹 주간 목표 (11단계) ─────────────────────────────────────────
+  /** 이번 주(월요일 기준) 멤버 전원 공부 합 { weekStart, totalSeconds, targetSeconds, reached, members } */
+  async weeklyProgress() {
+    const info = this.studyInfo();
+    const week = weekStart(this.today());
+    const members = await this.memberNicknames();
+    const names = new Set(members);
+    const rows = await this.study.stats([...this.players.values()]);
+    let total = 0;
+    for (const r of rows) if (names.has(r.nickname)) total += r.weekSeconds;
+    const reached = this.weeklyReached === week || (info ? await this.store.weeklyGoalReached(this.scopeId, week) : false);
+    if (reached) this.weeklyReached = week;
+    return { weekStart: week, totalSeconds: total, targetSeconds: info ? info.weeklyGoalMinutes * 60 : 0, reached, members };
+  }
+
+  /**
+   * 목표에 닿았는지 검사 (세션 저장 · 주기적 · 목표 변경 때). 주 1회: 달성 기록 + 멤버 전원 보너스 행을 남기고
+   * 접속 중인 멤버에게 바로 10코인, 나머지는 다음 입장 때 (claimRewards). 달성했으면 'weeklyGoal' 이벤트
+   */
+  checkWeeklyGoal() {
+    if (!this.studyInfo()) return Promise.resolve(null);
+    if (this.weeklyChecking) return this.weeklyChecking;
+    this.weeklyChecking = (async () => {
+      const p = await this.weeklyProgress();
+      if (p.reached || !p.targetSeconds || p.totalSeconds < p.targetSeconds) return null;
+      const recorded = await this.store.recordWeeklyGoal(this.scopeId, p.weekStart, p.members, this.now());
+      this.weeklyReached = p.weekStart;
+      if (!recorded) return null;
+      // 연출 이벤트를 먼저 (클라이언트 토스트 순서: 달성 → 코인), 그 다음 접속 중인 멤버에게 지급
+      const members = new Set(p.members);
+      const online = [...this.players.values()].filter((pl) => members.has(pl.nickname));
+      const e = { weekStart: p.weekStart, totalSeconds: p.totalSeconds, targetSeconds: p.targetSeconds, bonus: WEEKLY_BONUS, awarded: online.map((pl) => pl.id) };
+      this.emit('weeklyGoal', e);
+      for (const pl of online) {
+        const rows = await this.store.claimRewards(pl.nickname, this.now());
+        for (let i = 0; i < rows.length; i++) await this.award(pl.nickname, pl.id, WEEKLY_BONUS, 'weekly_goal'); // 다른 스터디 몫이 남아 있었으면 같이
+      }
+      return e;
+    })().catch((err) => { this.log.warn(`[world] 그룹 목표 검사 실패: ${err.message}`); return null; }).finally(() => { this.weeklyChecking = null; });
+    return this.weeklyChecking;
   }
 
   todoOpts() {
@@ -859,17 +976,24 @@ class World extends EventEmitter {
     return { ok: await this.store.deleteTodo(player.nickname, id) };
   }
 
-  /** 강아지 이름 변경 → users.dog_name (방 전체 공용이라 마지막 변경값을 시작 시 쓴다) */
-  setDogName(player, raw) {
+  /** 강아지 이름 변경 → 스터디의 'dog' 행 (+ 옛 users.dog_name 도 남긴다: 스터디 없이 돌 때의 복원용) */
+  async setDogName(player, raw) {
     const res = this.dog.setName(raw);
-    if (res.ok) this.store.upsertUser(player.nickname, { dogName: res.name }).catch((err) => this.log.warn(`[world] 강아지 이름 저장 실패: ${err.message}`));
+    if (!res.ok) return res;
+    this.store.upsertUser(player.nickname, { dogName: res.name }).catch((err) => this.log.warn(`[world] 강아지 이름 저장 실패: ${err.message}`));
+    try {
+      await this.ensureDogRow();
+      this.dogRow = (await this.store.updateRoomPet(this.scopeId, this.dogRow.id, { name: res.name })) || this.dogRow;
+    } catch (err) {
+      this.log.warn(`[world] 강아지 이름 저장 실패: ${err.message}`);
+    }
     return res;
   }
 
   // ── 펫 (10단계) ──────────────────────────────────────────────────
   /** 서버 시작: 공용 펫과 강아지 설정 행 로드 */
   async loadPets() {
-    const rows = await this.store.roomPets(this.roomId);
+    const rows = await this.store.roomPets(this.scopeId);
     for (const row of rows) {
       if (row.itemId === 'dog') {
         this.dogRow = row;
@@ -1011,7 +1135,7 @@ class World extends EventEmitter {
     if (!this.npcOwnerCheck(player, npc)) return { ok: false, error: 'forbidden' };
     const res = npc.setName(raw);
     if (!res.ok) return res;
-    if (npc.roomPetId !== undefined) await this.store.updateRoomPet(this.roomId, npc.roomPetId, { name: res.name });
+    if (npc.roomPetId !== undefined) await this.store.updateRoomPet(this.scopeId, npc.roomPetId, { name: res.name });
     else {
       const cfg = this.petConfigOf(player);
       cfg.pets[npc.inventoryId] = { ...(cfg.pets[npc.inventoryId] || { cosmetics: {}, skills: [] }), name: res.name };
@@ -1023,7 +1147,7 @@ class World extends EventEmitter {
 
   /** 강아지 설정 행 (없으면 만든다) */
   async ensureDogRow() {
-    if (!this.dogRow) this.dogRow = await this.store.addRoomPet(this.roomId, { itemId: 'dog', name: this.dog.name, releasedBy: null }, this.now());
+    if (!this.dogRow) this.dogRow = await this.store.addRoomPet(this.scopeId, { itemId: 'dog', name: this.dog.name, releasedBy: null, roomId: this.roomId }, this.now());
     return this.dogRow;
   }
 
@@ -1038,10 +1162,10 @@ class World extends EventEmitter {
     npc.setCosmetics(r.cosmetics);
     if (npc.id === 'dog') {
       await this.ensureDogRow();
-      this.dogRow = (await this.store.updateRoomPet(this.roomId, this.dogRow.id, { cosmetics: r.cosmetics })) || this.dogRow;
+      this.dogRow = (await this.store.updateRoomPet(this.scopeId, this.dogRow.id, { cosmetics: r.cosmetics })) || this.dogRow;
     } else {
       const rp = this.roomPets.get(npc.roomPetId);
-      if (rp) rp.row = (await this.store.updateRoomPet(this.roomId, npc.roomPetId, { cosmetics: r.cosmetics })) || rp.row;
+      if (rp) rp.row = (await this.store.updateRoomPet(this.scopeId, npc.roomPetId, { cosmetics: r.cosmetics })) || rp.row;
     }
     return { ok: true, cosmetics: npc.publicCosmetics() };
   }
@@ -1060,7 +1184,7 @@ class World extends EventEmitter {
       if (!n.ok || [...n.name].length > PET_NAME_MAX) return { ok: false, error: 'invalid_name' };
       petName = n.name;
     }
-    const saved = await this.store.addRoomPet(this.roomId, { itemId: item.id, inventoryId: row.id, name: petName, releasedBy: player.nickname }, this.now());
+    const saved = await this.store.addRoomPet(this.scopeId, { itemId: item.id, inventoryId: row.id, name: petName, releasedBy: player.nickname, roomId: this.roomId }, this.now());
     const npc = this.spawnSharedPet(saved);
     return { ok: true, pet: npc.snapshot(), roomPetId: saved.id };
   }
@@ -1070,7 +1194,7 @@ class World extends EventEmitter {
     const rp = this.roomPets.get(Number(id));
     if (!rp) return { ok: false, error: 'not_found' };
     if (rp.row.releasedBy !== player.nickname) return { ok: false, error: 'forbidden' };
-    await this.store.removeRoomPet(this.roomId, rp.row.id);
+    await this.store.removeRoomPet(this.scopeId, rp.row.id);
     this.roomPets.delete(rp.row.id);
     this.removeNpc(rp.npc.id);
     return { ok: true, id: rp.row.id };
@@ -1080,13 +1204,13 @@ class World extends EventEmitter {
   async skillTarget(player, item, target) {
     if (target === 'dog') {
       if (this.dog.skills.has(item.skill)) return { ok: false, error: 'already_has' };
-      return { ok: true, apply: async () => { await this.ensureDogRow(); const skills = [...new Set([...(this.dogRow.skills || []), item.skill])]; this.dogRow = (await this.store.updateRoomPet(this.roomId, this.dogRow.id, { skills })) || this.dogRow; this.dog.addSkill(item.skill); } };
+      return { ok: true, apply: async () => { await this.ensureDogRow(); const skills = [...new Set([...(this.dogRow.skills || []), item.skill])]; this.dogRow = (await this.store.updateRoomPet(this.scopeId, this.dogRow.id, { skills })) || this.dogRow; this.dog.addSkill(item.skill); } };
     }
     if (typeof target === 'string' && target.startsWith('s:')) {
       const rp = this.roomPets.get(Number(target.slice(2)));
       if (!rp) return { ok: false, error: 'no_target' };
       if (rp.npc.skills.has(item.skill)) return { ok: false, error: 'already_has' };
-      return { ok: true, apply: async () => { const skills = [...new Set([...(rp.row.skills || []), item.skill])]; rp.row = (await this.store.updateRoomPet(this.roomId, rp.row.id, { skills })) || rp.row; rp.npc.addSkill(item.skill); } };
+      return { ok: true, apply: async () => { const skills = [...new Set([...(rp.row.skills || []), item.skill])]; rp.row = (await this.store.updateRoomPet(this.scopeId, rp.row.id, { skills })) || rp.row; rp.npc.addSkill(item.skill); } };
     }
     const row = await this.store.getInventoryItem(player.nickname, target);
     const pi = row && this.shop.get(row.itemId);
@@ -1124,16 +1248,20 @@ class World extends EventEmitter {
     return canStand(this.room, x, y);
   }
 
-  /** 종료: 진행 중인 공부 세션을 모두 저장한 뒤 정리 (SIGTERM 에서 await) */
+  /** 종료: 진행 중인 공부 세션을 모두 저장한 뒤 정리 (SIGTERM 에서 await). 공유 트래커면 내 스터디 사람들의 세션만 끝낸다 */
   async dispose() {
     for (const t of this.graceTimers.values()) clearTimeout(t);
     this.graceTimers.clear();
     for (const p of this.pomodoros.values()) p.dispose();
     this.pomodoros.clear();
     for (const n of this.npcs) n.dispose();
-    await this.study.flushAll('shutdown');
+    if (this.ownsStudy) await this.study.flushAll('shutdown');
+    else {
+      await Promise.all([...this.players.values()].map((p) => this.study.end(p.nickname, 'shutdown')));
+      for (const [ev, fn] of Object.entries(this.studyListeners)) this.study.off(ev, fn);
+    }
     await Promise.all([...this.pendingAwards]); // flushAll 이 저장한 세션의 코인까지
   }
 }
 
-module.exports = { World, GRACE_MS, SIT_RANGE_PX, EMOJIS, STATUSES, MANUAL_STATUSES, LISTENING_MAX, GOAL_TEXT_MAX, GOAL_MIN, GOAL_MAX, GOAL_STEP, TODO_MAX, LOCK_MS, DESK_SLOTS, RESTING_SEATS, MAX_SHARED_PETS, PET_NAME_MAX, seatCenter };
+module.exports = { World, GRACE_MS, SIT_RANGE_PX, EMOJIS, STATUSES, MANUAL_STATUSES, LISTENING_MAX, GOAL_TEXT_MAX, GOAL_MIN, GOAL_MAX, GOAL_STEP, TODO_MAX, LOCK_MS, DESK_SLOTS, RESTING_SEATS, MAX_SHARED_PETS, PET_NAME_MAX, WEEKLY_BONUS, seatCenter };

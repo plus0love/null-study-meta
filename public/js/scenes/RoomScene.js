@@ -24,6 +24,7 @@
  *        마우스를 따라 32px 스냅 미리보기(초록/빨강), 클릭 배치 · R 회전 · Esc 취소 · 놓인 가구 클릭-드래그 이동 · Del 회수. 편집 중이면 머리 위 🛠.
  *        책상 소품(player.deskItems): 앉으면 좌석 앞 책상 슬롯(Layout.deskSlots)에 표시. 침대(seat.kind 'bed')에 앉으면 눕기(회전 프레임 + 이불 오버레이 + 💤),
  *        안마의자('massage')는 앉은 동안 흔들린다.
+ * 11단계: 그룹 주간 목표 달성 → celebrate(ms): 창밖(room.windows)에 불꽃놀이 (하늘 위 · 창틀 뒤, 0.35초마다 무작위 창에 터짐) + flashLights.
  */
 (function () {
   'use strict';
@@ -38,7 +39,8 @@
   const POMO_EMOJI = { focus: '🍅', break: '☕' };
   const POMO_TICK = 1000; // ms — 머리 위 타이머 글자 갱신 주기
 
-  const DEPTH = { sky: 0.5, stars: 0.6, windowDay: 1.5, zone: 2, screen: 2.5, shadow: 9, avatar: 10, label: 25, bubble: 26, darkness: 30, glow: 31 };
+  const DEPTH = { sky: 0.5, stars: 0.6, fireworks: 0.7, windowDay: 1.5, zone: 2, screen: 2.5, shadow: 9, avatar: 10, label: 25, bubble: 26, darkness: 30, glow: 31 };
+  const FIREWORK_COLORS = [0xffb85c, 0xff8a7a, 0x9fd39a, 0xcfe8f5, 0xffd08a, 0xf2a0d6];
   const HINT_KIND = { bed: 'lie', massage: 'massage' }; // 가구 좌석 종류 → E 힌트
   const NOTE_MS = 1400; // 스피커 ♪ 간격
   const SIGN_MAX_W = 96; // 팻말 최대 폭(px) — 넘치면 말줄임
@@ -1290,6 +1292,7 @@
 
     // ── 매 프레임 ───────────────────────────────────────────────────
     update(_time, delta) {
+      if (this.fireworks && (this.fireworks.length || this.celebrating)) this.tickFireworks();
       const dt = delta / 1000;
       if (this.me) {
         this.updateLocal(dt, delta);
@@ -1565,6 +1568,70 @@
       });
     }
 
+    /** 11단계: 창밖 불꽃놀이 (ms 동안). 이미 진행 중이면 시간만 늘린다. 실제 시각(Date.now) 기준으로 update() 가 굴린다 */
+    celebrate(ms = 10000) {
+      const until = Date.now() + ms;
+      this.celebrateUntil = Math.max(this.celebrateUntil || 0, until);
+      if (!this.fireworks) this.fireworks = [];
+      if (!(this.room.windows || []).length) return;
+      if (!this.lastFirework) this.lastFirework = 0;
+      this.tickFireworks(true);
+    }
+
+    get celebrating() {
+      return Boolean(this.celebrateUntil && Date.now() < this.celebrateUntil);
+    }
+
+    /** 매 프레임: 350ms 마다 무작위 창 하늘 띠에 새 불꽃, 살아 있는 불꽃은 1.1초 동안 퍼졌다 사라진다 */
+    tickFireworks(force = false) {
+      const now = Date.now();
+      const list = this.fireworks;
+      if (!list) return;
+      if (this.celebrateUntil && now < this.celebrateUntil && (force || now - this.lastFirework >= 350)) {
+        const windows = this.room.windows || [];
+        const w = windows[Math.floor(Math.random() * windows.length)];
+        if (w) this.spawnFirework(w.x + 24 + Math.random() * Math.max(1, w.w - 48), w.y + 14 + Math.random() * Math.max(1, w.h * 0.3));
+        this.lastFirework = now;
+      }
+      for (let i = list.length - 1; i >= 0; i--) {
+        const f = list[i];
+        const t = Math.min(1, (now - f.startedAt) / 1100);
+        this.drawFirework(f, t);
+        if (t >= 1) { f.g.destroy(); list.splice(i, 1); }
+      }
+    }
+
+    /** 두 겹(16 + 8개)의 점이 퍼졌다 사라지는 불꽃 (창 안에 머물도록 반지름 14~22px). 중심은 잠깐 하얗게 */
+    spawnFirework(cx, cy) {
+      if (!this.fireworks) this.fireworks = [];
+      const pick = () => FIREWORK_COLORS[Math.floor(Math.random() * FIREWORK_COLORS.length)];
+      const f = { g: this.add.graphics().setDepth(DEPTH.fireworks), cx, cy, color: pick(), color2: pick(), radius: 14 + Math.random() * 8, spin: Math.random() * Math.PI, startedAt: Date.now() };
+      this.fireworks.push(f);
+      this.drawFirework(f, 0);
+      return f;
+    }
+
+    drawFirework(f, t) {
+      const g = f.g;
+      g.clear();
+      const k = 1 - (1 - t) * (1 - t); // 반지름: 빨리 퍼지고 천천히 멈춤
+      const a = t < 0.55 ? 1 : 1 - (t - 0.55) / 0.45; // 밝게 머물다 마지막에 사라짐
+      const drop = t * t * 8; // 끝에서 살짝 떨어진다
+      if (t < 0.25) { g.fillStyle(0xffffff, 1); g.fillRect(Math.round(f.cx) - 2, Math.round(f.cy) - 2, 4, 4); }
+      g.fillStyle(f.color, a);
+      for (let i = 0; i < 16; i++) {
+        const ang = f.spin + (i / 16) * Math.PI * 2;
+        const r = f.radius * k;
+        g.fillRect(Math.round(f.cx + Math.cos(ang) * r) - 1, Math.round(f.cy + Math.sin(ang) * r + drop) - 1, 3, 3);
+      }
+      g.fillStyle(f.color2, a);
+      for (let i = 0; i < 8; i++) {
+        const ang = f.spin + Math.PI / 8 + (i / 8) * Math.PI * 2;
+        const r = f.radius * 0.55 * k;
+        g.fillRect(Math.round(f.cx + Math.cos(ang) * r) - 1, Math.round(f.cy + Math.sin(ang) * r + drop * 0.5) - 1, 2, 2);
+      }
+    }
+
     syncGlows() {
       const k = (this.glowScale || 1) * (1 + this.fx.flash * 1.4);
       for (const g of this.glows || []) g.setAlpha(g.baseAlpha * k);
@@ -1602,6 +1669,9 @@
       const key = `av:${ownerId}`;
       const meta = this.playerMeta;
       const sheet = this.avatarKit.composeSheet(avatar);
+      // 같은 사람이 곧바로 다시 들어오면(재입장·이어받기) 예약된 텍스처 삭제를 취소하고 재사용한다
+      const pending = this.pendingReleases && this.pendingReleases.get(key);
+      if (pending) { pending.remove(false); this.pendingReleases.delete(key); }
       let tex = this.textures.exists(key) ? this.textures.get(key) : null;
       if (!tex) {
         tex = this.textures.createCanvas(key, sheet.width, sheet.height);
@@ -1633,14 +1703,22 @@
       return this.playerMeta.rows[dir] * this.playerMeta.framesPerRow;
     }
 
-    /** 플레이어가 나가면 텍스처·애니메이션 정리 (렌더러가 이번 프레임에 쓰고 있을 수 있어 잠시 뒤에) */
+    /**
+     * 플레이어가 나가면 텍스처·애니메이션 정리 (렌더러가 이번 프레임에 쓰고 있을 수 있어 잠시 뒤에).
+     * 그 사이 같은 id 의 아바타가 다시 생겼으면(재입장·이어받기, 백그라운드 탭에서 씬 시계가 멈췄다 풀릴 때) 지우지 않는다.
+     */
     releaseAvatarTexture(ownerId) {
       const key = this.texKey(ownerId);
-      this.time.delayedCall(250, () => {
-        if (!this.textures.exists(key)) return;
+      if (!this.pendingReleases) this.pendingReleases = new Map();
+      const prev = this.pendingReleases.get(key);
+      if (prev) prev.remove(false);
+      const ev = this.time.delayedCall(250, () => {
+        this.pendingReleases.delete(key);
+        if (!this.textures.exists(key) || this.avatarOf(ownerId)) return;
         for (const dir of Object.keys(this.playerMeta.rows)) this.anims.remove(`walk-${dir}-${key}`);
         this.textures.remove(key);
       });
+      this.pendingReleases.set(key, ev);
     }
 
     // ── 충돌 ────────────────────────────────────────────────────────

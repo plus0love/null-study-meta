@@ -268,7 +268,7 @@ test('소켓 E2E: 입장 ack 프로필/저장소, 목표 브로드캐스트, 세
   await joinAs(b, { nickname: '영희' });
   assert.equal(ja.store, 'memory');
   assert.equal(ja.tz, 'Asia/Seoul');
-  assert.deepEqual(ja.profile, { goal: null, streak: { streak: 0, weekDays: 0, attendedToday: false }, coins: 0 });
+  assert.deepEqual(ja.profile, { goal: null, streak: { streak: 0, weekDays: 0, attendedToday: false }, coins: 0, rewards: [] });
 
   // 목표 설정 → 모두에게 playerGoal, 다른 사람 입장 목록에도 포함
   const goalSeen = once(b, 'playerGoal');

@@ -30,7 +30,10 @@ async function shot(page, name, clip) {
 
 (async () => {
   const srv = await startServer({ port: 0, log: quiet, world: { npc: { autoStart: false }, study: { autoTick: false } } });
-  const base = `http://127.0.0.1:${srv.port}`;
+  // 11단계: 스터디 하나를 만들고 ?study=CODE 로 로비를 건너뛴다. srv.world = 그 스터디의 월드
+  const study = (await srv.hub.createStudy({ name: '검수용 스터디', ownerNickname: '민수' })).study;
+  srv.world = await srv.hub.ensureWorld(study.id);
+  const base = `http://127.0.0.1:${srv.port}/?study=${study.code}`;
   const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   const open = async (nickname) => {
     const ctx = await browser.createBrowserContext();

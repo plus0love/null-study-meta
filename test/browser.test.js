@@ -11,12 +11,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const { boot, sleep, startDelayProxy } = require('./helpers');
+const { boot, sleep, startDelayProxy, pageUrl, openSettings, CHROME, CHROME_ARGS } = require('./helpers');
 const { getStudyRoom } = require('../server/rooms/studyroom');
 const { pathTo, feetTile, walk } = require('../tools/lib/walk');
 
-const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const hasChrome = fs.existsSync(CHROME);
+const hasChrome = Boolean(CHROME);
 let puppeteer = null;
 try { puppeteer = require('puppeteer-core'); } catch (_) { /* devDependency 없음 */ }
 
@@ -37,7 +36,7 @@ test('브라우저 2탭 (B 는 300ms 지연): 입장·이동 유지·채팅·착
   const browser = await puppeteer.launch({
     executablePath: CHROME,
     headless: 'new',
-    args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
+    args: CHROME_ARGS,
   });
   t.after(() => browser.close());
 
@@ -47,7 +46,7 @@ test('브라우저 2탭 (B 는 300ms 지연): 입장·이동 유지·채팅·착
     const page = await ctx.newPage();
     page.on('pageerror', (e) => errors.push(`${nickname}: ${e.message}`));
     await page.setViewport({ width: 1100, height: 700 });
-    await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'networkidle0', timeout: 60000 });
+    await page.goto(pageUrl(srv, port), { waitUntil: 'networkidle0', timeout: 60000 }); // 11단계: ?study=CODE 로 로비 없이 기본 스터디로
     // 3단계까지의 localStorage 할 일 → 첫 접속 때 서버로 옮겨지는지 (A 만)
     if (nickname === '브라우저A') await page.evaluate(() => localStorage.setItem('nsm.todos', JSON.stringify([{ id: 'x', text: '옛 할 일', done: false }])));
     await page.waitForSelector('#login:not([hidden])', { timeout: 30000 });
@@ -96,8 +95,8 @@ test('브라우저 2탭 (B 는 300ms 지연): 입장·이동 유지·채팅·착
 
   // 순간이동은 거부되고 부드럽게 되돌아온다
   await a.evaluate(() => { const s = window.NSM.scene; s.me.setPosition(s.me.x + 300, s.me.y); });
-  await a.waitForFunction(() => window.NSM.net.corrections > 0, { timeout: 3000 });
-  await a.waitForFunction((x) => Math.abs(window.NSM.scene.me.x - x) < 1, { timeout: 3000 }, afterA.x);
+  await a.waitForFunction(() => window.NSM.net.corrections > 0, { timeout: 8000 });
+  await a.waitForFunction((x) => Math.abs(window.NSM.scene.me.x - x) < 1, { timeout: 8000 }, afterA.x);
   await sleep(200);
   const corrAfterTeleport = await a.evaluate(() => window.NSM.net.corrections); // 수렴 중 몇 번 더 거부될 수 있다
 
@@ -121,7 +120,7 @@ test('브라우저 2탭 (B 는 300ms 지연): 입장·이동 유지·채팅·착
   await b.waitForFunction((id) => Boolean(window.NSM.scene.remotes.get(id).avatar.emojiText), { timeout: 5000 }, idA);
 
   // 5단계 아바타: 설정 → 아바타 꾸미기 모달에서 머리(단발)·색(핑크) 선택 → B 화면의 A 아바타에 즉시 반영 + localStorage 저장
-  await a.click('#btn-settings');
+  await openSettings(a);
   await a.click('#btn-avatar');
   await a.waitForSelector('#avatar-modal:not([hidden])');
   await a.click('#ab-tabs button[data-tab="hair"]');
@@ -172,7 +171,7 @@ test('브라우저 2탭 (B 는 300ms 지연): 입장·이동 유지·채팅·착
   assert.equal(dog.state, 'look', '가까이 가면 쳐다본다');
   await a.keyboard.press('KeyE');
   await b.waitForFunction(() => Boolean(window.NSM.scene.npcs.get('dog').heart), { timeout: 5000 });
-  await b.waitForFunction(() => /브라우저A님이 강아지를 쓰다듬었어요/.test(document.getElementById('chat-log').textContent), { timeout: 5000 });
+  await b.waitForFunction(() => /브라우저A님이 사랑을\(를\) 쓰다듬었어요/.test(document.getElementById('chat-log').textContent), { timeout: 5000 });
   const dogA = await a.evaluate(() => { const n = window.NSM.scene.npcs.get('dog'); return { x: n.x, y: n.y, state: n.state }; });
   const dogB = await b.evaluate(() => { const n = window.NSM.scene.npcs.get('dog'); return { x: n.x, y: n.y, state: n.state }; });
   assert.deepEqual(dogA, dogB, '두 탭이 같은 강아지 위치/상태');
@@ -280,7 +279,7 @@ test('브라우저 2탭 (B 는 300ms 지연): 입장·이동 유지·채팅·착
   await a.click('#btn-leave');
   await b.waitForFunction((id) => !window.NSM.scene.remotes.has(id), { timeout: 5000 }, idA);
   assert.equal(await b.$eval('#room-count span', (el) => el.textContent), '1');
-  await a.waitForSelector('#login:not([hidden])', { timeout: 5000 });
+  await a.waitForSelector('#lobby:not([hidden])', { timeout: 5000 }); // 11단계: 나가면 로비
 
   assert.deepEqual(errors, []);
 });

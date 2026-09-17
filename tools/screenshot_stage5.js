@@ -11,6 +11,7 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const puppeteer = require('puppeteer-core');
+const { enterFromLobby } = require('./lib/enter');
 
 const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const base = process.argv[2] || 'http://localhost:3000';
@@ -53,14 +54,14 @@ async function shot(page, name, clip) {
   await a.click('#ab-tabs button[data-tab="acc"]');
   await a.click('#ab-grid .ab-item:nth-child(2)');
   await a.click('#login-submit');
-  await a.waitForFunction(() => window.NSM && window.NSM.scene.me, { timeout: 20000 });
+  await enterFromLobby(a); // 11단계: 로비 → 스터디 만들기
 
   // B: 랜덤 아바타로 입장
   const b = await open('영희');
   await b.click('#ab-random');
   await sleep(100);
   await b.click('#login-submit');
-  await b.waitForFunction(() => window.NSM && window.NSM.scene.me, { timeout: 20000 });
+  await enterFromLobby(b); // 같은 서버라 A 가 만든 스터디가 목록에 있다
   await a.waitForFunction(() => window.NSM.scene.remotes.size === 1, { timeout: 10000 });
   // B 는 왼쪽으로, A 는 위로 조금 걸어서 둘 다 보이게 (캔버스를 클릭해 포커스를 준다)
   await b.click('#game');

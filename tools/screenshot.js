@@ -11,6 +11,7 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const puppeteer = require('puppeteer-core');
+const { enterRoom } = require('./lib/enter');
 const { pathTo, feetTile, walk } = require('./lib/walk');
 
 const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
@@ -40,11 +41,8 @@ async function hold(page, key, ms) {
     page.on('pageerror', (e) => console.log(`[${nickname} pageerror]`, e.message));
     await page.setViewport({ width: 1600, height: 900, deviceScaleFactor: 1 });
     await page.goto(base, { waitUntil: 'networkidle0' });
-    await page.waitForSelector('#login:not([hidden])', { timeout: 20000 });
-    await page.type('#login-nick', nickname);
-    await page.click(`#login-avatars .swatch[data-i="${avatar}"]`);
-    await page.click('#login-submit');
-    await page.waitForFunction(() => window.NSM && window.NSM.scene.me, { timeout: 20000 });
+    await enterRoom(page, { nickname }); // 11단계: 로비가 뜨면 첫 스터디로 (없으면 만든다). avatar 인자는 5단계 빌더 이후 쓰지 않는다
+    void avatar;
     await sleep(600);
     return page;
   };

@@ -9,7 +9,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const { createGate, clientKey, PASSWORD_MAX } = require('../server/gate');
-const { boot, connect, joinAs, ask, sleep } = require('./helpers');
+const { boot, connect, joinAs, ask, sleep, pageUrl, CHROME, CHROME_ARGS } = require('./helpers');
 
 const SECRET = 'study-room-2026!';
 
@@ -141,9 +141,9 @@ test('서버 E2E: 비밀번호 방 — 거부 코드·정상 입장·토큰 재�
 
   const a = connect(srv.port);
   t.after(() => a.close());
-  assert.deepEqual(await joinAs(a, { nickname: '민수' }), { ok: false, error: 'password_required' });
-  assert.deepEqual(await joinAs(a, { nickname: '민수', password: '' }), { ok: false, error: 'password_required' });
-  assert.deepEqual(await joinAs(a, { nickname: '민수', password: 'wrong' }), { ok: false, error: 'wrong_password', remaining: 4 });
+  assert.deepEqual(await joinAs(a, { nickname: '민수' }), { ok: false, error: 'password_required', scope: 'site' });
+  assert.deepEqual(await joinAs(a, { nickname: '민수', password: '' }), { ok: false, error: 'password_required', scope: 'site' });
+  assert.deepEqual(await joinAs(a, { nickname: '민수', password: 'wrong' }), { ok: false, error: 'wrong_password', remaining: 4, scope: 'site' });
   assert.equal(srv.world.connectedCount, 0, '거부된 접속은 월드에 들어가지 않음');
 
   // 닉네임이 잘못돼도 비밀번호 검사가 먼저 (닉네임 오류로 비밀번호를 시험할 수 없다)
@@ -161,7 +161,7 @@ test('서버 E2E: 비밀번호 방 — 거부 코드·정상 입장·토큰 재�
   let r;
   for (let i = 0; i < 3; i++) r = await joinAs(b, { nickname: '영희', password: `bad${i}` });
   // a 가 성공했으므로 카운터가 초기화됐고, b 는 3회 실패 상태
-  assert.deepEqual(r, { ok: false, error: 'wrong_password', remaining: 2 });
+  assert.deepEqual(r, { ok: false, error: 'wrong_password', remaining: 2, scope: 'site' });
   await joinAs(b, { nickname: '영희', password: 'bad3' });
   r = await joinAs(b, { nickname: '영희', password: 'bad4' });
   assert.equal(r.error, 'locked');
@@ -202,8 +202,7 @@ test('서버 E2E: 비밀번호 방 — 거부 코드·정상 입장·토큰 재�
 });
 
 // ── 브라우저 ────────────────────────────────────────────────────────
-const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const hasChrome = fs.existsSync(CHROME);
+const hasChrome = Boolean(CHROME);
 let puppeteer = null;
 try { puppeteer = require('puppeteer-core'); } catch (_) { /* devDependency 없음 */ }
 
@@ -213,7 +212,7 @@ test('브라우저: 비밀번호 칸 → 틀림 에러 → 맞음 입장 → loc
   const browser = await puppeteer.launch({
     executablePath: CHROME,
     headless: 'new',
-    args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
+    args: CHROME_ARGS,
   });
   t.after(() => browser.close());
   const errors = [];
@@ -221,7 +220,7 @@ test('브라우저: 비밀번호 칸 → 틀림 에러 → 맞음 입장 → loc
   const page = await ctx.newPage();
   page.on('pageerror', (e) => errors.push(e.message));
   await page.setViewport({ width: 1100, height: 700 });
-  await page.goto(`http://127.0.0.1:${srv.port}/`, { waitUntil: 'networkidle0', timeout: 60000 });
+  await page.goto(pageUrl(srv), { waitUntil: 'networkidle0', timeout: 60000 });
   await page.waitForSelector('#login:not([hidden])', { timeout: 30000 });
   assert.equal(await page.$eval('#login-pass-field', (el) => el.hidden), false, '비밀번호 칸이 보인다');
   assert.equal(await page.$eval('#login-pass', (el) => el.type), 'password');
@@ -246,7 +245,7 @@ test('브라우저: 비밀번호 칸 → 틀림 에러 → 맞음 입장 → loc
   const page2 = await ctx.newPage();
   page2.on('pageerror', (e) => errors.push(e.message));
   await page2.setViewport({ width: 1100, height: 700 });
-  await page2.goto(`http://127.0.0.1:${srv.port}/`, { waitUntil: 'networkidle0', timeout: 60000 });
+  await page2.goto(`http://127.0.0.1:${srv.port}/`, { waitUntil: 'networkidle0', timeout: 60000 }); // 링크 없이 — 마지막 스터디 기억으로 자동 입장
   await page2.waitForFunction(() => window.NSM && window.NSM.scene.me, { timeout: 30000 });
   assert.equal(await page2.$eval('#login', (el) => el.hidden), true, '모달 없이 자동 입장');
   assert.equal(await page2.evaluate(() => window.NSM.net.session.resumed), true);

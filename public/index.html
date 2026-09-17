@@ -48,10 +48,46 @@
     <div id="vignette"></div>
 
     <div id="hud-tl">
-      <div id="room-name" class="badge">우리의 스터디룸</div>
+      <!-- 11단계: 스터디 이름 배지 → 클릭하면 스터디 정보 팝오버 (코드·멤버·주간 목표·방장 설정) -->
+      <button id="room-name" class="badge badge-study" type="button" title="스터디 정보"><span class="study-lock" id="study-lock" hidden>🔒</span><span id="study-name">스터디</span></button>
       <div id="room-count" class="badge badge-count"><svg class="icon"><use href="#i-users"/></svg><span>0</span></div>
       <div id="pomo-badge" class="badge badge-pomo" hidden title="뽀모도로 남은 시간"><svg class="icon"><use href="#i-timer"/></svg><span>25:00</span></div>
       <button id="coin-badge" class="badge badge-coin" type="button" title="내 코인 (지갑 열기)" hidden><em>🪙</em><span>0</span></button>
+
+      <div class="popover left" id="pop-study" hidden>
+        <h3 id="study-info-title">스터디</h3>
+        <div class="field">
+          <label>초대 코드 <span class="muted">링크로 바로 입장</span></label>
+          <div class="row"><span class="mono study-code" id="study-info-code">------</span><button class="btn small ghost" id="study-copy-code" type="button">코드 복사</button><button class="btn small ghost" id="study-copy-link" type="button">링크 복사</button></div>
+        </div>
+        <div class="field">
+          <label>이번 주 그룹 목표 <span class="muted" id="study-week-text"></span></label>
+          <div class="goal-track"><div id="study-week-bar" class="week-bar"></div></div>
+          <p class="hint" id="study-streak"></p>
+        </div>
+        <div class="field">
+          <label>멤버 <span class="muted" id="study-members-count"></span></label>
+          <ul class="list" id="study-members"></ul>
+        </div>
+        <details class="field owner-only" id="study-owner" hidden>
+          <summary>방장 설정</summary>
+          <form id="study-edit-form" autocomplete="off">
+            <label for="study-edit-name">이름</label>
+            <input id="study-edit-name" type="text" maxlength="20" />
+            <label for="study-edit-pass">비밀번호 <span class="muted">비우면 그대로 · 바꾸면 전원 다시 입력</span></label>
+            <div class="row"><input id="study-edit-pass" type="password" maxlength="20" placeholder="4~20자 (변경할 때만)" autocomplete="new-password" /><label class="opt"><input type="checkbox" id="study-edit-unlock" /><span>잠금 해제</span></label></div>
+            <div class="row study-edit-row">
+              <label>정원 <select id="study-edit-max"></select></label>
+              <label>주간 목표 <input id="study-edit-goal" type="number" min="5" max="100" step="1" /> 시간</label>
+            </div>
+            <label class="opt"><input type="checkbox" id="study-edit-owner-only" /><span class="emoji-icon">🛠</span><span>가구 편집은 방장만</span></label>
+            <div class="row modal-actions"><button class="btn small" type="submit">저장</button></div>
+            <p class="error" id="study-edit-error" hidden></p>
+          </form>
+          <button class="btn small ghost danger" id="study-delete" type="button"><svg class="icon"><use href="#i-trash"/></svg><span>스터디 삭제</span></button>
+          <p class="hint">삭제는 다른 사람이 없을 때만 · 가구·펫 배치가 함께 지워져요</p>
+        </details>
+      </div>
     </div>
 
     <div id="hud-tr">
@@ -213,6 +249,7 @@
     <section class="card" id="card-rank">
       <header>
         <svg class="icon"><use href="#i-trophy"/></svg><h2>랭킹</h2>
+        <div id="rank-scope" class="tabs"><button type="button" data-scope="study" class="active">이 스터디</button><button type="button" data-scope="all">전체</button></div>
         <div id="rank-tabs" class="tabs"><button type="button" data-tab="today" class="active">오늘</button><button type="button" data-tab="week">이번 주</button><button type="button" data-tab="coins">이번 주 코인</button></div>
       </header>
       <ul class="list" id="rank-list"></ul>
@@ -253,11 +290,12 @@
 
   <div id="login" class="modal" hidden>
     <form class="modal-box wide" id="login-form" autocomplete="off">
-      <h1>📚 우리의 스터디룸</h1>
-      <p class="muted">닉네임을 정하고 입장하세요. 문자·숫자·공백·_ - 12자 이내.</p>
+      <h1>📚 Null Study Meta</h1>
+      <p class="muted">닉네임을 정하고 스터디를 고르세요. 문자·숫자·공백·_ - 12자 이내.</p>
+      <p class="login-target" id="login-target" hidden>🔗 <b id="login-target-name"></b> 스터디로 바로 들어가요</p>
       <input id="login-nick" type="text" maxlength="12" placeholder="닉네임" required />
       <div class="field" id="login-pass-field" hidden>
-        <label for="login-pass">방 비밀번호</label>
+        <label for="login-pass">사이트 비밀번호</label>
         <input id="login-pass" type="password" maxlength="128" placeholder="비밀번호" autocomplete="current-password" />
       </div>
       <div class="field">
@@ -265,7 +303,63 @@
         <div id="login-avatar-slot"></div>
       </div>
       <p class="error" id="login-error" hidden></p>
-      <button class="btn primary" type="submit" id="login-submit">입장</button>
+      <button class="btn primary" type="submit" id="login-submit">다음</button>
+    </form>
+  </div>
+
+  <!-- 11단계: 로비 — 내 스터디 카드 · 다른 스터디 찾기 · 만들기 · 코드로 참가 -->
+  <div id="lobby" class="modal" hidden>
+    <div class="modal-box wide lobby">
+      <header class="row"><h1>📚 스터디 로비</h1><span class="muted" id="lobby-nick"></span><button class="btn small ghost" id="lobby-rename" type="button">닉네임 변경</button></header>
+      <p class="error" id="lobby-error" hidden></p>
+      <div class="row lobby-actions">
+        <button class="btn primary" id="lobby-create" type="button"><svg class="icon"><use href="#i-plus"/></svg><span>스터디 만들기</span></button>
+        <form id="lobby-code-form" class="row" autocomplete="off">
+          <input id="lobby-code" type="text" maxlength="6" placeholder="초대 코드 6자" class="mono" />
+          <button class="btn" type="submit">코드로 참가</button>
+        </form>
+      </div>
+      <section class="lobby-section">
+        <h3>내 스터디 <span class="muted" id="lobby-mine-count"></span></h3>
+        <div id="lobby-mine" class="study-cards"></div>
+      </section>
+      <section class="lobby-section">
+        <h3>다른 스터디 찾기 <span class="muted">이름 · 이번 주 공부 시간</span></h3>
+        <ul id="lobby-others" class="list study-others"></ul>
+      </section>
+    </div>
+  </div>
+
+  <!-- 11단계: 스터디 만들기 -->
+  <div id="study-create" class="modal" hidden>
+    <form class="modal-box" id="study-create-form" autocomplete="off">
+      <h1>스터디 만들기</h1>
+      <p class="muted">만든 사람이 방장이 돼요. 비밀번호를 정하면 🔒 잠긴 스터디.</p>
+      <label class="field"><span>이름 (20자)</span><input id="sc-name" type="text" maxlength="20" placeholder="예: 새벽 코딩방" required /></label>
+      <label class="field"><span>비밀번호 <span class="muted">선택 · 4~20자</span></span><input id="sc-pass" type="password" maxlength="20" placeholder="비우면 공개" autocomplete="new-password" /></label>
+      <div class="row study-edit-row">
+        <label class="field"><span>정원</span><select id="sc-max"></select></label>
+        <label class="field"><span>주간 목표 (시간)</span><input id="sc-goal" type="number" min="5" max="100" step="1" value="20" /></label>
+      </div>
+      <p class="error" id="sc-error" hidden></p>
+      <div class="row modal-actions">
+        <button class="btn ghost" type="button" id="sc-cancel">취소</button>
+        <button class="btn primary" type="submit" id="sc-submit">만들기</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- 11단계: 잠긴 스터디 비밀번호 -->
+  <div id="study-pass" class="modal" hidden>
+    <form class="modal-box" id="study-pass-form" autocomplete="off">
+      <h1>🔒 <span id="sp-name">스터디</span></h1>
+      <p class="muted">잠긴 스터디예요. 비밀번호를 입력하세요. 한 번 맞추면 이 기기에서는 다음부터 묻지 않아요.</p>
+      <input id="sp-pass" type="password" maxlength="20" placeholder="비밀번호" autocomplete="current-password" required />
+      <p class="error" id="sp-error" hidden></p>
+      <div class="row modal-actions">
+        <button class="btn ghost" type="button" id="sp-cancel">취소</button>
+        <button class="btn primary" type="submit" id="sp-submit">입장</button>
+      </div>
     </form>
   </div>
 

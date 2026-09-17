@@ -1,0 +1,22 @@
+# CI: 단위(병렬) → 소켓·브라우저·지연(직렬). 브라우저 테스트는 러너에 있는 Chrome(/usr/bin/google-chrome)을 쓴다.
+# 테스트는 항상 STORE=memory 로 돌아 실제 Supabase 에 접근하지 않는다.
+name: test
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+        env:
+          STORE: memory
+          CHROME_PATH: /usr/bin/google-chrome

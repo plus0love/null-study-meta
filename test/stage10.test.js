@@ -19,7 +19,7 @@ const { World, MAX_SHARED_PETS } = require('../server/game/world');
 const { createMemoryStore } = require('../server/store/memory');
 const { getStudyRoom } = require('../server/rooms/studyroom');
 const { isBlocked } = require('../server/rooms/build');
-const { boot, connect, joinAs, ask, once, sleep, collect } = require('./helpers');
+const { boot, connect, joinAs, ask, once, sleep, collect, pageUrl, openSettings, CHROME, CHROME_ARGS } = require('./helpers');
 
 const room = getStudyRoom();
 const shop = createShop();
@@ -424,22 +424,21 @@ test('소켓 E2E: pet:config → 모두 npc:update(ownerId·cosmetics) · 주인
 });
 
 // ── 브라우저 ────────────────────────────────────────────────────────
-const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const hasChrome = fs.existsSync(CHROME);
+const hasChrome = Boolean(CHROME);
 let puppeteer = null;
 try { puppeteer = require('puppeteer-core'); } catch (_) { /* devDependency 없음 */ }
 
 test('브라우저: 펫 스프라이트·꾸미기 오버레이 렌더 · 지갑 펫/꾸미기 탭 카드 · 설정 내 펫 선택 · npc:remove', { skip: !hasChrome || !puppeteer ? 'Chrome/puppeteer-core 없음' : false, timeout: 180000 }, async (t) => {
   const srv = await boot({ world: { study: { autoTick: false } } }); // NPC 틱이 돌아야 꾸미기 변경이 npc:update 로 나간다
   t.after(() => srv.close());
-  const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+  const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: CHROME_ARGS });
   t.after(() => browser.close());
   const errors = [];
   const ctx = await browser.createBrowserContext();
   const page = await ctx.newPage();
   page.on('pageerror', (e) => errors.push(e.message));
   await page.setViewport({ width: 1300, height: 850 });
-  await page.goto(`http://127.0.0.1:${srv.port}/`, { waitUntil: 'networkidle0', timeout: 60000 });
+  await page.goto(pageUrl(srv), { waitUntil: 'networkidle0', timeout: 60000 });
   await page.waitForSelector('#login:not([hidden])', { timeout: 30000 });
   await page.type('#login-nick', '펫테스트');
   await page.click('#login-submit');
@@ -468,7 +467,7 @@ test('브라우저: 펫 스프라이트·꾸미기 오버레이 렌더 · 지갑
   await page.click('#preview-close');
   await page.click('#wallet-close');
   // 설정 → 내 펫: 토끼 선택 → 씬에 p: npc 생성, 리본 장착 → 오버레이 스프라이트
-  await page.click('#btn-settings');
+  await openSettings(page);
   await page.waitForFunction(() => document.querySelectorAll('#mypet-active option').length === 2, { timeout: 5000 });
   await page.select('#mypet-active', String((await srv.world.store.listInventory('펫테스트')).find((i) => i.itemId === 'pet_rabbit').id));
   await page.waitForFunction((id) => window.NSM.scene.npcs.has(`p:${id}`), { timeout: 5000 }, me.id);
@@ -477,7 +476,7 @@ test('브라우저: 펫 스프라이트·꾸미기 오버레이 렌더 · 지갑
   const ribbonId = (await srv.world.store.listInventory('펫테스트')).find((i) => i.itemId === 'deco_ribbon').id;
   await page.select('#mypet-deco select[data-slot="head"]', String(ribbonId));
   await page.waitForFunction((id) => { const n = window.NSM.scene.npcs.get(`p:${id}`); return n && n.deco.head && n.deco.head.key === 'ribbon/pink' && n.deco.head.sprite.visible; }, { timeout: 5000 }, me.id);
-  await page.click('#btn-settings');
+  await page.click('#btn-settings'); // 닫기
   // 강아지에 리본을 옮겨 달면 개인 펫에선 빠진다(서버 설정 우선순위는 없음 — 둘 다 달 수 있음), 강아지 오버레이 확인
   await srv.world.setPetDeco(me, 'dog', { head: ribbonId });
   await page.waitForFunction(() => { const n = window.NSM.scene.npcs.get('dog'); return n && n.deco.head && n.deco.head.key === 'ribbon/pink'; }, { timeout: 5000 });

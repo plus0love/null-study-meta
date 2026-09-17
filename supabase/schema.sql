@@ -106,6 +106,68 @@ create table if not exists public.room_pets (
 create index if not exists room_pets_room_id on public.room_pets (room_id);
 create unique index if not exists room_pets_inventory_id on public.room_pets (inventory_id);
 
+-- 11단계: 스터디(방 인스턴스). 같은 맵 템플릿(room_id)을 쓰되 사람·채팅·좌석·가구 배치·공용 펫·강아지가 스터디마다 따로.
+-- code: 6자 영숫자 초대 코드(링크 ?study=CODE). password_hash: scrypt$<salt>$<hash> (null = 공개). owner_nickname: 방장 (null 이면 첫 입장자가 방장).
+-- edit_policy: 'anyone' | 'owner' (가구 편집 권한). password_changed_at: 비밀번호를 마지막으로 바꾼 시각 (표시·감사용. 바꾸면 study_access 를 모두 지운다).
+-- 60일간 아무도 안 들어오면(last_active_at) 서버 시작 시 삭제한다.
+create table if not exists public.studies (
+  id                   bigint generated always as identity primary key,
+  code                 text not null unique,
+  name                 text not null,
+  password_hash        text,
+  owner_nickname       text references public.users(nickname) on delete set null,
+  max_players          integer not null default 8,
+  weekly_goal_minutes  integer not null default 1200,
+  edit_policy          text not null default 'anyone',
+  password_changed_at  timestamptz,
+  created_at           timestamptz not null default now(),
+  last_active_at       timestamptz not null default now()
+);
+create index if not exists studies_last_active_at on public.studies (last_active_at);
+
+-- 소속: 한 번이라도 입장한 멤버. 로비 '내 스터디' 카드·멤버 목록 표시용이며 입장 권한과는 무관하다 (권한은 study_access).
+create table if not exists public.study_members (
+  study_id      bigint not null references public.studies(id) on delete cascade,
+  nickname      text not null references public.users(nickname) on delete cascade,
+  joined_at     timestamptz not null default now(),
+  last_seen_at  timestamptz not null default now(),
+  primary key (study_id, nickname)
+);
+create index if not exists study_members_nickname on public.study_members (nickname);
+alter table public.study_members drop column if exists verified_at; -- 이전 버전(닉네임 소속 기준)의 흔적
+
+-- 잠긴 스터디의 기기 접근 토큰: 비밀번호를 맞춘 기기에 서버가 무작위 32바이트 토큰을 주고 여기엔 sha256 해시만 둔다.
+-- 다음 입장 때 토큰이 여기 있으면 비밀번호를 묻지 않는다. 방장이 비밀번호를 바꾸거나 풀면 그 스터디 행을 전부 지운다.
+-- nickname 은 발급 당시 닉네임(참고용). last_used_at: 마지막으로 이 토큰으로 입장한 시각.
+create table if not exists public.study_access (
+  id            bigint generated always as identity primary key,
+  study_id      bigint not null references public.studies(id) on delete cascade,
+  token_hash    text not null,
+  nickname      text not null references public.users(nickname) on delete cascade,
+  created_at    timestamptz not null default now(),
+  last_used_at  timestamptz not null default now(),
+  unique (study_id, token_hash)
+);
+
+-- 그룹 주간 목표 달성 기록 + 멤버별 보너스(10코인). (study_id, week_start) 행이 있으면 그 주는 이미 달성 (주 1회).
+-- awarded_at null = 아직 못 받음 (오프라인이었던 멤버는 다음 접속 때 지급)
+create table if not exists public.study_goal_rewards (
+  id          bigint generated always as identity primary key,
+  study_id    bigint not null references public.studies(id) on delete cascade,
+  week_start  date not null,
+  nickname    text not null references public.users(nickname) on delete cascade,
+  created_at  timestamptz not null default now(),
+  awarded_at  timestamptz,
+  unique (study_id, week_start, nickname)
+);
+create index if not exists study_goal_rewards_nickname on public.study_goal_rewards (nickname) where awarded_at is null;
+
+-- 가구·공용 펫을 스터디로 나눈다. 기존 행(study_id null)은 서버가 첫 시작 때 첫 스터디로 옮긴다 (migrateLegacy).
+alter table public.room_layout add column if not exists study_id bigint references public.studies(id) on delete cascade;
+alter table public.room_pets   add column if not exists study_id bigint references public.studies(id) on delete cascade;
+create index if not exists room_layout_study_id on public.room_layout (study_id);
+create index if not exists room_pets_study_id on public.room_pets (study_id);
+
 alter table public.users          enable row level security;
 alter table public.study_sessions enable row level security;
 alter table public.todos          enable row level security;
@@ -115,6 +177,10 @@ alter table public.coin_ledger    enable row level security;
 alter table public.inventory      enable row level security;
 alter table public.room_layout    enable row level security;
 alter table public.room_pets      enable row level security;
+alter table public.studies            enable row level security;
+alter table public.study_members      enable row level security;
+alter table public.study_access       enable row level security;
+alter table public.study_goal_rewards enable row level security;
 
 -- ── 집계 함수 ─────────────────────────────────────────────────────────
 -- 시간대(tz, 기본 Asia/Seoul) 기준 0시에 날이 바뀌고 주는 월요일에 시작한다 (date_trunc('week') = ISO 월요일).

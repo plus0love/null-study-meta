@@ -10,15 +10,24 @@
  *  getGoal / setGoal
  *  resetUser (세션·출석·목표·할 일 삭제 + 코인 이월 초 0, users 행·코인 잔액·인벤토리는 유지)
  *  getCoins / adjustCoins / getCoinCarry / setCoinCarry / coinLedger / coinStats / addInventory / listInventory (8단계)
- *  roomLayout / addLayout / updateLayout / removeLayout (9단계: 방에 놓인 공용 가구) · users.deskItems / layoutLock 은 upsertUser/getUser
- *  roomPets / addRoomPet / updateRoomPet / removeRoomPet (10단계: 방에 풀린 공용 펫 + 강아지 설정 행 item_id 'dog') · users.petConfig
+ *  roomLayout / addLayout / updateLayout / removeLayout (9단계: 스터디에 놓인 공용 가구, 첫 인자 = studyId) · users.deskItems / layoutLock 은 upsertUser/getUser
+ *  roomPets / addRoomPet / updateRoomPet / removeRoomPet (10단계: 스터디에 풀린 공용 펫 + 강아지 설정 행 item_id 'dog') · users.petConfig
+ *  11단계 스터디: listStudies / getStudy / getStudyByCode / createStudy / updateStudy / deleteStudy / touchStudy
+ *    studyMembers / membershipsOf / listMembers / upsertMember / removeMember (소속 = 표시용, 입장 권한과 무관)
+ *    createAccess / findAccess / touchAccess / clearAccess(studyId, nickname?) (잠긴 스터디 기기 토큰 study_access — 해시만 저장)
+ *    weeklyGoalReached / recordWeeklyGoal / claimRewards (그룹 목표 보너스, 오프라인 멤버는 다음 접속 때)
+ *    attendanceDates (그룹 스트릭) · migrateLegacy (study_id 없는 가구·펫 행을 첫 스터디로)
  */
 const { DEFAULT_TZ, dateKey, weekStart, streakOf, totalsOf } = require('./stats');
 
 function createMemoryStore() {
   const users = new Map(); // nickname → { nickname, avatar, dogName, coins, coinCarrySeconds, deskItems, layoutLock, createdAt, updatedAt }
-  const layout = []; // { id, roomId, itemId, inventoryId, x, y, rotation, meta, placedBy, placedAt } — 방에 놓인 공용 가구
-  const roomPets = []; // { id, roomId, itemId, inventoryId, name, releasedBy, releasedAt, cosmetics, skills } — 공용 펫 (+ 강아지 설정 행)
+  const layout = []; // { id, studyId, roomId, itemId, inventoryId, x, y, rotation, meta, placedBy, placedAt } — 스터디에 놓인 공용 가구
+  const roomPets = []; // { id, studyId, roomId, itemId, inventoryId, name, releasedBy, releasedAt, cosmetics, skills } — 공용 펫 (+ 강아지 설정 행)
+  const studies = new Map(); // id → { id, code, name, passwordHash, ownerNickname, maxPlayers, weeklyGoalMinutes, editPolicy, passwordChangedAt, createdAt, lastActiveAt }
+  const members = []; // { studyId, nickname, joinedAt, lastSeenAt } — 소속(표시용)
+  const access = []; // { id, studyId, tokenHash, nickname, createdAt, lastUsedAt } — 비밀번호를 맞춘 기기의 토큰 해시
+  const rewards = []; // { id, studyId, weekStart, nickname, createdAt, awardedAt } — 그룹 목표 보너스 (awardedAt null = 아직 못 받음)
   const sessions = []; // { id, nickname, startedAt, endedAt, seconds }
   const attendance = new Set(); // `${nickname}|${date}`
   const todos = []; // { id, nickname, text, done, createdAt, doneAt }
@@ -102,6 +111,16 @@ function createMemoryStore() {
         byNick.get(nick).push(k.slice(i + 1));
       }
       return [...byNick.entries()].map(([nickname, dates]) => ({ nickname, ...streakOf(dates, today) }));
+    },
+    /** 여러 닉네임의 출석 날짜 합집합 (정렬, 중복 제거) — 그룹 스트릭용 */
+    async attendanceDates(nicknames) {
+      const want = new Set(nicknames);
+      const out = new Set();
+      for (const k of attendance) {
+        const i = k.lastIndexOf('|');
+        if (want.has(k.slice(0, i))) out.add(k.slice(i + 1));
+      }
+      return [...out].sort();
     },
 
     // ── 할 일 ────────────────────────────────────────────────────────
@@ -208,51 +227,178 @@ function createMemoryStore() {
     },
 
     // ── 방 배치 (9단계) ───────────────────────────────────────────────
-    async roomLayout(roomId) {
-      return layout.filter((e) => e.roomId === roomId).map((e) => ({ ...e, meta: { ...e.meta } }));
+    async roomLayout(studyId) {
+      return layout.filter((e) => e.studyId === studyId).map((e) => ({ ...e, meta: { ...e.meta } }));
     },
-    async addLayout(roomId, { itemId, inventoryId, x, y, rotation = 0, meta = {}, placedBy }, now = Date.now()) {
-      const e = { id: seq++, roomId, itemId, inventoryId: inventoryId ?? null, x, y, rotation, meta: { ...meta }, placedBy, placedAt: now };
+    async addLayout(studyId, { itemId, inventoryId, x, y, rotation = 0, meta = {}, placedBy, roomId = 'studyroom' }, now = Date.now()) {
+      const e = { id: seq++, studyId, roomId, itemId, inventoryId: inventoryId ?? null, x, y, rotation, meta: { ...meta }, placedBy, placedAt: now };
       layout.push(e);
       return { ...e, meta: { ...e.meta } };
     },
-    async updateLayout(roomId, id, { x, y, rotation }) {
-      const e = layout.find((l) => l.id === Number(id) && l.roomId === roomId);
+    async updateLayout(studyId, id, { x, y, rotation }) {
+      const e = layout.find((l) => l.id === Number(id) && l.studyId === studyId);
       if (!e) return null;
       if (x !== undefined) e.x = x;
       if (y !== undefined) e.y = y;
       if (rotation !== undefined) e.rotation = rotation;
       return { ...e, meta: { ...e.meta } };
     },
-    async removeLayout(roomId, id) {
-      const i = layout.findIndex((l) => l.id === Number(id) && l.roomId === roomId);
+    async removeLayout(studyId, id) {
+      const i = layout.findIndex((l) => l.id === Number(id) && l.studyId === studyId);
       if (i < 0) return null;
       const [e] = layout.splice(i, 1);
       return { ...e };
     },
 
     // ── 공용 펫 (10단계) ──────────────────────────────────────────────
-    async roomPets(roomId) {
-      return roomPets.filter((p) => p.roomId === roomId).map((p) => ({ ...p, cosmetics: { ...p.cosmetics }, skills: [...p.skills] }));
+    async roomPets(studyId) {
+      return roomPets.filter((p) => p.studyId === studyId).map((p) => ({ ...p, cosmetics: { ...p.cosmetics }, skills: [...p.skills] }));
     },
-    async addRoomPet(roomId, { itemId, inventoryId = null, name, releasedBy = null, cosmetics = {}, skills = [] }, now = Date.now()) {
-      const p = { id: seq++, roomId, itemId, inventoryId, name, releasedBy, releasedAt: now, cosmetics: { ...cosmetics }, skills: [...skills] };
+    async addRoomPet(studyId, { itemId, inventoryId = null, name, releasedBy = null, cosmetics = {}, skills = [], roomId = 'studyroom' }, now = Date.now()) {
+      const p = { id: seq++, studyId, roomId, itemId, inventoryId, name, releasedBy, releasedAt: now, cosmetics: { ...cosmetics }, skills: [...skills] };
       roomPets.push(p);
       return { ...p, cosmetics: { ...p.cosmetics }, skills: [...p.skills] };
     },
-    async updateRoomPet(roomId, id, { name, cosmetics, skills } = {}) {
-      const p = roomPets.find((r) => r.id === Number(id) && r.roomId === roomId);
+    async updateRoomPet(studyId, id, { name, cosmetics, skills } = {}) {
+      const p = roomPets.find((r) => r.id === Number(id) && r.studyId === studyId);
       if (!p) return null;
       if (name !== undefined) p.name = name;
       if (cosmetics !== undefined) p.cosmetics = { ...cosmetics };
       if (skills !== undefined) p.skills = [...skills];
       return { ...p, cosmetics: { ...p.cosmetics }, skills: [...p.skills] };
     },
-    async removeRoomPet(roomId, id) {
-      const i = roomPets.findIndex((r) => r.id === Number(id) && r.roomId === roomId);
+    async removeRoomPet(studyId, id) {
+      const i = roomPets.findIndex((r) => r.id === Number(id) && r.studyId === studyId);
       if (i < 0) return null;
       const [p] = roomPets.splice(i, 1);
       return { ...p };
+    },
+
+    // ── 스터디 (11단계) ───────────────────────────────────────────────
+    async listStudies() {
+      return [...studies.values()].map((s) => ({ ...s }));
+    },
+    async getStudy(id) {
+      const s = studies.get(Number(id));
+      return s ? { ...s } : null;
+    },
+    async getStudyByCode(code) {
+      const c = String(code || '').toUpperCase();
+      for (const s of studies.values()) if (s.code === c) return { ...s };
+      return null;
+    },
+    async createStudy({ code, name, passwordHash = null, ownerNickname = null, maxPlayers = 8, weeklyGoalMinutes = 1200, editPolicy = 'anyone' }, now = Date.now()) {
+      const s = { id: seq++, code: String(code).toUpperCase(), name, passwordHash, ownerNickname, maxPlayers, weeklyGoalMinutes, editPolicy, passwordChangedAt: passwordHash ? now : null, createdAt: now, lastActiveAt: now };
+      studies.set(s.id, s);
+      return { ...s };
+    },
+    /** patch: name · passwordHash(null 이면 잠금 해제) · ownerNickname · maxPlayers · weeklyGoalMinutes · editPolicy. 비밀번호가 바뀌면 passwordChangedAt 갱신 */
+    async updateStudy(id, patch = {}, now = Date.now()) {
+      const s = studies.get(Number(id));
+      if (!s) return null;
+      for (const k of ['name', 'ownerNickname', 'maxPlayers', 'weeklyGoalMinutes', 'editPolicy']) if (patch[k] !== undefined) s[k] = patch[k];
+      if (patch.passwordHash !== undefined) {
+        s.passwordHash = patch.passwordHash;
+        s.passwordChangedAt = now;
+      }
+      return { ...s };
+    },
+    async deleteStudy(id) {
+      const sid = Number(id);
+      if (!studies.delete(sid)) return false;
+      for (let i = members.length - 1; i >= 0; i--) if (members[i].studyId === sid) members.splice(i, 1);
+      for (let i = access.length - 1; i >= 0; i--) if (access[i].studyId === sid) access.splice(i, 1);
+      for (let i = layout.length - 1; i >= 0; i--) if (layout[i].studyId === sid) layout.splice(i, 1);
+      for (let i = roomPets.length - 1; i >= 0; i--) if (roomPets[i].studyId === sid) roomPets.splice(i, 1);
+      for (let i = rewards.length - 1; i >= 0; i--) if (rewards[i].studyId === sid) rewards.splice(i, 1);
+      return true;
+    },
+    async touchStudy(id, now = Date.now()) {
+      const s = studies.get(Number(id));
+      if (s) s.lastActiveAt = now;
+    },
+    async studyMembers(studyId) {
+      return members.filter((m) => m.studyId === Number(studyId)).map((m) => ({ ...m }));
+    },
+    async membershipsOf(nickname) {
+      return members.filter((m) => m.nickname === nickname).map((m) => ({ ...m }));
+    },
+    async listMembers() {
+      return members.map((m) => ({ ...m }));
+    },
+    /** 소속 기록 (없으면 추가). 로비 '내 스터디'·멤버 목록 표시용이며 입장 권한과는 무관하다 */
+    async upsertMember(studyId, nickname, now = Date.now()) {
+      ensureUser(nickname, now);
+      let m = members.find((x) => x.studyId === Number(studyId) && x.nickname === nickname);
+      const inserted = !m;
+      if (!m) {
+        m = { studyId: Number(studyId), nickname, joinedAt: now, lastSeenAt: now };
+        members.push(m);
+      }
+      m.lastSeenAt = now;
+      return { ...m, inserted };
+    },
+    async removeMember(studyId, nickname) {
+      const i = members.findIndex((x) => x.studyId === Number(studyId) && x.nickname === nickname);
+      if (i < 0) return false;
+      members.splice(i, 1);
+      return true;
+    },
+    // ── 기기 접근 토큰 (잠긴 스터디) ──
+    /** 비밀번호를 맞춘 기기에 발급한 토큰의 해시를 남긴다 */
+    async createAccess(studyId, tokenHash, nickname, now = Date.now()) {
+      const a = { id: seq++, studyId: Number(studyId), tokenHash, nickname, createdAt: now, lastUsedAt: now };
+      access.push(a);
+      return { ...a };
+    },
+    async findAccess(studyId, tokenHash) {
+      const a = access.find((x) => x.studyId === Number(studyId) && x.tokenHash === tokenHash);
+      return a ? { ...a } : null;
+    },
+    async touchAccess(studyId, tokenHash, now = Date.now()) {
+      const a = access.find((x) => x.studyId === Number(studyId) && x.tokenHash === tokenHash);
+      if (a) a.lastUsedAt = now;
+    },
+    /** 스터디의 토큰 무효 — 전부(비밀번호 변경·해제) 또는 nickname 으로 발급된 것만(내보내기). @returns 지운 개수 */
+    async clearAccess(studyId, nickname) {
+      let n = 0;
+      for (let i = access.length - 1; i >= 0; i--) {
+        if (access[i].studyId !== Number(studyId) || (nickname && access[i].nickname !== nickname)) continue;
+        access.splice(i, 1); n++;
+      }
+      return n;
+    },
+    async weeklyGoalReached(studyId, weekStart) {
+      return rewards.some((r) => r.studyId === Number(studyId) && r.weekStart === weekStart);
+    },
+    /** 이번 주 달성 기록 + 멤버 전원의 보너스 행 (이미 있으면 false) */
+    async recordWeeklyGoal(studyId, weekStart, nicknames, now = Date.now()) {
+      if (await this.weeklyGoalReached(studyId, weekStart)) return false;
+      for (const n of nicknames) rewards.push({ id: seq++, studyId: Number(studyId), weekStart, nickname: n, createdAt: now, awardedAt: null });
+      return true;
+    },
+    /** 아직 못 받은 보너스를 받은 것으로 표시하고 돌려준다 (호출자가 코인을 지급) */
+    async claimRewards(nickname, now = Date.now()) {
+      const out = [];
+      for (const r of rewards) {
+        if (r.nickname !== nickname || r.awardedAt) continue;
+        r.awardedAt = now;
+        out.push({ ...r });
+      }
+      return out;
+    },
+    /** study_id 없는 가구·펫 행이 있는지 (스터디가 하나도 없을 때 기본 스터디를 만들지 결정) */
+    async hasLegacy() {
+      const legacy = (r) => r.studyId === null || r.studyId === undefined;
+      return layout.some(legacy) || roomPets.some(legacy);
+    },
+    /** 스터디가 생기기 전(study_id 없음)에 놓인 가구·펫을 첫 스터디로 옮긴다 */
+    async migrateLegacy(studyId) {
+      let n = 0;
+      for (const e of layout) if (e.studyId === null || e.studyId === undefined) { e.studyId = studyId; n++; }
+      let p = 0;
+      for (const r of roomPets) if (r.studyId === null || r.studyId === undefined) { r.studyId = studyId; p++; }
+      return { layout: n, pets: p };
     },
 
     // ── 기록 초기화 (7단계) ───────────────────────────────────────────

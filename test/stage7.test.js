@@ -14,7 +14,7 @@ const { World } = require('../server/game/world');
 const { StudyTracker } = require('../server/game/study');
 const { createMemoryStore } = require('../server/store/memory');
 const { getStudyRoom } = require('../server/rooms/studyroom');
-const { boot, connect, joinAs, ask, once, sleep, collect } = require('./helpers');
+const { boot, connect, joinAs, ask, once, sleep, collect, pageUrl, openSettings, CHROME, CHROME_ARGS } = require('./helpers');
 
 const room = getStudyRoom();
 const TZ = 'Asia/Seoul';
@@ -262,8 +262,7 @@ test('소켓 E2E: profile:reset — 확인 실패 거부, 성공 시 삭제 + pl
 });
 
 // ── 브라우저 ────────────────────────────────────────────────────────
-const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const hasChrome = fs.existsSync(CHROME);
+const hasChrome = Boolean(CHROME);
 let puppeteer = null;
 try { puppeteer = require('puppeteer-core'); } catch (_) { /* devDependency 없음 */ }
 
@@ -273,7 +272,7 @@ test('브라우저: 카드 접기 유지 · 채팅 높이 · 뽀모도로 시간
   const browser = await puppeteer.launch({
     executablePath: CHROME,
     headless: 'new',
-    args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
+    args: CHROME_ARGS,
   });
   t.after(() => browser.close());
   const errors = [];
@@ -281,7 +280,7 @@ test('브라우저: 카드 접기 유지 · 채팅 높이 · 뽀모도로 시간
   const page = await ctx.newPage();
   page.on('pageerror', (e) => errors.push(e.message));
   await page.setViewport({ width: 1200, height: 800 });
-  const url = `http://127.0.0.1:${srv.port}/`;
+  const url = pageUrl(srv);
   await page.goto(url, { waitUntil: 'networkidle0', timeout: 60000 });
   await page.waitForSelector('#login:not([hidden])', { timeout: 30000 });
   await page.type('#login-nick', '설정테스트');
@@ -335,7 +334,7 @@ test('브라우저: 카드 접기 유지 · 채팅 높이 · 뽀모도로 시간
   assert.equal(await page.$eval('#pomo-focus', (el) => el.disabled), false);
 
   // 화면 크기: 크게(2.5) → 카메라 줌·텍스트 해상도, localStorage. 넓게 보기 → 사이드바 숨김·캔버스 전체 폭
-  await page.click('#btn-settings');
+  await openSettings(page);
   await page.click('#zoom-tabs button[data-zoom="2.5"]');
   await page.waitForFunction(() => window.NSM.scene.cameras.main.zoom === 2.5, { timeout: 3000 });
   assert.equal(await ls('nsm.zoom'), '2.5');
@@ -366,7 +365,7 @@ test('브라우저: 카드 접기 유지 · 채팅 높이 · 뽀모도로 시간
   await page.type('#todo-input', '할 일 하나');
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => window.NSM.ui.todos.length === 1, { timeout: 5000 });
-  await page.click('#btn-settings');
+  await openSettings(page);
   await page.click('#btn-reset');
   await page.waitForSelector('#reset-modal:not([hidden])', { timeout: 3000 });
   assert.equal(await page.$eval('#reset-nick-label', (el) => el.textContent), '설정테스트');

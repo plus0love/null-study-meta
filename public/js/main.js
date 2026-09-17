@@ -3,8 +3,11 @@
  * 부트스트랩: 방 데이터 / 아틀라스 메타 / 아바타 카탈로그·레이어 PNG 를 받아 Phaser 게임을 만들고,
  * 소켓(Net) · HUD/사이드바(UI) · 씬(RoomScene) 을 서로 연결한다.
  *
- * 입장 흐름: localStorage 에 세션 토큰이 있으면 바로 재입장 시도(서버가 기억하면 이어받고, 재시작됐으면
- * 저장된 닉네임·아바타로 새 입장). 토큰이 없으면 입장 모달.
+ * 입장 흐름 (11단계): 닉네임·아바타(+사이트 비밀번호) → 로비(내 스터디 / 다른 스터디 / 만들기 / 코드) → 스터디.
+ *  - ?study=CODE 링크면 로비를 건너뛰고 그 스터디로. 마지막 들어간 스터디(localStorage nsm.lastStudy)가 있으면 다음 접속 때 바로 입장.
+ *  - 잠긴 스터디는 비밀번호 모달 → 맞춘 값은 스터디별 localStorage. 소속되면 서버가 다시 묻지 않는다 (방장이 바꾸면 다시).
+ *  - 세션 토큰이 살아 있으면 서버가 이어받는다 (재접속). 나가기 → 로비. 내보내짐/삭제 → 로비.
+ *  - 그룹 주간 목표 달성(studyGoal): 창밖 불꽃놀이 10초 + 조명 플래시 + 차임 + 토스트. 오프라인 사이 달성분은 입장 ack profile.rewards 로 토스트.
  */
 (async function main() {
   'use strict';
@@ -99,7 +102,10 @@
   scene.hooks.onRemove = (id) => net.layoutRemove(id).then((r) => { if (r.ok) ui.refreshEdit(); return r; }).catch(() => ({ ok: false }));
   scene.hooks.onEditState = (st) => ui.setEditState(st);
   ui.getLayout = () => (scene.furniture ? [...scene.furniture.entries.values()] : []);
-  ui.onEditToggle = (on) => net.setEditing(on).then((r) => { if (r.ok) { scene.setEditMode(r.editing); ui.setEditMode(r.editing); } }).catch(() => {});
+  ui.onEditToggle = (on) => net.setEditing(on).then((r) => {
+    if (r.ok) { scene.setEditMode(r.editing); ui.setEditMode(r.editing); }
+    else if (r.error === 'forbidden') ui.notify('이 스터디는 방장만 가구를 편집할 수 있어요.'); // 11단계 editPolicy 'owner'
+  }).catch(() => {});
   ui.onPlaceItem = (item, variant, inventoryId) => scene.startPlacing(item, variant, inventoryId);
   ui.onRemoveEntry = (id) => net.layoutRemove(id).then((r) => { if (!r.ok) ui.editError(r.error); else ui.refreshEdit(); }).catch(() => {});
   ui.onDeskEquip = (slots) => net.equipDesk(slots).then((r) => { if (!r.ok) ui.notify('책상 소품을 장착하지 못했어요.'); return r; }).catch(() => ({ ok: false }));
@@ -150,16 +156,67 @@
     }
     return r;
   };
-  ui.onLeave = async () => {
+  /** 방을 비운다 (나가기 · 내보내짐 · 삭제) → 로비 또는 입장 화면 */
+  const leaveRoom = () => {
     clearInterval(statsTimer);
-    await net.leave();
     scene.clearSession();
     ui.setPlayers([]);
     ui.setRoomCount(0);
     ui.setSitHint(null);
+    ui.setStudy(null);
+    ui.closePopovers();
+    ui.setEditMode(false);
+  };
+  ui.onLeave = async () => {
+    await net.leave({ keepSocket: true });
+    leaveRoom();
+    openLobby();
+  };
+  ui.onRename = async () => {
+    await net.leave();
+    leaveRoom();
     startLogin({ error: '' });
   };
-  ui.onRename = () => ui.onLeave();
+  // ── 스터디 정보/설정 (11단계) ──
+  ui.onStudyInfo = () => net.studyInfo();
+  ui.onStudyUpdate = (patch) => net.studyUpdate(patch).catch(() => ({ ok: false }));
+  ui.onStudyKick = (nickname) => net.studyKick(nickname).catch(() => ({ ok: false }));
+  ui.onStudyDelete = async () => {
+    const r = await net.studyDelete().catch(() => ({ ok: false }));
+    if (r.ok) {
+      net.dropSession();
+      leaveRoom();
+      ui.toast('스터디를 삭제했어요');
+      openLobby();
+    }
+    return r;
+  };
+  net.on('study:update', ({ study, passwordChanged }) => {
+    ui.onStudyUpdated(study);
+    // 방장이 비밀번호를 바꾸면 이 기기의 접근 토큰은 무효다 (방장 기기는 study:update ack 로 새 토큰을 받는다)
+    if (passwordChanged && !study.isOwner && !(ui.study && ui.study.isOwner)) Net.saveStudyAccess(study.code, null);
+    if (passwordChanged) ui.notify(study.locked ? '방장이 스터디 비밀번호를 바꿨어요. 다음 입장 때 다시 입력해요.' : '스터디 잠금이 풀렸어요.');
+  });
+  net.on('kicked', () => {
+    if (net.study) Net.saveStudyAccess(net.study.code, null); // 내보내지면 서버가 이 닉네임의 기기 토큰도 지웠다
+    net.dropSession();
+    leaveRoom();
+    openLobby({ error: '방장이 스터디에서 내보냈어요.' });
+  });
+  net.on('study:deleted', () => {
+    net.dropSession();
+    leaveRoom();
+    openLobby({ error: '스터디가 삭제됐어요.' });
+  });
+  // 그룹 주간 목표 달성: 창밖 불꽃놀이 10초 + 조명 플래시 + 차임 + 토스트 (코인은 coins 이벤트로 따로 온다)
+  net.on('studyGoal', (d) => {
+    scene.celebrate(10000);
+    scene.flashLights();
+    sound.chime('goal');
+    ui.toast(`🎆 이번 주 그룹 목표 ${Math.round(d.targetSeconds / 3600)}시간 달성! 멤버 모두 +${d.bonus} 🪙`, 6000);
+    FX.Notify.show('그룹 목표 달성 🎆', `${d.name || '스터디'} — 이번 주 ${Math.round(d.targetSeconds / 3600)}시간을 함께 채웠어요`);
+    if (!ui.lobbyOpen) ui.refreshStudyInfo();
+  });
   ui.onNpcName = (name, id = 'dog') => net.setNpcName(id, name).then((r) => { if (!r.ok) ui.notify(r.error === 'forbidden' ? '이름은 푼 사람만 바꿀 수 있어요.' : r.error || '이름을 바꾸지 못했어요.'); else ui.refreshWallet(); return r; }).catch(() => ({ ok: false }));
   // ── 펫 (10단계) ──
   ui.onPetConfig = (cfg) => net.petConfig(cfg).then((r) => { if (!r.ok) ui.notify({ invalid_name: '펫 이름은 8자 이내 문자·숫자예요.', wrong_slot: '그 슬롯에 맞는 꾸미기가 아니에요.' }[r.error] || '펫 설정을 저장하지 못했어요.'); return r; }).catch(() => ({ ok: false }));
@@ -198,7 +255,7 @@
   let statsTimer = null;
   const refreshStats = () => {
     if (!net.connected || !scene.me) return;
-    net.stats().then((r) => {
+    net.stats(ui.rankScope).then((r) => {
       if (!r.ok) return;
       ui.setStats(r);
       scene.applyProgress(r.rows);
@@ -210,6 +267,7 @@
     refreshStats();
   };
   net.on('leaderboard:refresh', () => refreshStats());
+  ui.onRankScope = () => refreshStats();
   net.on('playerGoal', (d) => scene.onGoal(d));
   net.on('attendance', ({ streak }) => ui.toast(`${streak}일 연속 출석 🔥`));
   net.on('goalReached', (d) => {
@@ -233,7 +291,7 @@
     if (!scene.me || d.id !== scene.me.id) return;
     if (d.balance !== undefined) ui.setCoins(d.balance, { bump: true });
     sound.coin(d.delta);
-    if (d.delta > 0) ui.toast(d.reason === 'focus' ? `집중 완주 보너스 +${d.delta} 🪙` : `+${d.delta} 🪙`);
+    if (d.delta > 0) ui.toast(d.reason === 'focus' ? `집중 완주 보너스 +${d.delta} 🪙` : d.reason === 'weekly_goal' ? `그룹 목표 보너스 +${d.delta} 🪙` : `+${d.delta} 🪙`);
     if (ui.isWalletOpen()) ui.refreshWallet();
   });
   net.on('playerPomodoro', (d) => scene.onPlayerPomodoro(d));
@@ -242,6 +300,8 @@
 
   // ── 네트워크 → 씬/UI ───────────────────────────────────────────
   const applySession = (ack) => {
+    ui.hideLobby();
+    ui.setStudy(ack.study || null);
     scene.applySession(ack);
     ui.setSelf(ack.self.id, ack.self.nickname);
     ui.setAvatar(ack.self.avatar);
@@ -260,6 +320,9 @@
     ui.setEditMode(false);
     scene.setEditMode(false);
     if (profile.streak && profile.streak.attendedToday) ui.toast(`${profile.streak.streak}일 연속 출석 🔥`);
+    // 11단계: 오프라인 사이에 달성된 그룹 목표 보너스
+    for (const r of profile.rewards || []) ui.toast(`🎆 ${r.studyName || '스터디'} 그룹 목표 달성 보너스 +${r.coins} 🪙`, 5000);
+    if (!ack.resumed && ack.study) ui.addChat({ system: true, text: `"${ack.study.name}" 스터디에 들어왔어요. 코드 ${ack.study.code}` });
     migrateTodos();
     startStatsPolling();
   };
@@ -320,7 +383,10 @@
   });
   net.on('playerEmoji', (d) => scene.onEmoji(d));
   net.on('chat', (d) => {
-    if (d.system) return ui.addChat({ system: true, text: d.text });
+    if (d.system) {
+      if (d.notify) ui.notify(d.text); // 11단계: 목표 달성·펫 풀림 등은 알림 벨에도
+      return ui.addChat({ system: true, text: d.text });
+    }
     scene.onChat(d);
     ui.addChat({ nickname: d.nickname, text: d.text, ts: d.ts, self: scene.me && d.id === scene.me.id });
   });
@@ -346,46 +412,107 @@
   // 30초마다 서버 시각 재동기화 (뽀모도로 게이지)
   setInterval(() => { if (net.connected) net.syncTime(); }, 30000);
 
-  // ── 입장 ───────────────────────────────────────────────────────
-  /** 서버 join 거부 → 사용자에게 보여줄 Error (retryAfterMs / clearPassword 는 입장 모달이 읽는다) */
+  // ── 입장: 닉네임 → (사이트 비밀번호) → 로비 / 링크·마지막 스터디로 바로 ───────────
+  const params = new URLSearchParams(location.search);
+  const linkCode = (params.get('study') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6) || null;
+
+  /** 서버 거부 → 사용자에게 보여줄 Error (retryAfterMs / clearPassword 는 입장 모달이 읽는다) */
   function joinError(err) {
     const ack = err.ack || {};
     const out = new Error(err.message);
+    out.ack = ack;
     if (err.message === 'not_connected') out.message = '서버에 연결할 수 없어요.';
-    else if (err.message === 'password_required') { out.message = '방 비밀번호를 입력해 주세요.'; out.clearPassword = true; }
+    else if (err.message === 'password_required') { out.message = ack.scope === 'study' ? '스터디 비밀번호를 입력해 주세요.' : '사이트 비밀번호를 입력해 주세요.'; out.clearPassword = true; }
     else if (err.message === 'wrong_password') { out.message = `비밀번호가 틀렸어요. (남은 횟수 ${ack.remaining}회)`; out.clearPassword = true; }
     else if (err.message === 'locked') { out.message = '비밀번호를 여러 번 틀렸어요. 잠시 뒤에 다시 시도해 주세요.'; out.retryAfterMs = ack.retryAfterMs || 30000; out.clearPassword = true; }
+    else if (err.message === 'no_study') out.message = '없는 스터디예요. 코드를 확인해 주세요.';
+    else if (err.message === 'study_full') out.message = '스터디 정원이 다 찼어요.';
+    else if (err.message === 'invalid' || err.message === 'too_short' || err.message === 'too_long') out.message = '닉네임은 문자·숫자·공백·_ - 12자 이내예요.';
     return out;
+  }
+
+  let creds = { nickname: '', avatar: null, password: '' }; // 로비에서 쓰는 내 정보
+
+  /** 로비 열기 (소켓은 연결된 채로). 목록을 서버에서 받아 카드로 */
+  async function openLobby({ error = '' } = {}) {
+    net.connect();
+    let data = { mine: [], others: [] };
+    try {
+      const r = await net.lobbyList(creds.nickname);
+      if (r.ok) data = r;
+      else if (r.error === 'password_required') return startLogin({ error: '사이트 비밀번호를 입력해 주세요.' });
+    } catch (_) { error = error || '스터디 목록을 불러오지 못했어요.'; }
+    ui.showLobby({ nickname: creds.nickname, mine: data.mine, others: data.others, error }, {
+      onEnter: (code) => enterStudy(code),
+      onCreate: async (form) => {
+        const r = await net.studyCreate({ ...form, nickname: creds.nickname }).catch(() => ({ ok: false, error: 'store_error' }));
+        if (r.ok) enterStudy(r.study.code); // 잠긴 스터디면 만든 기기의 접근 토큰을 net.studyCreate 가 저장해 뒀다
+        return r;
+      },
+      onRename: () => ui.onRename(),
+    });
+  }
+
+  /**
+   * 스터디 입장 (로비·링크·자동). 잠겨 있으면 이 기기의 접근 토큰(localStorage)을 내고, 없거나 무효면 비밀번호 모달을 거듭 띄운다 (취소하면 로비).
+   * @returns {Promise<boolean>} 들어갔는지
+   */
+  async function enterStudy(code, { studyPassword = '', quiet = false } = {}) {
+    net.connect();
+    let pass = studyPassword;
+    let name = code;
+    for (;;) {
+      try {
+        await net.join({ nickname: creds.nickname, avatar: creds.avatar, password: creds.password, study: code, studyPassword: pass });
+        return true;
+      } catch (err) {
+        const e = joinError(err);
+        const ack = e.ack || {};
+        if (ack.scope === 'study' && (ack.error === 'password_required' || ack.error === 'wrong_password' || ack.error === 'locked')) {
+          if (name === code) { try { const l = await net.studyLookup(code); if (l.ok) name = l.study.name; } catch (_) { /* 코드 그대로 */ } }
+          const typed = await ui.askStudyPassword({ name, error: ack.error === 'password_required' ? '' : e.message, retryAfterMs: e.retryAfterMs || 0 });
+          if (typed === null) { if (!quiet) openLobby(); return false; }
+          pass = typed;
+          continue;
+        }
+        if (ack.scope === 'site') { startLogin({ error: e.message, retryAfterMs: e.retryAfterMs || 0 }); return false; }
+        if (!quiet || ack.error === 'study_full') openLobby({ error: e.message });
+        else openLobby();
+        return false;
+      }
+    }
   }
 
   function startLogin({ error = '', retryAfterMs = 0 } = {}) {
     const saved = Net.saved();
-    ui.showLogin({ nickname: saved.nickname, avatar: saved.avatar, error, passwordRequired: config.passwordRequired, password: saved.password }, async ({ nickname, avatar, password }) => {
+    const showLogin = (target) => ui.showLogin({ nickname: saved.nickname, avatar: saved.avatar, error, passwordRequired: config.passwordRequired, password: saved.password, target }, async ({ nickname, avatar, password }) => {
       net.connect();
-      try {
-        await net.join({ nickname, avatar, password });
-      } catch (err) {
-        throw joinError(err);
+      creds = { nickname, avatar, password };
+      if (config.passwordRequired) {
+        try { await net.siteAuth(password); } catch (err) { throw joinError(err); }
       }
+      Net.save({ nickname, ...(avatar ? { avatar } : {}) });
+      if (linkCode) await enterStudy(linkCode);
+      else await openLobby();
     });
+    if (linkCode && !config.passwordRequired) {
+      net.connect();
+      net.studyLookup(linkCode).then((l) => showLogin(l.ok ? l.study : null)).catch(() => showLogin(null));
+    } else showLogin(null);
     if (retryAfterMs > 0) ui.lockLogin(retryAfterMs);
   }
 
   const saved = Net.saved();
   ui.setAvatar(saved.avatar);
-  // 비밀번호 방인데 기억한 비밀번호가 없으면 자동 재입장 대신 모달을 띄운다 (토큰이 살아 있으면 서버가 안 물어보지만, 재시작됐을 수 있다)
-  if (saved.token && saved.nickname && (!config.passwordRequired || saved.password)) {
-    net.connect();
-    try {
-      await net.join({ nickname: saved.nickname, avatar: saved.avatar, password: saved.password });
-    } catch (err) {
-      const e = joinError(err);
-      startLogin({ error: e.message, retryAfterMs: e.retryAfterMs || 0 });
-    }
+  creds = { nickname: saved.nickname, avatar: saved.avatar, password: saved.password };
+  const autoCode = linkCode || saved.lastStudy || null;
+  // 닉네임을 알고(+사이트 비밀번호를 기억하고) 갈 스터디가 있으면 바로 입장 (토큰이 살아 있으면 서버가 이어받는다). 아니면 입장 화면
+  if (saved.nickname && autoCode && (!config.passwordRequired || saved.password)) {
+    enterStudy(autoCode, { quiet: !linkCode });
   } else {
     startLogin();
   }
 
   // 디버그/테스트용 전역 핸들
-  window.NSM = { game, room, net, ui, scene, sound, avatarKit, catalog };
+  window.NSM = { game, room, net, ui, scene, sound, avatarKit, catalog, enterStudy, openLobby };
 })();

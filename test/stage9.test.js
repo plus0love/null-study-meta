@@ -17,7 +17,7 @@ const L = require('../server/game/layout');
 const { World, LOCK_MS, RESTING_SEATS } = require('../server/game/world');
 const { createMemoryStore } = require('../server/store/memory');
 const { getStudyRoom } = require('../server/rooms/studyroom');
-const { boot, connect, joinAs, ask, once, sleep, collect } = require('./helpers');
+const { boot, connect, joinAs, ask, once, sleep, collect, pageUrl, openSettings, CHROME, CHROME_ARGS } = require('./helpers');
 
 const room = getStudyRoom();
 const shop = createShop();
@@ -495,15 +495,14 @@ test('소켓 E2E: 입장 ack layout · shop:buy variant · desk:equip → player
 });
 
 // ── 브라우저 ────────────────────────────────────────────────────────
-const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const hasChrome = fs.existsSync(CHROME);
+const hasChrome = Boolean(CHROME);
 let puppeteer = null;
 try { puppeteer = require('puppeteer-core'); } catch (_) { /* devDependency 없음 */ }
 
 test('브라우저: 지갑 가구 탭(카테고리·카드·색 선택·구매) · 편집 모드 배치(초록/빨강·R 회전·Del 회수) · 침대 눕기(💤·회전) · 책상 소품 · 🛠 표시', { skip: !hasChrome || !puppeteer ? 'Chrome/puppeteer-core 없음' : false, timeout: 180000 }, async (t) => {
   const srv = await boot({ world: { study: { autoTick: false }, npc: { autoStart: false } } });
   t.after(() => srv.close());
-  const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+  const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: CHROME_ARGS });
   t.after(() => browser.close());
   const errors = [];
   const open = async (nick) => {
@@ -511,7 +510,7 @@ test('브라우저: 지갑 가구 탭(카테고리·카드·색 선택·구매) 
     const page = await ctx.newPage();
     page.on('pageerror', (e) => errors.push(e.message));
     await page.setViewport({ width: 1300, height: 850 });
-    await page.goto(`http://127.0.0.1:${srv.port}/`, { waitUntil: 'networkidle0', timeout: 60000 });
+    await page.goto(pageUrl(srv), { waitUntil: 'networkidle0', timeout: 60000 });
     await page.waitForSelector('#login:not([hidden])', { timeout: 30000 });
     await page.type('#login-nick', nick);
     await page.click('#login-submit');
@@ -604,9 +603,9 @@ test('브라우저: 지갑 가구 탭(카테고리·카드·색 선택·구매) 
   // 책상 소품: 설정에서 슬롯 장착 → 의자에 앉으면 책상 위에 2개
   await srv.world.equipDesk(me, [mugId, fishId, null]);
   await page.waitForFunction(() => window.NSM.scene.me.deskItems[0] && window.NSM.scene.me.deskItems[0].itemId === 'mug', { timeout: 5000 });
-  await page.click('#btn-settings');
+  await openSettings(page);
   await page.waitForFunction(() => document.querySelectorAll('#desk-slots select').length === 3 && document.querySelectorAll('#desk-slots select')[0].value !== '', { timeout: 5000 });
-  await page.click('#btn-settings');
+  await page.click('#btn-settings'); // 닫기
   const seat = srv.world.room.seats.find((s) => s.x === 15 && s.y === 14);
   me.x = 15.5 * 32; me.y = 15 * 32;
   srv.world.sit(me, seat.id);

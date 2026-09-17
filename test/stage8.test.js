@@ -19,7 +19,7 @@ const { Pomodoro } = require('../server/game/pomodoro');
 const { World } = require('../server/game/world');
 const { createMemoryStore } = require('../server/store/memory');
 const { getStudyRoom } = require('../server/rooms/studyroom');
-const { boot, connect, joinAs, ask, once, sleep, collect } = require('./helpers');
+const { boot, connect, joinAs, ask, once, sleep, collect, pageUrl, openSettings, CHROME, CHROME_ARGS } = require('./helpers');
 
 const room = getStudyRoom();
 const TZ = 'Asia/Seoul';
@@ -524,8 +524,7 @@ test('소켓 E2E: coins 이벤트(본인 balance · 남은 없음) · wallet · 
 });
 
 // ── 브라우저 ────────────────────────────────────────────────────────
-const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const hasChrome = fs.existsSync(CHROME);
+const hasChrome = Boolean(CHROME);
 let puppeteer = null;
 try { puppeteer = require('puppeteer-core'); } catch (_) { /* devDependency 없음 */ }
 
@@ -535,7 +534,7 @@ test('브라우저: 잔액 배지 · 코인 획득 연출 · 지갑 모달(탭 �
   const browser = await puppeteer.launch({
     executablePath: CHROME,
     headless: 'new',
-    args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
+    args: CHROME_ARGS,
   });
   t.after(() => browser.close());
   const errors = [];
@@ -543,7 +542,7 @@ test('브라우저: 잔액 배지 · 코인 획득 연출 · 지갑 모달(탭 �
   const page = await ctx.newPage();
   page.on('pageerror', (e) => errors.push(e.message));
   await page.setViewport({ width: 1200, height: 800 });
-  await page.goto(`http://127.0.0.1:${srv.port}/`, { waitUntil: 'networkidle0', timeout: 60000 });
+  await page.goto(pageUrl(srv), { waitUntil: 'networkidle0', timeout: 60000 });
   await page.waitForSelector('#login:not([hidden])', { timeout: 30000 });
   await page.type('#login-nick', '코인테스트');
   await page.click('#login-submit');
@@ -594,7 +593,7 @@ test('브라우저: 잔액 배지 · 코인 획득 연출 · 지갑 모달(탭 �
   await page.waitForFunction(() => /🪙\s*7/.test(document.querySelector('#rank-list').textContent), { timeout: 8000 });
 
   // 설정: 코인 소리 끄기 → localStorage
-  await page.click('#btn-settings');
+  await openSettings(page);
   await page.click('#opt-coin-sound');
   assert.equal(await page.evaluate(() => localStorage.getItem('nsm.sound.coin')), '0');
   assert.equal(await page.evaluate(() => window.NSM.sound.coinEnabled), false);

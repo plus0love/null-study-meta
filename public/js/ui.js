@@ -16,6 +16,10 @@
  *  - 설정: 아바타(빌더 모달) · 닉네임 · 강아지 이름 · 화면 크기(줌 1.5/2/2.5) · 넓게 보기 · 항상 밤 · 알림 소리 · 브라우저 알림 허용 · 내 기록 초기화(닉네임 확인 모달)
  *  - 아바타 빌더(AvatarBuilder): 입장 모달과 설정 모달이 같은 DOM(#avatar-builder)을 옮겨 가며 쓴다.
  *    좌: 4배 미리보기(걷기 애니메이션, 클릭으로 방향 회전) · 우: 파츠 탭 → 썸네일 그리드 → 색상 원형 버튼 · 랜덤/초기화
+ *  - 11단계 스터디: 입장 모달(닉네임·아바타·사이트 비밀번호) → 로비 모달(내 스터디 카드: 접속/정원·🔒·이번 주 시간·그룹 스트릭·목표 진행 바,
+ *    다른 스터디 목록, 만들기 모달, 코드로 참가) → 스터디. 잠긴 스터디는 비밀번호 모달(askStudyPassword).
+ *    좌상단 배지 = 스터디 이름(+🔒) → 클릭하면 스터디 정보 팝오버(코드·링크 복사, 주간 목표 바, 그룹 스트릭, 멤버 목록, 방장 설정·내보내기·삭제).
+ *    랭킹 카드 "이 스터디 / 전체" 토글. 알림 벨: 입장·목표·펫 풀림 (notify()).
  */
 (function () {
   'use strict';
@@ -30,7 +34,7 @@
     out_of_bounds: '맵 밖이에요', invalid_rotation: '회전할 수 없어요', player_in_way: '누가 서 있어요', locked: '다른 사람이 잡고 있어요', forbidden: '놓은 사람만 옮길 수 있어요',
     occupied: '누가 앉아 있어요', already_placed: '이미 놓은 아이템이에요', no_item: '없는 아이템이에요', not_found: '이미 없어진 가구예요', not_placeable: '방에 놓는 가구가 아니에요',
   };
-  const COIN_REASON = { study: '공부 10분마다', focus: '집중 완주 보너스' }; // 원장 reason → 표시. purchase:<id> 는 "구매 · <id>"
+  const COIN_REASON = { study: '공부 10분마다', focus: '집중 완주 보너스', weekly_goal: '그룹 목표 보너스' }; // 원장 reason → 표시. purchase:<id> 는 "구매 · <id>"
   const TODO_KEY = 'nsm.todos'; // 3단계까지의 localStorage 할 일 — 첫 접속 때 서버로 옮기고 지운다
   const GOAL_MINUTES = Array.from({ length: 16 }, (_, i) => (i + 1) * 30); // 30분 ~ 8시간
   const LS_NIGHT = 'nsm.alwaysNight';
@@ -46,6 +50,11 @@
   const PET_SLOT_LABEL = { head: '머리', neck: '목', back: '등' };
   const SKILL_ICON = { skill_come: '📣', skill_sleep: '💤', skill_high_five: '🖐' };
   const YT_API = 'https://www.youtube.com/iframe_api';
+  const STUDY_ERR = { // 11단계: 스터디 만들기/설정 거부 사유
+    invalid_name: '이름은 1~20자예요.', invalid_password: '비밀번호는 4~20자예요.', invalid_max_players: '정원은 2~12명이에요.', invalid_goal: '주간 목표는 5~100시간이에요.',
+    invalid_policy: '편집 권한 값이 이상해요.', forbidden: '방장만 할 수 있어요.', no_study: '없는 스터디예요.', study_full: '정원이 다 찼어요.', not_empty: '다른 사람이 있으면 삭제할 수 없어요.',
+    too_many_players: '지금 있는 사람보다 정원이 작아요.', store_error: '저장소 오류가 났어요.', not_member: '멤버가 아니에요.', self: '자기 자신은 내보낼 수 없어요.',
+  };
 
   function el(tag, attrs = {}, children = []) {
     const n = document.createElement(tag);
@@ -99,6 +108,8 @@
       this.editMode = false;
       this.editState = { on: false, mode: 'off' };
       this.selfId = null;
+      this.study = null; // 11단계: 지금 들어가 있는 스터디 (join ack 의 study)
+      this.rankScope = 'study'; // 11단계: 랭킹 '이 스터디' | '전체'
       this.players = new Map(); // id → public player (멤버 목록/미니맵용)
       this.status = 'rest';
       this.pomodoro = null;
@@ -142,6 +153,13 @@
       this.onPetRelease = async () => ({ ok: false });
       this.onPetRecall = async () => ({ ok: false });
       this.onPetDeco = async () => ({ ok: false });
+      // 11단계
+      this.onStudyInfo = async () => ({ ok: false });
+      this.onStudyUpdate = async () => ({ ok: false });
+      this.onStudyKick = async () => ({ ok: false });
+      this.onStudyDelete = async () => ({ ok: false });
+      this.onRankScope = () => {};
+      this.lobbyHandlers = null; // showLobby 가 채움 { onEnter(code), onCreate(form), onRename() }
 
       this.todos = [];
       this.coins = 0;
@@ -162,6 +180,8 @@
       this.bindGoalAndRank();
       this.bindWallet();
       this.bindEdit();
+      this.bindStudy();
+      this.bindLobby();
       this.buildMinimapBase();
       this.renderTodos();
       setInterval(() => this.tickPomodoro(), 250);
@@ -169,9 +189,8 @@
 
     // ── 상단 HUD / 팝오버 ─────────────────────────────────────────────
     bindHud() {
-      $('room-name').textContent = this.room.name;
-      const pops = { settings: $('pop-settings'), members: $('pop-members'), notify: $('pop-notify') };
-      const btns = { settings: $('btn-settings'), members: $('btn-members'), notify: $('btn-notify') };
+      const pops = { settings: $('pop-settings'), members: $('pop-members'), notify: $('pop-notify'), study: $('pop-study') };
+      const btns = { settings: $('btn-settings'), members: $('btn-members'), notify: $('btn-notify'), study: $('room-name') };
       $('btn-music').addEventListener('click', () => this.toggleMusic());
       const toggle = (name) => {
         const open = pops[name].hidden;
@@ -184,15 +203,18 @@
           btns[name].classList.add('active');
           if (name === 'notify') this.clearUnread();
           if (name === 'settings') this.refreshWallet(); // 내 책상 슬롯 목록(인벤토리)
+          if (name === 'study') this.refreshStudyInfo(); // 11단계: 멤버·주간 목표
         }
       };
+      this.togglePopover = toggle;
+      this.closePopovers = () => { for (const k of Object.keys(pops)) { pops[k].hidden = true; btns[k].classList.remove('active'); } };
       for (const k of Object.keys(btns)) btns[k].addEventListener('click', (e) => { e.stopPropagation(); toggle(k); });
       document.addEventListener('click', (e) => {
-        if (e.target.closest('#hud-tr')) return;
-        for (const k of Object.keys(pops)) { pops[k].hidden = true; btns[k].classList.remove('active'); }
+        if (e.target.closest('#hud-tr') || e.target.closest('#hud-tl')) return;
+        this.closePopovers();
       });
       $('btn-leave').addEventListener('click', () => {
-        if (window.confirm('스터디룸에서 나갈까요?')) this.onLeave();
+        if (window.confirm('스터디에서 나가 로비로 갈까요?')) this.onLeave();
       });
       $('btn-rename').addEventListener('click', () => this.onRename());
       $('npc-name-form').addEventListener('submit', (e) => {
@@ -639,6 +661,14 @@
           this.renderRank();
         });
       }
+      // 11단계: 이 스터디 / 전체
+      for (const b of document.querySelectorAll('#rank-scope button')) {
+        b.addEventListener('click', () => {
+          this.rankScope = b.dataset.scope === 'all' ? 'all' : 'study';
+          for (const x of document.querySelectorAll('#rank-scope button')) x.classList.toggle('active', x.dataset.scope === this.rankScope);
+          this.onRankScope(this.rankScope);
+        });
+      }
     }
 
     /** 오늘 목표 (입장 ack / 저장 응답). null 이면 없음 */
@@ -692,7 +722,7 @@
       const key = coins ? 'weekCoins' : this.rankTab === 'week' ? 'weekSeconds' : 'todaySeconds';
       const rows = this.stats.rows.filter((r) => (r[key] || 0) > 0 || r.live || r.online).sort((a, b) => (b[key] || 0) - (a[key] || 0) || a.nickname.localeCompare(b.nickname));
       if (!rows.length) {
-        list.appendChild(el('li', { class: 'empty', text: coins ? '이번 주에 코인을 모은 사람이 아직 없어요.' : this.rankTab === 'week' ? '이번 주 기록이 아직 없어요.' : '오늘 기록이 아직 없어요. 자리에 앉아 공부를 시작해 보세요.' }));
+        list.appendChild(el('li', { class: 'empty', text: coins ? '이번 주에 코인을 모은 사람이 아직 없어요.' : this.rankTab === 'week' ? '이번 주 기록이 아직 없어요.' : this.rankScope === 'study' ? '이 스터디에 오늘 기록이 아직 없어요. 자리에 앉아 공부를 시작해 보세요.' : '오늘 기록이 아직 없어요. 자리에 앉아 공부를 시작해 보세요.' }));
         return;
       }
       rows.slice(0, 20).forEach((r, i) => {
@@ -897,8 +927,9 @@
       $('wallet-modal').hidden = true;
     }
 
-    /** 서버에서 지갑 데이터를 다시 받는다 (열 때, 코인이 바뀔 때) */
+    /** 서버에서 지갑 데이터를 다시 받는다 (열 때, 코인이 바뀔 때). walletBusy 는 진행 중 요청 수 (테스트가 재렌더를 기다리는 데 쓴다) */
     async refreshWallet() {
+      this.walletBusy = (this.walletBusy || 0) + 1;
       try {
         const r = await this.onWallet();
         if (!r || !r.ok) return;
@@ -912,7 +943,7 @@
         this.renderPetSettings();
         $('opt-layout-lock').checked = Boolean(r.layoutLock);
         if (this.editMode) this.renderPalette();
-      } catch (_) { /* 오프라인 */ }
+      } catch (_) { /* 오프라인 */ } finally { this.walletBusy--; }
     }
 
     /** 이월 초 → "다음 코인까지 N분 N초" (모달 안내 줄 뒤에) */
@@ -1645,12 +1676,267 @@
       }
     }
 
+    // ── 스터디 정보 팝오버 (11단계) ────────────────────────────────────
+    bindStudy() {
+      const sel = $('study-edit-max');
+      for (let n = 2; n <= 12; n++) sel.appendChild(el('option', { value: String(n), text: `${n}명` }));
+      $('study-copy-code').addEventListener('click', () => this.copyText(this.study ? this.study.code : '', '코드를 복사했어요'));
+      $('study-copy-link').addEventListener('click', () => this.copyText(this.studyLink(), '링크를 복사했어요'));
+      for (const id of ['study-edit-name', 'study-edit-pass', 'study-edit-goal']) $(id).addEventListener('keydown', (e) => e.stopPropagation());
+      $('study-edit-unlock').addEventListener('change', () => { $('study-edit-pass').disabled = $('study-edit-unlock').checked; });
+      $('study-edit-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const err = $('study-edit-error');
+        err.hidden = true;
+        const patch = { name: $('study-edit-name').value.trim(), maxPlayers: Number($('study-edit-max').value), weeklyGoalMinutes: Number($('study-edit-goal').value) * 60, editPolicy: $('study-edit-owner-only').checked ? 'owner' : 'anyone' };
+        if ($('study-edit-unlock').checked) patch.password = '';
+        else if ($('study-edit-pass').value) patch.password = $('study-edit-pass').value;
+        const r = await this.onStudyUpdate(patch);
+        if (!r || !r.ok) { err.textContent = STUDY_ERR[r && r.error] || '저장하지 못했어요.'; err.hidden = false; return; }
+        $('study-edit-pass').value = '';
+        $('study-edit-unlock').checked = false;
+        $('study-edit-pass').disabled = false;
+        this.toast('스터디 설정을 저장했어요');
+        this.refreshStudyInfo();
+      });
+      $('study-delete').addEventListener('click', async () => {
+        if (!this.study || !window.confirm(`"${this.study.name}" 스터디를 삭제할까요? 가구·펫 배치도 지워지고 되돌릴 수 없어요.`)) return;
+        const r = await this.onStudyDelete();
+        if (!r || !r.ok) this.notify(STUDY_ERR[r && r.error] || '삭제하지 못했어요.');
+      });
+    }
+
+    studyLink() {
+      if (!this.study) return '';
+      return `${location.origin}${location.pathname}?study=${this.study.code}`;
+    }
+
+    async copyText(text, done) {
+      if (!text) return;
+      try {
+        await navigator.clipboard.writeText(text);
+        this.toast(done);
+      } catch (_) {
+        window.prompt('복사하세요', text);
+      }
+    }
+
+    /** 입장 ack · study:update — 좌상단 배지와 팝오버 제목 */
+    setStudy(study) {
+      this.study = study || null;
+      $('study-name').textContent = study ? study.name : '스터디';
+      $('study-lock').hidden = !(study && study.locked);
+      $('study-info-title').textContent = study ? `${study.locked ? '🔒 ' : ''}${study.name}` : '스터디';
+      $('study-info-code').textContent = study ? study.code : '------';
+      $('study-owner').hidden = !(study && study.isOwner);
+      if (study && study.isOwner) this.fillStudyForm(study);
+    }
+
+    fillStudyForm(study) {
+      if (document.activeElement && document.activeElement.closest('#study-edit-form')) return; // 입력 중이면 덮어쓰지 않는다
+      $('study-edit-name').value = study.name;
+      $('study-edit-max').value = String(study.maxPlayers);
+      $('study-edit-goal').value = String(Math.round(study.weeklyGoalMinutes / 60));
+      $('study-edit-owner-only').checked = study.editPolicy === 'owner';
+    }
+
+    async refreshStudyInfo() {
+      try {
+        const r = await this.onStudyInfo();
+        if (r && r.ok) this.renderStudyInfo(r);
+      } catch (_) { /* 오프라인 */ }
+    }
+
+    /** study:info 응답 → 팝오버 (멤버 접속 중/오프라인·이번 주 시간·방장 ★·내보내기, 주간 목표 바, 그룹 스트릭) */
+    renderStudyInfo({ study, members, week, streak }) {
+      this.setStudy({ ...(this.study || {}), ...study });
+      const ratio = week.targetSeconds ? Math.min(1, week.totalSeconds / week.targetSeconds) : 0;
+      $('study-week-bar').style.width = `${Math.round(ratio * 100)}%`;
+      $('study-week-bar').classList.toggle('done', week.reached || ratio >= 1);
+      $('study-week-text').textContent = `${fmtDuration(week.totalSeconds)} / ${Math.round(week.targetSeconds / 3600)}시간${week.reached ? ' · 달성 🎆' : ''}`;
+      $('study-streak').textContent = streak > 0 ? `🔥 그룹 스트릭 ${streak}일 (멤버 중 한 명이라도 출석한 연속 일수)` : '아직 그룹 스트릭이 없어요. 오늘 60초만 앉아 있어도 시작!';
+      const list = $('study-members');
+      list.innerHTML = '';
+      $('study-members-count').textContent = `${members.filter((m) => m.online).length}명 접속 · ${members.length}명`;
+      for (const m of members) {
+        const li = el('li', { class: `${m.online ? '' : 'offline'} ${m.nickname === this.selfNickname ? 'me' : ''}` }, [
+          el('span', { class: `dot-live ${m.online ? 'on' : ''}`, title: m.online ? '접속 중' : '오프라인' }),
+          el('span', { class: 'name', text: `${m.isOwner ? '★ ' : ''}${m.nickname}${m.nickname === this.selfNickname ? ' (나)' : ''}` }),
+          el('span', { class: 'time mono', text: fmtDuration(m.weekSeconds) }),
+          study.isOwner && !m.isOwner ? el('button', { class: 'btn small ghost danger', type: 'button', text: '내보내기', onclick: async () => {
+            if (!window.confirm(`${m.nickname} 님을 내보낼까요?`)) return;
+            const r = await this.onStudyKick(m.nickname);
+            if (!r || !r.ok) this.notify(STUDY_ERR[r && r.error] || '내보내지 못했어요.');
+            else this.refreshStudyInfo();
+          } }) : null,
+        ]);
+        list.appendChild(li);
+      }
+    }
+
+    /** 스터디 이름·잠금이 바뀌었을 때(study:update) 알림 벨에도 */
+    onStudyUpdated(study) {
+      const prev = this.study;
+      this.setStudy({ ...(prev || {}), ...study });
+      if (prev && prev.name !== study.name) this.notify(`스터디 이름이 "${study.name}" 으로 바뀌었어요.`);
+    }
+
+    // ── 로비 (11단계) ──────────────────────────────────────────────────
+    bindLobby() {
+      $('lobby-create').addEventListener('click', () => this.openCreateStudy());
+      $('lobby-rename').addEventListener('click', () => { if (this.lobbyHandlers) this.lobbyHandlers.onRename(); });
+      $('lobby-code').addEventListener('keydown', (e) => e.stopPropagation());
+      $('lobby-code').addEventListener('input', () => { $('lobby-code').value = $('lobby-code').value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6); });
+      $('lobby-code-form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const code = $('lobby-code').value.trim().toUpperCase();
+        if (code.length !== 6) return this.lobbyError('초대 코드는 영숫자 6자예요.');
+        if (this.lobbyHandlers) this.lobbyHandlers.onEnter(code);
+      });
+      // 만들기 모달
+      const sel = $('sc-max');
+      for (let n = 2; n <= 12; n++) sel.appendChild(el('option', { value: String(n), text: `${n}명`, ...(n === 8 ? { selected: 'selected' } : {}) }));
+      for (const id of ['sc-name', 'sc-pass', 'sc-goal']) $(id).addEventListener('keydown', (e) => { if (e.key === 'Escape') this.closeCreateStudy(); e.stopPropagation(); });
+      $('sc-cancel').addEventListener('click', () => this.closeCreateStudy());
+      $('study-create').addEventListener('click', (e) => { if (e.target === $('study-create')) this.closeCreateStudy(); });
+      $('study-create-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const err = $('sc-error');
+        err.hidden = true;
+        const form = { name: $('sc-name').value.trim(), password: $('sc-pass').value, maxPlayers: Number($('sc-max').value), weeklyGoalMinutes: Number($('sc-goal').value) * 60 };
+        if (!form.name) { err.textContent = STUDY_ERR.invalid_name; err.hidden = false; return; }
+        if (form.password && (form.password.length < 4 || form.password.length > 20)) { err.textContent = STUDY_ERR.invalid_password; err.hidden = false; return; }
+        $('sc-submit').disabled = true;
+        try {
+          const r = this.lobbyHandlers ? await this.lobbyHandlers.onCreate(form) : { ok: false };
+          if (!r || !r.ok) { err.textContent = STUDY_ERR[r && r.error] || '만들지 못했어요.'; err.hidden = false; return; }
+          this.closeCreateStudy();
+        } finally {
+          $('sc-submit').disabled = false;
+        }
+      });
+      // 비밀번호 모달
+      $('sp-pass').addEventListener('keydown', (e) => { if (e.key === 'Escape') this.resolveStudyPass(null); e.stopPropagation(); });
+      $('sp-cancel').addEventListener('click', () => this.resolveStudyPass(null));
+      $('study-pass-form').addEventListener('submit', (e) => { e.preventDefault(); this.resolveStudyPass($('sp-pass').value); });
+    }
+
+    lobbyError(msg) {
+      const e = $('lobby-error');
+      e.textContent = msg || '';
+      e.hidden = !msg;
+    }
+
+    /**
+     * 로비: { nickname, mine, others } + handlers { onEnter(code), onCreate(form) → Promise<{ok}>, onRename() }
+     * 카드: 이름 · 접속/정원 · 🔒 · 이번 주 시간 · 그룹 스트릭 · 주간 목표 바. 목록: 이름·🔒·이번 주 시간
+     */
+    showLobby({ nickname, mine = [], others = [], error = '' }, handlers) {
+      this.inRoom = false;
+      this.builder.setVisible(false);
+      $('login').hidden = true;
+      if (handlers) this.lobbyHandlers = handlers;
+      $('lobby-nick').textContent = nickname ? `${nickname} 님` : '';
+      this.lobbyError(error);
+      const box = $('lobby-mine');
+      box.innerHTML = '';
+      $('lobby-mine-count').textContent = mine.length ? `${mine.length}개` : '';
+      if (!mine.length) box.appendChild(el('p', { class: 'hint lobby-empty', text: '아직 소속된 스터디가 없어요. 새로 만들거나 아래에서 골라 보세요.' }));
+      for (const s of mine) {
+        const ratio = s.weeklyGoalMinutes ? Math.min(1, s.weekSeconds / (s.weeklyGoalMinutes * 60)) : 0;
+        const bar = el('div', { class: `week-bar ${s.reached || ratio >= 1 ? 'done' : ''}` });
+        bar.style.width = `${Math.round(ratio * 100)}%`;
+        const card = el('button', { type: 'button', class: `study-card ${s.online ? 'live' : ''}`, 'data-code': s.code, onclick: () => this.lobbyHandlers && this.lobbyHandlers.onEnter(s.code) }, [
+          el('div', { class: 'study-card-head' }, [
+            el('span', { class: 'study-card-name', text: `${s.locked ? '🔒 ' : ''}${s.name}` }),
+            el('span', { class: 'study-card-count', text: `${s.online}/${s.maxPlayers}` }),
+          ]),
+          el('div', { class: 'study-card-stats' }, [
+            el('span', { text: `이번 주 ${fmtDuration(s.weekSeconds)}` }),
+            el('span', { text: s.streak > 0 ? `🔥 ${s.streak}일` : '🔥 -' , title: '그룹 스트릭' }),
+            s.isOwner ? el('span', { class: 'study-card-owner', text: '★ 방장' }) : null,
+          ]),
+          el('div', { class: 'goal-track' }, [bar]),
+          el('span', { class: 'hint', text: `목표 ${Math.round(s.weeklyGoalMinutes / 60)}시간 · ${Math.round(ratio * 100)}%${s.reached ? ' · 달성 🎆' : ''}` }),
+        ]);
+        box.appendChild(card);
+      }
+      const list = $('lobby-others');
+      list.innerHTML = '';
+      if (!others.length) list.appendChild(el('li', { class: 'empty', text: '다른 스터디가 아직 없어요.' }));
+      for (const s of others) {
+        list.appendChild(el('li', { 'data-code': s.code }, [
+          el('span', { class: 'name', text: `${s.locked ? '🔒 ' : ''}${s.name}` }),
+          el('span', { class: 'muted', text: `${s.online}/${s.maxPlayers}` }),
+          el('span', { class: 'time mono', text: `이번 주 ${fmtDuration(s.weekSeconds)}` }),
+          el('button', { class: 'btn small', type: 'button', text: '참가', onclick: () => this.lobbyHandlers && this.lobbyHandlers.onEnter(s.code) }),
+        ]));
+      }
+      $('lobby').hidden = false;
+    }
+
+    hideLobby() {
+      $('lobby').hidden = true;
+    }
+
+    get lobbyOpen() {
+      return !$('lobby').hidden;
+    }
+
+    openCreateStudy() {
+      $('sc-name').value = '';
+      $('sc-pass').value = '';
+      $('sc-goal').value = '20';
+      $('sc-error').hidden = true;
+      $('study-create').hidden = false;
+      setTimeout(() => $('sc-name').focus(), 50);
+    }
+
+    closeCreateStudy() {
+      $('study-create').hidden = true;
+    }
+
+    /** 잠긴 스터디 비밀번호를 묻는다. 취소하면 null. retryAfterMs 가 있으면 그동안 버튼을 잠근다 */
+    askStudyPassword({ name, error = '', retryAfterMs = 0 } = {}) {
+      $('sp-name').textContent = name || '스터디';
+      $('sp-pass').value = '';
+      const err = $('sp-error');
+      err.textContent = error;
+      err.hidden = !error;
+      $('study-pass').hidden = false;
+      const btn = $('sp-submit');
+      btn.disabled = false;
+      clearInterval(this.spLockTimer);
+      if (retryAfterMs > 0) {
+        const until = Date.now() + retryAfterMs;
+        const tick = () => {
+          const left = Math.ceil((until - Date.now()) / 1000);
+          if (left <= 0) { clearInterval(this.spLockTimer); btn.disabled = false; err.hidden = true; return; }
+          err.textContent = `비밀번호를 여러 번 틀렸어요. ${left}초 뒤에 다시 시도해 주세요.`;
+          err.hidden = false;
+          btn.disabled = true;
+        };
+        tick();
+        this.spLockTimer = setInterval(tick, 250);
+      }
+      setTimeout(() => $('sp-pass').focus(), 50);
+      return new Promise((resolve) => { this.spResolve = resolve; });
+    }
+
+    resolveStudyPass(value) {
+      clearInterval(this.spLockTimer);
+      $('study-pass').hidden = true;
+      const r = this.spResolve;
+      this.spResolve = null;
+      if (r) r(value);
+    }
+
     // ── 입장 모달 ────────────────────────────────────────────────────
     /**
      * 입장 정보를 받는다. submit 이 실패(reject)하면 에러를 보여주고 다시 기다린다.
      * passwordRequired 면 비밀번호 칸을 보여 준다(6단계). 거부 에러에 retryAfterMs 가 있으면 그동안 버튼을 잠그고 초를 센다.
      */
-    showLogin({ nickname = '', avatar = null, error = '', passwordRequired = false, password = '' }, submit) {
+    showLogin({ nickname = '', avatar = null, error = '', passwordRequired = false, password = '', target = null }, submit) {
       const modal = $('login');
       const form = $('login-form');
       const input = $('login-nick');
@@ -1658,7 +1944,11 @@
       const err = $('login-error');
       const btn = $('login-submit');
       this.inRoom = false;
+      this.hideLobby();
       this.closeAvatarModal();
+      $('login-target').hidden = !target;
+      if (target) $('login-target-name').textContent = `${target.locked ? '🔒 ' : ''}${target.name}`;
+      btn.disabled = false;
       $('login-avatar-slot').appendChild(this.builder.root);
       this.avatarTouched = avatar !== null && avatar !== undefined;
       this.setAvatar(avatar);

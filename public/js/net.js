@@ -3,11 +3,14 @@
  * 소켓 래퍼: 입장/재접속(세션 토큰), 서버 시각 동기화, 이벤트 중계.
  * 서버 → 클라이언트 이벤트는 그대로 이름을 유지해 on() 으로 구독한다.
  * 추가 이벤트: 'offline'(끊김), 'online'(재연결 직후), 'session'(입장/재입장 ack 적용), 'sessionLost'(토큰 만료로 새 입장 필요)
+ * 11단계: 로비(siteAuth · lobbyList · studyCreate · studyLookup) · join 에 study(코드)·studyPassword·studyAccess
+ *   · 잠긴 스터디는 비밀번호 대신 서버가 준 기기 접근 토큰(studyAccess)을 스터디별로 localStorage 에 두고 다음 입장 때 낸다 · 마지막 스터디 기억
  */
 (function () {
   'use strict';
 
-  const LS = { token: 'nsm.token', nickname: 'nsm.nickname', avatar: 'nsm.avatar', password: 'nsm.password' };
+  const LS = { token: 'nsm.token', nickname: 'nsm.nickname', avatar: 'nsm.avatar', password: 'nsm.password', lastStudy: 'nsm.lastStudy' };
+  const LS_STUDY_ACCESS = 'nsm.study.access.'; // + CODE → 그 스터디의 기기 접근 토큰 (비밀번호를 맞춘 기기에 서버가 발급)
   const FORWARD = [
     'playerJoined', 'playerLeft', 'playerMoved', 'move:correct', 'playerSat', 'playerStood', 'playerStatus',
     'avatar:update', 'playerEmoji', 'chat', 'pomodoro', 'roomCount', 'playerDisconnected', 'playerReconnected',
@@ -16,6 +19,7 @@
     'coins', 'playerPomodoro',
     'layout:update', 'playerDesk', 'playerEdit',
     'npc:remove',
+    'studyGoal', 'study:update', 'kicked', 'study:deleted',
   ];
 
   class Net {
@@ -23,7 +27,8 @@
       this.socket = null;
       this.listeners = new Map();
       this.session = null; // 마지막 join ack
-      this.credentials = null; // { nickname, avatar(파츠 객체), password? }
+      this.credentials = null; // { nickname, avatar(파츠 객체), password?(사이트), study(코드), studyAccess? }
+      this.study = null; // 지금 들어가 있는 스터디 (join ack 의 study)
       this.offset = 0; // serverTime - Date.now()
       this.corrections = 0; // 디버그/테스트용 카운터
       this.wasConnected = false;
@@ -59,11 +64,25 @@
           token: localStorage.getItem(LS.token) || null,
           nickname: localStorage.getItem(LS.nickname) || '',
           avatar: Net.savedAvatar(),
-          password: localStorage.getItem(LS.password) || '', // 6단계: 맞춘 방 비밀번호 (틀리면 지운다)
+          password: localStorage.getItem(LS.password) || '', // 6단계: 맞춘 사이트 비밀번호 (틀리면 지운다)
+          lastStudy: localStorage.getItem(LS.lastStudy) || '', // 11단계: 마지막으로 들어간 스터디 코드
         };
       } catch (_) {
-        return { token: null, nickname: '', avatar: null, password: '' };
+        return { token: null, nickname: '', avatar: null, password: '', lastStudy: '' };
       }
+    }
+
+    /** 스터디별 기기 접근 토큰 (비밀번호를 맞추면 서버가 발급. 서버가 무효라 하면 지운다 — 비밀번호 변경·내보내기) */
+    static studyAccess(code) {
+      try { return localStorage.getItem(LS_STUDY_ACCESS + String(code || '').toUpperCase()) || ''; } catch (_) { return ''; }
+    }
+
+    static saveStudyAccess(code, token) {
+      try {
+        const k = LS_STUDY_ACCESS + String(code || '').toUpperCase();
+        if (token) localStorage.setItem(k, token);
+        else localStorage.removeItem(k);
+      } catch (_) { /* 시크릿 모드 등 */ }
     }
 
     static save(patch) {
@@ -95,29 +114,75 @@
     }
 
     /**
-     * 입장 (또는 재입장). 실패하면 reject(Error(error)) — err.ack 에 서버 ack 전체(remaining, retryAfterMs 등).
-     * password 는 방 비밀번호가 켜진 서버에서만 의미가 있다. 성공하면 localStorage 에 기억하고, 틀리면 지운다.
+     * 입장 (또는 재입장). 실패하면 reject(Error(error)) — err.ack 에 서버 ack 전체(remaining, retryAfterMs, scope: 'site'|'study').
+     * password 는 사이트 비밀번호(ROOM_PASSWORD, 맞추면 기억·틀리면 지움), studyPassword 는 잠긴 스터디 비밀번호(기억하지 않는다).
+     * 잠긴 스터디는 이 기기가 가진 접근 토큰(studyAccess, 기본은 localStorage 의 것)을 함께 내고, 비밀번호를 맞춰 새 토큰을 받으면 저장한다.
+     * 서버가 비밀번호를 요구하면(토큰이 없거나 무효) 저장해 둔 토큰은 지운다. study 는 스터디 코드 (재접속 이어받기는 세션 토큰만으로도 된다).
      */
-    async join({ nickname, avatar, password = '' }) {
+    async join({ nickname, avatar, password = '', study = '', studyPassword = '', studyAccess }) {
       const saved = Net.saved();
+      const access = studyAccess || Net.studyAccess(study);
       const payload = { nickname, avatar, token: saved.token };
       if (password) payload.password = password;
+      if (study) payload.study = study;
+      if (studyPassword) payload.studyPassword = studyPassword;
+      if (access) payload.studyAccess = access;
       const ack = await this.ask('join', payload);
       if (!ack.ok) {
         if (ack.error === 'already_joined') return this.session;
-        if (ack.error === 'wrong_password' || ack.error === 'password_required') Net.save({ password: null });
+        if (ack.error === 'wrong_password' || ack.error === 'password_required') {
+          if (ack.scope === 'study') Net.saveStudyAccess(study, null);
+          else Net.save({ password: null });
+        }
         const err = new Error(ack.error);
         err.ack = ack;
         throw err;
       }
-      this.credentials = { nickname: ack.self.nickname, avatar: ack.self.avatar, password };
+      const code = ack.study ? ack.study.code : study;
+      if (ack.studyAccess && code) Net.saveStudyAccess(code, ack.studyAccess);
+      this.credentials = { nickname: ack.self.nickname, avatar: ack.self.avatar, password, study: code, studyAccess: ack.studyAccess || access || '' };
       this.session = ack;
+      this.study = ack.study || null;
       this.offset = ack.serverTime - Date.now();
-      Net.save({ token: ack.token, nickname: ack.self.nickname, avatar: ack.self.avatar, password: password || null });
+      Net.save({ token: ack.token, nickname: ack.self.nickname, avatar: ack.self.avatar, password: password || null, lastStudy: code || null });
       if (saved.token && !ack.resumed) this.emitLocal('sessionLost', ack);
       this.emitLocal('session', ack);
       return ack;
     }
+
+    // ── 로비 (11단계) ──
+    /** 사이트 비밀번호 (ROOM_PASSWORD). 성공하면 기억, 틀리면 지운다. 실패는 reject(Error(error)) + err.ack */
+    async siteAuth(password) {
+      const ack = await this.ask('site:auth', { password: password || '' });
+      if (!ack.ok) {
+        Net.save({ password: null });
+        const err = new Error(ack.error);
+        err.ack = { ...ack, scope: 'site' };
+        throw err;
+      }
+      Net.save({ password: password || null });
+      return ack;
+    }
+    lobbyList(nickname) { return this.ask('lobby:list', { nickname }); }
+    /** 스터디 만들기. 잠긴 스터디면 ack.studyAccess(만든 기기의 접근 토큰)를 저장한다 */
+    async studyCreate(form) {
+      const ack = await this.ask('study:create', form);
+      if (ack && ack.ok && ack.studyAccess) Net.saveStudyAccess(ack.study.code, ack.studyAccess);
+      return ack;
+    }
+    studyLookup(code) { return this.ask('study:lookup', { code }); }
+    studyInfo() { return this.ask('study:info', {}); }
+    /** 방장 설정 변경. 비밀번호를 바꾸면 이 기기의 새 접근 토큰(ack.studyAccess)을 저장하고, 풀면 지운다 */
+    async studyUpdate(patch) {
+      const ack = await this.ask('study:update', patch);
+      if (ack && ack.ok && patch && patch.password !== undefined) {
+        Net.saveStudyAccess(ack.study.code, ack.studyAccess || null);
+        if (this.credentials) this.credentials.studyAccess = ack.studyAccess || '';
+      }
+      return ack;
+    }
+    studyKick(nickname) { return this.ask('study:kick', { nickname }); }
+    studyDelete() { return this.ask('study:delete', {}); }
 
     ask(event, payload) {
       return new Promise((resolve, reject) => {
@@ -166,7 +231,7 @@
     petNpc(id) { return this.ask('npc:pet', { id }); }
     interact(id) { return this.ask('interact', { id }); }
     setListening(title) { return this.ask('listening', { title: title || null }); }
-    stats() { return this.ask('stats', {}); }
+    stats(scope = 'study') { return this.ask('stats', { scope }); }
     setGoal(goal) { return this.ask('goal:set', goal); }
     todoList() { return this.ask('todo:list', {}); }
     todoAdd(text) { return this.ask('todo:add', { text }); }
@@ -199,17 +264,29 @@
     /** 내 기록 초기화: 서버가 세션 토큰 + 닉네임을 확인한다 */
     resetProfile(nickname) { return this.ask('profile:reset', { nickname, token: Net.saved().token }); }
 
-    /** 나가기: 서버에서 즉시 정리하고 토큰을 버린다 */
-    async leave() {
-      try { await this.ask('leave', {}); } catch (_) { /* 이미 끊김 */ }
-      Net.save({ token: null });
+    /**
+     * 나가기: 서버에서 즉시 정리하고 토큰을 버린다. keepSocket 이면 소켓은 유지(로비로 돌아갈 때 — 사이트 인증도 유지된다).
+     * forgetStudy 면 마지막 스터디 기억도 지운다 (다음 접속 때 로비부터).
+     */
+    async leave({ keepSocket = false, forgetStudy = true } = {}) {
+      try { if (this.session) await this.ask('leave', {}); } catch (_) { /* 이미 끊김 */ }
+      Net.save({ token: null, ...(forgetStudy ? { lastStudy: null } : {}) });
       this.credentials = null;
       this.session = null;
-      if (this.socket) {
+      this.study = null;
+      if (this.socket && !keepSocket) {
         this.socket.disconnect();
         this.socket = null;
         this.wasConnected = false;
       }
+    }
+
+    /** 세션만 잊는다 (서버가 이미 내보낸 뒤: kicked · 스터디 삭제) */
+    dropSession({ forgetStudy = true } = {}) {
+      Net.save({ token: null, ...(forgetStudy ? { lastStudy: null } : {}) });
+      this.credentials = null;
+      this.session = null;
+      this.study = null;
     }
   }
 

@@ -2,7 +2,7 @@
 
 2D 탑뷰 멀티플레이 **스터디 메타버스**. 밤의 아늑한 스터디 카페 "우리의 스터디룸"에서 같이 공부하는 공간을 만듭니다.
 
-> **현재 단계: 5단계 — 아바타 커스터마이징.** 닉네임으로 입장해 다른 접속자와 같은 방을 걸어다니고(서버 이동 검증),
+> **현재 단계: 11단계 — 스터디 여러 개 (로비 · 코드/링크 참가 · 비밀번호 · 그룹 주간 목표).** 5단계까지의 요약: 닉네임으로 입장해 다른 접속자와 같은 방을 걸어다니고(서버 이동 검증),
 > 의자·푸프·소파에 앉고(E), 채팅·이모지·공부/휴식 상태를 공유하고 각자 뽀모도로를 돌립니다. 끊겨도 30초 안에 같은 세션으로 이어집니다.
 > 라운지의 갈색 푸들 "사랑" 은 서버가 움직이는 NPC 로, 가까이 가면 쳐다보고 E 로 쓰다듬을 수 있습니다.
 > 3단계에서는 목업처럼 두께감 있는 유리 스터디룸·슬라이딩 문으로 맵을 정리하고, 책상에 앉으면 모니터가 켜지고,
@@ -16,6 +16,20 @@
 > 개인 뽀모도로가 돌면 머리 위에 "🍅 18:32" / "☕ 4:10" 이 남에게도 보입니다.
 > 9단계에서는 **가구 상점**이 열렸습니다. 코인으로 책상 소품 12종(내 자리 책상 위에 3개 장착)과 공용 가구 11종(🛠 편집 모드로 방 안 어디든 배치,
 > 모두가 봄)을 삽니다. 침대에 누우면 💤, 안마의자는 흔들리고, 스탠드 조명은 주변을 밝힙니다. 배치는 `room_layout` 에 저장돼 서버를 재시작해도 남습니다.
+
+> 11단계에서는 **스터디를 여러 개** 만들 수 있습니다. 닉네임·아바타를 정하면 **로비**가 열리고, 내 스터디 카드(접속 인원/정원 · 🔒 · 이번 주 그룹 공부 시간 ·
+> 그룹 스트릭 · 주간 목표 진행 바)와 다른 스터디 목록에서 고르거나 새로 만들거나(이름·비밀번호·정원 2~12·주간 목표 5~100시간) 6자 코드/링크(`?study=CODE`)로 들어갑니다.
+> 스터디마다 사람·채팅·좌석·가구 배치·공용 펫·강아지가 따로이고, 코인·인벤토리·개인 펫·아바타·공부 기록·출석·목표·할 일은 사람에게 붙어 전역입니다.
+> 잠긴 스터디는 scrypt 해시 비교(5회 실패 → 30초 잠금), 한 번 맞추면 소속 멤버로 기록돼 다시 묻지 않습니다(방장이 비밀번호를 바꾸면 전원 다시).
+> 이번 주 멤버 전원의 공부 합이 주간 목표에 닿으면 **창밖 불꽃놀이 10초 + 조명 플래시 + 차임**, 접속 중인 멤버 모두 +10 🪙(오프라인 멤버는 다음 접속 때). 주 1회.
+
+| 로비 (내 스터디 카드 · 다른 스터디) | 스터디 만들기 |
+|---|---|
+| ![로비](screenshots/s11_lobby.png) | ![만들기](screenshots/s11_create.png) |
+
+| 잠긴 스터디 입장 (링크 → 비밀번호) | 그룹 목표 달성 연출 (창밖 불꽃놀이 · 토스트 · 팝오버) |
+|---|---|
+| ![잠긴 스터디](screenshots/s11_locked.png) | ![목표 달성](screenshots/s11_goal.png) |
 
 > 10단계에서는 **펫 상점**이 열렸습니다. 주인을 따라다니는 개인 펫 10종(어깨 위 앵무새, 통통 튀는 슬라임, 느린 거북이…), 방에 풀어 놓는 공용 펫 3종(고양이·거북이·어항 물고기, 최대 3마리),
 > 강아지를 포함한 모든 펫에 다는 꾸미기 8종(리본·목걸이·스카프·밀짚모자·비니·안경·왕관·날개), 펫별 행동 업그레이드 3종(이름 부르면 달려옴 · 옆에서 같이 자기 · 하이파이브).
@@ -67,9 +81,11 @@ null-study-meta/
 ├── supabase/schema.sql       # 영구 데이터 스키마 + 집계 SQL 함수 (여러 번 실행 안전, RLS on · 정책 없음)
 ├── server/
 │   ├── index.js              # Express 부트스트랩, /healthz, /api/rooms/studyroom, /api/oembed(유튜브 제목 프록시), Socket.io 부착, SIGTERM 시 세션 저장
-│   ├── socket.js             # 소켓 프로토콜 배선 (join/move/sit/status/interact/listening/chat/emoji/pomodoro/profile:reset/wallet/shop:buy/time:ping/leave/npc:*)
+│   ├── gate.js               # 사이트 비밀번호(ROOM_PASSWORD) 게이트 + 11단계 스터디 비밀번호(hashPassword/verifyPassword, createStudyGate) · 실패 5회 → 30초 잠금 공용
+│   ├── socket.js             # 소켓 프로토콜 배선 — 11단계: 로비(site:auth/lobby:list/study:create/study:lookup) · 스터디(study:info/update/kick/delete) · 방 안 이벤트는 Socket.io room `study:<id>` 로만
 │   ├── game/
-│   │   ├── world.js          # 방 실시간 상태: 플레이어·세션 토큰·좌석 점유·상태(공부/휴식/☕)·상호작용·듣는 중·유예 정리 (순수 로직)
+│   │   ├── hub.js            # 11단계: 스터디 허브 — 스터디 목록·소속·비밀번호·정원, 스터디마다 World 지연 생성/비면 5분 뒤 해제, 로비 데이터, 60일 비활성 삭제, 옛 데이터 마이그레이션, 그룹 목표 타이머
+│   │   ├── world.js          # 스터디 하나의 실시간 상태: 플레이어·세션 토큰·좌석 점유·상태(공부/휴식/☕)·상호작용·듣는 중·유예 정리 (순수 로직). 11단계: 편집 권한·그룹 주간 목표·랭킹 scope
 │   │   ├── movement.js       # 발 박스 충돌 + "경과 시간 × 최대 속도 × 1.5" 이동 예산 검증
 │   │   ├── nickname.js       # 닉네임 규칙(문자·숫자·공백·_- 12자) + 중복 시 "이름2"
 │   │   ├── chat.js           # 200자·HTML 이스케이프·300ms 도배 방지
@@ -85,9 +101,9 @@ null-study-meta/
 │   └── store/                # index.js(선택/폴백), memory.js, supabase.js (같은 인터페이스), stats.js(시간대·주 시작·스트릭 규칙 공용)
 ├── public/
 │   ├── index.html, css/style.css
-│   ├── js/main.js            # 부트스트랩: 방 데이터 fetch → Phaser 생성 → Net·UI·씬·FX 연결, 입장/재입장 흐름
-│   ├── js/net.js             # 소켓 래퍼: join/재접속(세션 토큰 localStorage), 서버 시각 동기화, 20Hz 이동 전송
-│   ├── js/ui.js              # HUD(방 이름·인원·뽀모도로 배지·설정·멤버·알림·♪·넓게 보기·나가기) + 사이드바(접을 수 있는 카드: 미니맵·오늘의 목표·할 일·뽀모도로·랭킹·유튜브·채팅) + 토스트·입장/초기화 모달 + 아바타 빌더(AvatarBuilder)
+│   ├── js/main.js            # 부트스트랩: 방 데이터 fetch → Phaser 생성 → Net·UI·씬·FX 연결. 11단계 흐름: 입장 화면 → (사이트 비밀번호) → 로비 / 링크·마지막 스터디로 바로 → 스터디, 나가기 → 로비
+│   ├── js/net.js             # 소켓 래퍼: join(study 코드·studyPassword·studyAccess)/재접속(세션 토큰 localStorage), 로비 API, 스터디별 기기 접근 토큰·마지막 스터디 기억, 서버 시각 동기화, 20Hz 이동 전송
+│   ├── js/ui.js              # HUD(스터디 배지 → 정보 팝오버·인원·뽀모도로 배지·설정·멤버·알림·♪·넓게 보기·나가기) + 사이드바(접을 수 있는 카드: 미니맵·오늘의 목표·할 일·뽀모도로·랭킹(이 스터디/전체)·유튜브·채팅) + 토스트·입장/로비/만들기/비밀번호/초기화 모달 + 아바타 빌더(AvatarBuilder)
 │   ├── js/avatar-schema.js   # 아바타 값 검증 (catalog 기준, 서버와 같은 파일을 require)
 │   ├── js/avatar.js          # AvatarKit: catalog + 레이어 PNG 로드, 팔레트 리컬러, 레이어 합성 시트/프레임 그리기
 │   ├── js/daylight.js        # 시간대 가중치(낮/노을/밤, 경계 30분) + 하늘 팔레트 + 실내 연출 강도 (순수 함수, 테스트 공용)
@@ -106,9 +122,11 @@ null-study-meta/
 │   ├── render_map.py         # 서버 방 데이터를 PNG 로 합성 (배치/충돌 검수)
 │   ├── screenshot.js         # puppeteer-core 로 게임 스크린샷 (2탭 접속 / 채팅 / 착석 / 전체 맵)
 │   ├── screenshot_stage3.js  # 3단계 검수 컷: 낮/노을/밤, 스터디룸 확대(모니터 켜짐), 커피, 전체 맵
+│   ├── screenshot_stage11.js # 11단계: 로비·스터디 만들기·잠긴 스터디 입장·목표 달성 연출 (서버를 스스로 띄운다)
 │   ├── compare_mockup.py     # 목업 | 게임 나란히 (screenshots/compare_mockup.png)
 │   └── lib/walk.js           # 헤드리스 브라우저에서 키보드로 한 타일씩 걷기 (테스트·스크린샷 공용)
-├── test/                     # node:test — setup.js 가 STORE=memory 강제 (단위 · 소켓 E2E · 지연 프록시 · 헤드리스 2탭)
+├── test/                     # node:test — setup.js 가 STORE=memory 강제. run.js 가 단위(병렬) / 소켓·브라우저·지연(직렬) 두 그룹으로 나눠 돌린다
+├── .github/workflows/test.yml # CI: npm test (Chrome 은 러너의 /usr/bin/google-chrome)
 └── screenshots/              # compare_mockup.png (목업 vs 게임), s3_day/sunset/night.png, s3_study_zoom.png, s3_coffee.png
 ```
 
@@ -119,7 +137,7 @@ npm install          # Node 22+ (권장 24)
 npm start            # http://localhost:3000  (개발 중 자동 재시작: npm run dev)
 ```
 
-브라우저 탭을 두 개 열어 서로 다른 닉네임으로 입장하면 같은 방에서 만납니다.
+브라우저 탭을 두 개 열어 서로 다른 닉네임으로 **같은 스터디**에 들어가면 만납니다 (11단계: 로비에서 스터디를 만들고 코드/링크로 초대).
 
 | 조작 | 키 |
 |---|---|
@@ -130,7 +148,7 @@ npm start            # http://localhost:3000  (개발 중 자동 재시작: npm 
 | 이모지 | **1 ~ 6** (좌하단 바 클릭도 가능). 머리 위 2초 |
 | 상태 전환 | 좌하단 "공부 중 / 휴식 중" 버튼. 아바타 머리 위 📖 / ☕ |
 
-- 화면: 좌상단 방 이름·인원, 우상단 설정(셔츠 색·닉네임 변경)·멤버·알림·나가기, 오른쪽 360px 사이드바에
+- 화면: 좌상단 스터디 이름(클릭 → 코드·링크 복사, 멤버, 주간 목표, 방장 설정)·인원, 우상단 설정·멤버·알림·나가기(→ 로비), 오른쪽 360px 사이드바에
   미니맵 · 오늘의 목표 · 오늘의 할 일 · 내 뽀모도로(집중/휴식 분 설정, 자동 전환, 서버 시각 기준) · 랭킹 · 채팅. 카드마다 접기/펼치기(상태 기억).
 - 캔버스는 사이드바를 뺀 영역에 꽉 차고(`Scale.RESIZE`) 카메라 줌 2배로 내 아바타를 따라갑니다. `pixelArt: true`.
 - 재접속: 입장 시 받은 세션 토큰을 localStorage 에 두고, 끊기면 "재접속 중" 배너 → 같은 토큰으로 기존 플레이어를 이어받습니다
@@ -140,13 +158,21 @@ npm start            # http://localhost:3000  (개발 중 자동 재시작: npm 
 ### 테스트
 
 ```bash
-npm test
+npm test            # 단위(병렬) → 소켓·브라우저·지연(직렬). 하나라도 실패하면 종료 코드 1
+npm run test:unit   # 순수 로직만 (game · room · store)
+npm run test:e2e    # 서버를 띄우는 테스트만, --test-concurrency=1
+node test/run.js --list   # 어떤 파일이 어느 그룹인지
 ```
 
 `test/setup.js` 가 테스트 프로세스에 `STORE=memory` 를 강제하고 `SUPABASE_*` 를 제거하므로 **실제 Supabase 로 절대 나가지 않습니다.**
+`test/run.js` 는 파일에 `boot(` / `startServer(` / `puppeteer` / `startDelayProxy` 가 있으면 e2e 그룹으로 분류해 **직렬**로 돌립니다
+(병렬로 돌리면 Chrome 여러 개 + 타이머 부하로 이동 전송·지연 호출이 밀려 가끔 실패했습니다). 브라우저 테스트는 Chrome 을 찾지 못하면 건너뜁니다
+(`CHROME_PATH`, 기본 후보: Windows 설치 경로 · `/usr/bin/google-chrome` · `/usr/bin/chromium`). 헤드리스 Chrome 은 `--disable-renderer-backgrounding` 등으로
+뒤로 간 탭의 rAF 를 늦추지 않게 띄웁니다(2탭 테스트에서 Phaser 씬 시계가 멈추던 원인). `.github/workflows/test.yml` 이 push/PR 마다 같은 명령을 돌립니다.
 
 | 파일 | 내용 |
 |---|---|
+| `stage11.test.js` | 11단계: 스터디 비밀번호 해시/검증·스터디 게이트(5회 → 잠금, 스터디별 키), 허브(코드 6자·이름 정규화·생성 검증·방장+멤버, 로비 목록 이번 주 합/그룹 스트릭/달성/최근 활동순·남의 스터디는 이름·🔒·시간만, 마이그레이션(study_id 없는 가구·펫 → 기본 스터디 + 옛 강아지 이름)·60일 비활성 삭제, 월드 지연 생성·비면 해제·닉네임 전역 유일·방장 없으면 첫 입장자, 방장 권한(설정·비밀번호 변경 시 기기 토큰 전부 무효·정원 축소 제한·내보내기(토큰 무효)·삭제는 비었을 때만·편집 권한), 그룹 주간 목표(진행 중 포함·주 1회·접속 중 즉시 +10·오프라인은 다음 입장 때)), 소켓 E2E(로비·만들기·코드 참가·없는 코드·정원 초과·격리(사람·채팅·가구·펫·강아지 이름)·랭킹 scope·study:info, 잠긴 스터디 필수/틀림/잠금/성공(기기 토큰 발급)→토큰으로 생략·같은 닉네임이라도 토큰 없는 기기는 입력→변경 알림·토큰 무효·재입력(방장 기기만 새 토큰)→해제·세션 토큰 재접속 복귀·kicked/삭제, studyGoal 이벤트·시스템 채팅·코인·profile.rewards), 브라우저(로비 → 만들기 🔒(기기 토큰) → 링크 탭 비밀번호 모달 틀림/맞음(토큰 저장) → 배지·팝오버·랭킹 scope → 불꽃놀이·알림 → 나가기 → 로비 카드 → 재입장 → 새 탭 자동 복귀 → 같은 닉네임·새 기기는 재입력 → 방장 비밀번호 변경 시 다른 기기 토큰 삭제·재입력) |
 | `game.test.js` | 단위: 닉네임 규칙/중복, 이동 예산(정상 속도 허용·순간이동 거부·벽), 채팅 이스케이프/도배, 뽀모도로 자동 전환, 월드(좌석 점유·상태 복귀·유예 재접속) |
 | `stage10.test.js` | 10단계: 카탈로그(개인 펫 10·공용 3·꾸미기 8·행동 3)·pets.json 앵커·petdeco.json 프레임, FollowerNpc(궤적 따라오기·벽 통과 안 함·순간이동 조건·멈추면 앉기·발밑 앉기/자기·앵무새 어깨·거북이 지연), 월드(구매→활성 펫 전환/교체/제거·이름·꾸미기 슬롯 검증·주인 퇴장 정리·재입장 복원, 공용 펫 풀기 3마리 제한/중복·회수/이름/꾸미기 권한·강아지 꾸미기 저장·재시작 로드, 스킬 펫별 1회·이름 부르면 달려옴·하이파이브·공용 펫 잠자리/속도/어항), 소켓 E2E(npc:update ownerId/cosmetics·npc:remove·pet:release/recall·npc:name 권한·npc:pet 반응·스킬 구매), 브라우저(펫·꾸미기 오버레이 렌더·지갑 펫/꾸미기 탭·설정 내 펫·npc:remove) |
 | `stage9.test.js` | 9단계: 카탈로그 23종·아틀라스 프레임 존재(아이콘 32x32·회전·애니·이불), 배치 규칙(빈 바닥/벽/좌석/문/스폰/맵 밖/기존 오브젝트/겹침/러그 예외/벽 전용/소파·책장·커피머신 위/사람이 선 셀/충돌 맵), 월드(구매 variant·책상 슬롯 장착·`playerDesk`, 배치/이동/회수·충돌 맵 반영·이동 검증, 잠금(먼저 잡은 사람·30초 만료·편집 종료/퇴장 해제·앉아 있으면 못 잡음), 권한("내가 놓은 것만" 접속 중/오프라인), 침대·안마의자(자동 휴식·공부로 못 바꿈·세션 없음·1인 점유·가로 침대 좌석), 재시작 로드), 소켓 E2E(ack `layout`·`layout:update`·`playerEdit`·`playerDesk`·동시 잡기 `locked`·끊기면 해제), 브라우저(지갑 가구 탭 카드·색 선택·구매·미리보기·편집 모드 배치 초록/빨강·R 회전·Del 회수·조명·침대 눕기 💤·책상 소품 표시) |
@@ -168,14 +194,21 @@ npm test
 
 | 클라이언트 → 서버 | ack / 결과 |
 |---|---|
-| `join { nickname, token?, avatar?, password? }` | `{ ok, resumed, token, self, players, seats, pomodoro, config, serverTime }` — `token` 이 살아 있으면 기존 플레이어를 이어받고 옛 소켓은 즉시 끊음. `avatar` 를 안 보내면(새 브라우저) `users.avatar` 에서 복원. `ROOM_PASSWORD` 가 켜져 있으면 `password` 필수 — 거부 시 `{ ok:false, error: password_required \| wrong_password, remaining \| locked, retryAfterMs }` (살아 있는 토큰으로 이어받을 땐 안 물음) |
+| `site:auth { password }` | 11단계: 사이트 비밀번호(`ROOM_PASSWORD`)를 로비 전에 통과. 통과한 소켓은 `join` 에서 다시 묻지 않음. 거부 `{ ok:false, error, scope:'site' }` |
+| `lobby:list { nickname }` | 11단계 로비: `{ ok, mine: [{ id, code, name, locked, online, maxPlayers, weeklyGoalMinutes, weekSeconds, streak, reached, memberCount, isOwner }], others: [{ code, name, locked, weekSeconds, online, maxPlayers }] }` |
+| `study:create { nickname, name, password?, maxPlayers?, weeklyGoalMinutes?, editPolicy? }` | 11단계: 누구나. 이름 1~20자 · 비밀번호 4~20자(선택) · 정원 2~12 · 주간 목표 300~6000분 · `anyone \| owner`. 만든 사람이 방장+멤버. `{ ok, study, studyAccess? }` (잠긴 스터디면 만든 기기의 접근 토큰) \| `invalid_name \| invalid_password \| invalid_max_players \| invalid_goal \| invalid_policy` |
+| `study:lookup { code }` | 11단계 링크 입장 화면용 `{ ok, study: { code, name, locked, online, maxPlayers, weeklyGoalMinutes } }` \| `no_study` |
+| `join { study, nickname, token?, avatar?, password?, studyPassword?, studyAccess? }` | `{ ok, resumed, token, self, study, studyAccess?, players, seats, pomodoro, config, serverTime }` — `study` 는 코드(또는 id). `token` 이 살아 있으면 스터디·비밀번호 없이 기존 플레이어를 이어받고 옛 소켓은 즉시 끊음. `avatar` 를 안 보내면(새 브라우저) `users.avatar` 에서 복원. `password` 는 사이트 비밀번호, `studyPassword` 는 잠긴 스터디 비밀번호 — 거부 시 `{ ok:false, error: password_required \| wrong_password, remaining \| locked, retryAfterMs, scope: 'site' \| 'study' }`. `studyAccess` 는 이 기기가 전에 받은 접근 토큰 — 유효하면 `studyPassword` 생략, 비밀번호를 맞추면 ack `studyAccess` 로 새 토큰 발급(방장도 토큰 없는 기기면 입력). 그 밖에 `no_study` · `study_full`(정원, 유예 중 포함) |
+| `study:info` | 11단계: `{ ok, study{ …, isOwner, memberCount }, members: [{ nickname, online, weekSeconds, lastSeenAt, isOwner }], week: { weekStart, totalSeconds, targetSeconds, reached }, streak }` |
+| `study:update { name?, password?, maxPlayers?, weeklyGoalMinutes?, editPolicy? }` | 방장만. `password: ''` 면 잠금 해제, 바꾸면 그 스터디의 기기 토큰 전부 무효 + 방 안 모두에게 `study:update { study, passwordChanged: true }` (다음 입장 때 재입력). 바꾼 방장 기기만 ack `studyAccess` 로 새 토큰. 정원은 지금 사람 수보다 작게 못 줄임(`too_many_players`) |
+| `study:kick { nickname }` / `study:delete` | 방장만. 내보내진 사람에게 `kicked`(그 닉네임의 기기 토큰도 무효), 다른 사람에게 `playerLeft { reason:'kicked' }`. 삭제는 다른 사람이 없을 때만(`not_empty`) — 가구·펫·소속·달성 기록까지 삭제 |
 | `move { x, y, facing, moving }` (20Hz, volatile) | 통과 시 다른 사람에게만 `playerMoved`. 거부(예산 초과·벽·착석 중) 시 **본인에게만** `move:correct { x, y, reason }` |
 | `sit { seatId }` / `stand` | 점유·거리(56px) 검사 → 모두에게 `playerSat` / `playerStood` |
 | `status { study \| rest }` | `playerStatus` |
 | `avatar:update { avatar }` | `{ ok, avatar }` (catalog 기준으로 정규화된 값) → **본인 포함** 모두에게 `avatar:update { id, avatar }`. 옛 정수 아바타(0..3)도 받아 상의 색으로 옮김 |
 | `interact { id }` | 상호작용 지점(`room.interactables`) 거리 검사. `coffee` 면 상태 `coffee`(☕ 휴식) ↔ `rest` 토글 → 모두에게 `playerStatus`. 앉으면 공부 중, 일어나면 휴식(커피 아님) |
 | `listening { title \| null }` | 유튜브 재생 중 제목(≤80자) → 모두에게 `playerListening { id, listening }` (닉네임 옆 ♪, 멤버 목록 "듣는 중") |
-| `stats` | `{ ok, store, tz, date, rows: [{ nickname, todaySeconds, weekSeconds, streak, weekDays, live, online }] }` — 진행 중 세션 초 포함, 서버 3초 캐시. 클라이언트는 5초 폴링 + `leaderboard:refresh` |
+| `stats { scope?: 'study' \| 'all' }` | `{ ok, store, tz, date, scope, rows: [{ nickname, todaySeconds, weekSeconds, streak, weekDays, live, online }] }` — 진행 중 세션 초 포함, 서버 3초 캐시. 11단계: `study` 면 이 스터디 멤버만(기본 탭), `all` 이면 전체(다른 스터디 접속자도 `online`). 클라이언트는 5초 폴링 + `leaderboard:refresh` |
 | `goal:set { text ≤20자, targetMinutes 30~480(30단위) }` | `{ ok, goal, reached }` → 모두에게 `playerGoal { id, goal }` (앉으면 팻말) |
 | `todo:list` / `todo:add { text }` / `todo:toggle { id, done }` / `todo:delete { id }` | 본인 닉네임의 할 일. 목록은 미완료 전부 + 오늘 완료한 것, 어제 이전 미완료는 `carried: true`(이월) 로 맨 위 |
 | `chat { text }` | 200자·이스케이프·300ms 검사 → 모두에게 `chat { id, nickname, text, ts }` |
@@ -184,7 +217,7 @@ npm test
 | `wallet` | 지갑: `{ ok, coins, carrySeconds, ledger: [...](최근 10건), inventory: [{ id, itemId, acquiredAt, meta, placed, slot }], tabs, categories, items, layoutLock }` (9단계: `placed` 방에 놓임, `slot` 책상 슬롯 번호) |
 | `shop:buy { itemId, variant? }` | 구매: 카탈로그 확인 → 변형(색/종류) 확인 → 잔액 확인·차감(저장소가 원자적으로) → `coin_ledger` → `inventory`(meta.variant). `{ ok, balance, item, inventory }` 또는 `{ ok:false, error: no_item \| no_variant \| insufficient, balance? }` |
 | `desk:equip { slots: [inventoryId \| null] x3 }` | 9단계 책상 슬롯 장착 (내 인벤토리의 책상 소품만, 중복 불가). ack `{ ok, deskItems }`, 모두에게 `playerDesk { id, deskItems }` |
-| `edit:mode { on }` | 9단계 편집 모드. ack `{ ok, editing }`, 모두에게 `playerEdit { id, editing }` (머리 위 🛠). 끄면 잡고 있던 가구를 놓는다 |
+| `edit:mode { on }` | 9단계 편집 모드. ack `{ ok, editing }`, 모두에게 `playerEdit { id, editing }` (머리 위 🛠). 끄면 잡고 있던 가구를 놓는다. 11단계: 스터디 `editPolicy` 가 `owner` 면 방장 외 `forbidden` (배치·이동·회수도) |
 | `layout:place { inventoryId, x, y, rotation }` | 9단계 배치. 서버가 규칙(`server/game/layout.js`)을 검증. ack `{ ok, entry }` 또는 `{ ok:false, error: no_item \| not_placeable \| already_placed \| blocked \| overlap \| wall_only \| needs_base \| out_of_bounds \| invalid_rotation \| player_in_way }`. 모두에게 `layout:update { op:'add', entry, by }` |
 | `layout:grab { id }` / `layout:release { id }` | 9단계 잡기/놓기 (드래그 시작/끝). 먼저 잡은 사람 우선 — 남이 잡고 있으면 `{ ok:false, error:'locked', by }`, 30초 손대지 않으면 풀림. `forbidden`(놓은 사람이 "내가 놓은 것만" 을 켬) · `occupied`(누가 앉아 있음). 모두에게 `layout:update { op:'grab' \| 'release', id, by }` |
 | `layout:move { id, x, y, rotation }` / `layout:remove { id }` | 9단계 이동(회전)/회수. 잠금이 없으면 잡으면서 처리. ack `{ ok, entry }` / `{ ok, id }`. 모두에게 `layout:update { op:'move', entry }` / `{ op:'remove', id, entry }`. 회수하면 놓은 사람 인벤토리에서 다시 놓을 수 있다 |
@@ -202,6 +235,10 @@ npm test
 강아지 NPC 는 서버가 행동을 정합니다 (`server/game/npc.js`): 라운지 러그 주변 어슬렁(40px/s) → 앉기 → 쿠션(24,9)에서 자기 → 가끔 방 안 산책(60px/s) 후 복귀.
 이동은 타일 중심을 잇는 BFS 경로라 벽·가구를 지키고(쿠션 타일만 예외), 플레이어와는 겹칩니다. 플레이어가 48px 안에 오면 멈춰서 그쪽을 보고 꼬리를 흔듭니다(`look`).
 `npc:update { id, kind, name, x, y, facing, state }` 를 걷는 동안 10Hz, 그 외엔 바뀔 때 + 1초 키프레임으로 보내고, 클라이언트는 100ms 늦게 선형 보간합니다. 입장 ack 의 `npcs` 에 현재 스냅샷이 들어 있습니다.
+
+11단계 서버 → 클라이언트: `studyGoal { weekStart, totalSeconds, targetSeconds, bonus, name }`(그룹 주간 목표 달성 — 불꽃놀이·플래시·차임) + 시스템 `chat { notify: true }`(알림 벨에도),
+`study:update { study, passwordChanged }`, `kicked`, `study:deleted`. 방 안 이벤트는 모두 Socket.io room `study:<id>` 안에서만 오갑니다(다른 스터디 사람·가구·펫은 보이지 않음).
+입장 ack 의 `profile.rewards` 에는 오프라인 사이 달성된 그룹 목표 보너스 `[{ studyId, studyName, weekStart, coins }]` 가 실려 오고 코인은 이미 지급돼 있습니다.
 
 그 밖에 `playerJoined`, `playerLeft { id, nickname, reason }`, `playerDisconnected`, `playerReconnected`, `roomCount { count }`,
 `leaderboard:refresh { nickname, seconds }`(세션 저장 시), `attendance { streak, weekDays }`(본인, 출석 기록 시), `goalReached { id, nickname }` + 시스템 `chat`.
@@ -231,18 +268,41 @@ HTTP: `GET /api/oembed?url=…` 은 유튜브 주소만 받아 서버가 oEmbed 
 ### Supabase 설정
 
 1. Supabase 프로젝트 → SQL Editor 에서 [`supabase/schema.sql`](supabase/schema.sql) 실행 (여러 번 실행해도 안전 — `if not exists` / `add column if not exists`).
-   테이블 `users`(8단계: `coins` · `coin_carry_seconds`, 9단계: `desk_items` · `layout_lock`, 10단계: `pet_config` 컬럼) · `study_sessions` · `todos` · `daily_goals` · `attendance` · `coin_ledger` · `inventory` · `room_layout`(9단계) · `room_pets`(10단계) 와
+   테이블 `users`(8단계: `coins` · `coin_carry_seconds`, 9단계: `desk_items` · `layout_lock`, 10단계: `pet_config` 컬럼) · `study_sessions` · `todos` · `daily_goals` · `attendance` · `coin_ledger` · `inventory` · `room_layout`(9단계, 11단계 `study_id`) · `room_pets`(10단계, 11단계 `study_id`) · `studies` · `study_members` · `study_goal_rewards` · `study_access`(11단계) 와
    함수 `study_totals(tz)` · `attendance_streaks(tz, only_nickname)` · `list_todos(nickname, tz)` · `adjust_coins(nickname, delta, reason, at)`(잔액 확인·차감·원장 기록을 한 트랜잭션으로) · `coin_stats(tz)` 가 생깁니다.
    모든 테이블은 RLS 가 켜져 있고 정책이 없으며 함수도 anon/authenticated 에서 실행을 막아 두어, **service_role 키를 가진 서버만** 접근합니다.
 2. `.env` 에 `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`(service_role) 를 넣고 서버를 시작하면 로그에 `store=supabase` 가 찍힙니다. 연결에 실패하면 경고 후 메모리로 폴백합니다.
 
-## 방 비밀번호 (6단계)
+## 스터디 여러 개 (11단계)
 
-`ROOM_PASSWORD` 환경변수를 넣으면 방 전체에 비밀번호가 걸립니다 (`server/gate.js`).
+- **구조**: 기존 스터디룸 맵은 "방 템플릿"이고, **스터디**(`studies`)가 방 인스턴스입니다. `server/game/hub.js` 가 스터디마다 `World` 를 처음 입장할 때 만들고(가구·펫 로드)
+  아무도 없으면 5분 뒤 메모리에서 내립니다(가구·공용 펫은 저장소에 남음). Socket.io room = `study:<id>`. 공부 세션·코인·랭킹은 전역 저장소이고
+  `StudyTracker` 하나를 모든 월드가 공유합니다(세션에 `studyId` 를 실어 스터디별 이벤트를 구분). 닉네임은 접속 중인 모든 스터디를 통틀어 하나입니다.
+- **저장소**: `studies(id, code 6자, name 20자, password_hash, owner_nickname, max_players 기본 8, weekly_goal_minutes 기본 1200, edit_policy, password_changed_at, created_at, last_active_at)` ·
+  `study_members(study_id, nickname, joined_at, last_seen_at)`(소속 — 로비 카드·멤버 목록 표시용) · `study_access(study_id, token_hash, nickname, created_at, last_used_at)`(잠긴 스터디 기기 토큰의 sha256 해시) ·
+  `study_goal_rewards(study_id, week_start, nickname, awarded_at)`. `room_layout` · `room_pets` 에 `study_id`.
+  서버 시작 때 스터디가 하나도 없고 `study_id` 없는 옛 가구·펫이 있으면 "우리의 스터디룸" 을 만들어 옮기고 옛 강아지 이름(`users.dog_name`)을 잇습니다. 방장이 없는 스터디는 첫 입장자가 방장.
+  60일간 아무도 안 들어온 스터디는 서버 시작 때 삭제합니다. 메모리 저장소도 같은 인터페이스입니다.
+- **로비**: 닉네임·아바타(사이트 비밀번호가 있으면 먼저) → 내 스터디 카드(접속/정원 · 🔒 · 이번 주 그룹 시간 · 그룹 스트릭(멤버 중 한 명이라도 출석한 연속 일수) · 주간 목표 진행 바) /
+  다른 스터디 찾기(이름·🔒·이번 주 시간) / 스터디 만들기 / 코드로 참가. `?study=CODE` 링크면 로비 없이 그 스터디로(입장 화면에 스터디 이름 표시).
+  마지막 들어간 스터디는 `nsm.lastStudy` 에 기억해 다음 접속 때 바로 들어갑니다(나가기를 누르면 잊음).
+- **비밀번호**: 스터디별 scrypt 해시(`scrypt$salt$hash`)를 저장하고 `gate.js` 의 잠금 규칙(5회 실패 → 30초, 키 = IP|스터디)을 그대로 씁니다.
+  생략 기준은 닉네임이 아니라 **기기**입니다: 비밀번호를 맞춘(또는 잠긴 스터디를 만든·비밀번호를 바꾼) 기기에 서버가 무작위 32바이트 접근 토큰을 주고 `study_access` 에는 sha256 해시만 둡니다.
+  클라이언트는 토큰을 `nsm.study.access.<CODE>` 에 보관해 다음 입장 때 내고(비밀번호 자체는 저장하지 않음), 없거나 무효면 다시 입력합니다. 방장이 비밀번호를 바꾸거나 풀면 그 스터디 토큰이 전부 무효(방장 기기만 새 토큰),
+  내보내진 사람의 토큰도 무효. 방장이라도 토큰 없는 기기면 입력합니다. `study_members`(소속)는 표시용일 뿐 입장 권한과 무관하고, 잠기지 않은 스터디는 누구나 들어갑니다.
+- **스터디 안**: 좌상단 배지(이름+🔒, 인원) → 팝오버에 코드·링크 복사, 이번 주 목표 진행 바, 그룹 스트릭, 멤버(접속 중/오프라인·이번 주 시간·★ 방장), 방장이면 이름·비밀번호·정원·주간 목표·편집 권한(누구나/방장만) 변경 · 멤버 내보내기 · 스터디 삭제(다른 사람이 있으면 불가).
+  우상단 나가기 → 로비. 알림 벨에 멤버 입장·목표 달성·펫 풀림. 랭킹 카드 "이 스터디 / 전체" 토글(기본 이 스터디).
+- **그룹 목표**: 이번 주(월요일 기준) 멤버 전원 공부 합(진행 중 세션 포함)이 목표에 닿으면 — 창밖 불꽃놀이 10초 + 조명 플래시 + 차임 + 토스트 + 시스템 채팅, 접속 중인 멤버 전원 +10 🪙(`weekly_goal`). 주 1회.
+  오프라인 멤버는 `study_goal_rewards` 에 남겨 두었다가 다음 접속 때 토스트 + 코인. 검사는 세션 저장 때와 30초마다.
+- **테스트 도우미**: `test/helpers.js` 의 `boot()` 가 기본 스터디('테스트 스터디')를 만들어 `srv.study / srv.code / srv.world`(잠겼으면 `srv.access` = 방장 기기 토큰) 로 주고, `joinAs()` 는 `study` 를 안 주면 그 코드를 채워 예전 테스트가 그대로 돕니다. 브라우저 테스트는 `pageUrl(srv)`(`?study=CODE`)로 로비를 건너뜁니다.
+
+## 사이트 비밀번호 (6단계)
+
+`ROOM_PASSWORD` 환경변수를 넣으면 사이트 전체에 비밀번호가 걸립니다 (`server/gate.js`). 11단계부터는 로비 전에 묻습니다(`site:auth`); 스터디별 비밀번호와는 별개입니다.
 
 - 서버는 시작할 때 무작위 솔트로 **scrypt 해시**만 들고 있고, 입장 때 받은 값을 같은 방식으로 해시해 `timingSafeEqual` 로 비교합니다. 평문은 로그·ack·월드 어디에도 남기지 않습니다 (로그엔 `password=on/off` 와 실패 횟수·IP 만).
 - 클라이언트(IP, 프록시 뒤에서는 `X-Forwarded-For` 첫 IP)별로 **5회 연속 실패 → 30초 잠금**. 잠긴 동안은 `locked { retryAfterMs }` 로 즉시 거부되고, 입장 화면은 남은 초를 세며 버튼을 막습니다. 맞추면 실패 횟수가 초기화됩니다.
-- 입장 화면은 `GET /api/config` 의 `passwordRequired` 를 보고 비밀번호 칸을 보입니다. **맞춘 값은 `localStorage`(`nsm.password`) 에 기억**해 다음 접속·재연결 때 자동으로 보내고, 틀리면 지웁니다. 살아 있는 세션 토큰으로 이어받는 재접속은 비밀번호를 다시 묻지 않습니다.
+- 입장 화면은 `GET /api/config` 의 `passwordRequired` 를 보고 비밀번호 칸을 보입니다. **맞춘 값은 `localStorage`(`nsm.password`) 에 기억**해 다음 접속·재연결 때 자동으로 보내고, 틀리면 지웁니다. 살아 있는 세션 토큰으로 이어받는 재접속은 비밀번호를 다시 묻지 않습니다. `join` 거부 ack 의 `scope` 로 사이트/스터디 비밀번호를 구분합니다.
 - 비워두면 게이트가 꺼져 지금까지처럼 누구나 입장합니다. 바꾸려면 서버를 재시작합니다.
 
 ## 설정·UI (7단계)
@@ -408,7 +468,7 @@ python tools/avatar_parts.py     # public/assets/avatar/ (catalog.json + 레이�
 | `SUPABASE_URL` | – | Supabase 프로젝트 URL |
 | `SUPABASE_SERVICE_KEY` | – | Supabase **service_role** 키 (서버 전용, 클라이언트 노출 금지) |
 | `STATS_TZ` | `Asia/Seoul` | 통계 시간대 (오늘/이번 주/출석의 0시·월요일 기준) |
-| `ROOM_PASSWORD` | – | 방 전체 비밀번호 (6단계). 비워두면 누구나 입장 |
+| `ROOM_PASSWORD` | – | 사이트 전체 비밀번호 (6단계, 로비 전에 묻는다). 비워두면 누구나. 스터디별 비밀번호는 로비에서 만들 때 정한다 |
 
 ## Render 배포 (Free)
 
@@ -424,11 +484,13 @@ python tools/furniture.py                                            # 9단계 �
 node tools/screenshot_stage9.js                                      # 9단계: 지갑 가구 탭·책상 소품·편집 모드·침대 (서버를 스스로 띄운다)
 python tools/pet_sprites.py                                          # 10단계 펫 12종 시트 + 꾸미기 아틀라스 + tools/out/pets_row.png
 node tools/screenshot_stage10.js                                     # 10단계: 방 안 펫들·꾸미기 장착 예시 (서버를 스스로 띄운다)
+node tools/screenshot_stage11.js                                     # 11단계: 로비·스터디 만들기·잠긴 스터디 입장·목표 달성 연출 (서버를 스스로 띄운다)
 python tools/compare_mockup.py                                        # screenshots/compare_mockup.png
 ```
 
 ## 다음 단계
 
+- 스터디별 방 템플릿 선택(맵 여러 개), 스터디 간 이동 문
 - 상점 탈것 탭 채우기 (가구는 9단계, 펫·펫 꾸미기는 10단계에서 완성)
 - 뽀모도로 회차 기록, 주간 리포트
 - 유리문/입구 `doors` 로 방 이동, 실외 연결
