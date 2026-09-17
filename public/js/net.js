@@ -14,6 +14,7 @@
     'npc:update', 'npc:pet', 'npc:name', 'playerListening',
     'playerGoal', 'leaderboard:refresh', 'attendance', 'goalReached',
     'coins', 'playerPomodoro',
+    'layout:update', 'playerDesk', 'playerEdit',
   ];
 
   class Net {
@@ -176,8 +177,19 @@
     pomodoroStop() { return this.ask('pomodoro:stop', {}); }
     /** 지갑 (8단계): 잔액 · 최근 거래 · 인벤토리 · 카탈로그 */
     wallet() { return this.ask('wallet', {}); }
-    /** 구매: 서버가 잔액 확인·차감·원장·인벤토리까지 처리한다 */
-    buy(itemId) { return this.ask('shop:buy', { itemId }); }
+    /** 구매: 서버가 잔액 확인·차감·원장·인벤토리까지 처리한다 (variant: 색/종류) */
+    buy(itemId, variant) { return this.ask('shop:buy', variant ? { itemId, variant } : { itemId }); }
+    // ── 가구 (9단계) ──
+    /** 책상 슬롯 3개 장착: [inventoryId | null] */
+    equipDesk(slots) { return this.ask('desk:equip', { slots }); }
+    setEditing(on) { return this.ask('edit:mode', { on: Boolean(on) }); }
+    layoutPlace(inventoryId, x, y, rotation = 0) { return this.ask('layout:place', { inventoryId, x, y, rotation }); }
+    layoutGrab(id) { return this.ask('layout:grab', { id }); }
+    layoutRelease(id) { return this.ask('layout:release', { id }); }
+    layoutMove(id, x, y, rotation) { return this.ask('layout:move', { id, x, y, rotation }); }
+    layoutRemove(id) { return this.ask('layout:remove', { id }); }
+    /** "내가 놓은 것만 이동·회수" 설정 */
+    layoutLock(on) { return this.ask('layout:lock', { on: Boolean(on) }); }
     /** 내 기록 초기화: 서버가 세션 토큰 + 닉네임을 확인한다 */
     resetProfile(nickname) { return this.ask('profile:reset', { nickname, token: Net.saved().token }); }
 

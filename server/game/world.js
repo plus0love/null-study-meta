@@ -8,12 +8,17 @@
  *  - 5단계: 아바타는 파츠 객체(avatar.js 카탈로그 검증) — users.avatar 에 저장하고 재입장 시 복원.
  *  - 8단계: 코인 — 세션 저장 시 10분당 1코인(남은 초는 users.coin_carry_seconds 로 이월), 집중 사이클 완주(앉아서 공부 중 유지) 시 5코인 (coins.js).
  *    잔액·원장·이월 초·인벤토리는 store.
- *    상점(shop.js)은 카탈로그가 비어 있는 뼈대 — purchase 는 잔액 확인·차감·원장·인벤토리까지 한다.
+ *    상점(shop.js) — purchase 는 잔액 확인·차감·원장·인벤토리까지 한다 (색/종류 variant 선택).
+ *  - 9단계: 가구. 공용 가구 배치(layout: room_layout, 규칙은 layout.js)·편집 모드·가구 잠금(먼저 잡은 사람 우선)·
+ *    권한(놓은 사람의 "내가 놓은 것만" 설정)·충돌 맵 반영(this.room.collision 을 다시 만든다)·동적 좌석(빈백/안마의자/침대 = f:<id>).
+ *    침대·안마의자에 앉으면 자동 휴식(공부로 못 바꿈, 세션 안 쌓임). 책상 소품은 users.desk_items 슬롯 3개 → player.deskItems.
  * 이벤트: 'playerLeft' (유예 시간이 지나 정리될 때), 'pomodoro' (snap, reason, player — 개인 타이머 상태 변화),
  *         'npcUpdate' (NPC 스냅샷, 10Hz), 'npcPet' ({ npc, by, nickname }), 'npcName' ({ npc, name }),
  *         'sessionSaved' { nickname, playerId, seconds }, 'attendance' { nickname, playerId, streak, weekDays, inserted },
  *         'goalReached' { nickname, playerId, todaySeconds, targetMinutes },
  *         'coins' { nickname, playerId, delta, reason, balance } (코인 증감이 저장된 뒤)
+ *         'layout' { op: 'add'|'move'|'remove'|'grab'|'release', entry?, id?, by } (배치 변경 — 소켓이 layout:update 로 방송)
+ *         'desk' { player } (책상 소품 변경), 'editing' { player } (편집 모드 on/off)
  */
 const EventEmitter = require('node:events');
 const crypto = require('node:crypto');
@@ -29,7 +34,8 @@ const { DEFAULT_TZ, dateKey, isValidTz } = require('../store/stats');
 const { FACING_DELTA, interactableById } = require('../rooms/build');
 const { normalizeAvatar } = require('./avatar');
 const { settleStudy, focusBonusFor } = require('./coins');
-const { createShop } = require('./shop');
+const { createShop, pickVariant } = require('./shop');
+const { validatePlacement, buildCollision, seatOf, cellsOf } = require('./layout');
 
 const GRACE_MS = 30 * 1000; // 연결 끊김 후 플레이어를 유지하는 시간
 const SIT_RANGE_PX = 56; // 좌석 중심까지 이 거리 안이어야 앉을 수 있다 (대각선 인접 포함)
@@ -43,6 +49,9 @@ const GOAL_MIN = 30; // 분
 const GOAL_MAX = 8 * 60;
 const GOAL_STEP = 30;
 const TODO_MAX = 60;
+const LOCK_MS = 30 * 1000; // 편집 잠금: 잡은 뒤 이만큼 손대지 않으면 풀린다
+const DESK_SLOTS = 3;
+const RESTING_SEATS = new Set(['bed', 'massage']); // 앉으면 자동 휴식 (공부로 못 바꿈)
 
 function seatCenter(room, seat) {
   return { x: (seat.x + 0.5) * room.tileSize, y: (seat.y + 1) * room.tileSize };
@@ -51,7 +60,10 @@ function seatCenter(room, seat) {
 class World extends EventEmitter {
   constructor(room, { graceMs = GRACE_MS, pomodoro = {}, npc = {}, now = () => Date.now(), store = null, tz = DEFAULT_TZ, study = {}, shop = undefined, log = console } = {}) {
     super();
-    this.room = room;
+    // 충돌 맵은 배치 가구에 따라 바뀌므로 방 데이터를 얕게 복사하고 collision 만 새로 만든다 (NPC 도 같은 객체를 본다)
+    this.baseRoom = room;
+    this.room = { ...room, collision: room.collision.map((r) => r.slice()) };
+    this.roomId = room.id;
     this.now = now;
     this.log = log;
     this.graceMs = graceMs;
@@ -69,11 +81,13 @@ class World extends EventEmitter {
     this.chatLimiter = createRateLimiter();
     this.pomodoroOpts = { ...pomodoro, now }; // 개인 타이머 기본값 (테스트: focusMs/breakMs)
     this.pomodoros = new Map(); // playerId → Pomodoro (7단계: 개인별, 퇴장하면 정리)
-    this.shop = createShop(shop); // 8단계: 카탈로그 (기본은 비어 있음, 테스트가 아이템을 넣는다)
+    this.shop = createShop(shop); // 8단계: 카탈로그 (테스트는 임시 아이템을 넣는다)
     this.pendingAwards = new Set(); // 진행 중인 코인 저장 Promise (dispose 가 기다림)
+    this.layout = new Map(); // 9단계: layoutId → 배치 항목 { id, itemId, inventoryId, x, y, rotation, meta, placedBy, placedAt }
+    this.locks = new Map(); // layoutId → { by: playerId, at } (편집 잠금)
 
     // 강아지 NPC: 접속 중인 플레이어 위치를 보고 행동한다. npc.autoStart === false 면 테스트가 직접 tick() 한다.
-    this.dog = new DogNpc(room, { ...npc, now });
+    this.dog = new DogNpc(this.room, { ...npc, now });
     this.dog.players = () => [...this.players.values()].filter((p) => p.connected);
     this.dog.on('update', (snap) => this.emit('npcUpdate', snap));
     this.dog.on('pet', ({ by, id }) => this.emit('npcPet', { npc: this.dog.id, by, playerId: id, name: this.dog.name }));
@@ -88,6 +102,7 @@ class World extends EventEmitter {
       const name = await this.store.getLatestDogName();
       if (name) this.dog.setName(name);
       await this.study.refreshTotals();
+      await this.loadLayout();
     } catch (err) {
       this.log.warn(`[world] 저장소 초기 로드 실패: ${err.message}`);
     }
@@ -112,7 +127,13 @@ class World extends EventEmitter {
 
   /** 다른 클라이언트에 보내는 공개 정보 */
   publicPlayer(p) {
-    return { id: p.id, nickname: p.nickname, avatar: p.avatar, x: p.x, y: p.y, facing: p.facing, moving: p.moving, status: p.status, seatId: p.seatId, connected: p.connected, listening: p.listening || null, goal: this.publicGoal(p.nickname), pomodoro: this.publicPomodoro(p) };
+    return { id: p.id, nickname: p.nickname, avatar: p.avatar, x: p.x, y: p.y, facing: p.facing, moving: p.moving, status: p.status, seatId: p.seatId, connected: p.connected, listening: p.listening || null, goal: this.publicGoal(p.nickname), pomodoro: this.publicPomodoro(p), editing: Boolean(p.editing), deskItems: this.publicDeskItems(p) };
+  }
+
+  /** 책상 소품 슬롯 (9단계): [{ itemId, variant } | null] x3 */
+  publicDeskItems(p) {
+    const arr = Array.isArray(p.deskItems) ? p.deskItems : [];
+    return Array.from({ length: DESK_SLOTS }, (_, i) => (arr[i] ? { itemId: arr[i].itemId, variant: arr[i].variant || null } : null));
   }
 
   /** 머리 위 타이머 표시용 (8단계): 진행 중이면 { phase, endsAt }, 아니면 null. 남은 시간은 각자 서버 시각으로 계산한다 */
@@ -172,6 +193,9 @@ class World extends EventEmitter {
       prevStatus: 'rest',
       seatId: null,
       listening: null, // 유튜브 카드에서 재생 중인 영상 제목 (본인만 소리, 남들에겐 ♪ 표시)
+      editing: false, // 9단계: 편집 모드 (머리 위 🛠)
+      deskItems: [null, null, null], // 9단계: 책상 소품 { inventoryId, itemId, variant } | null
+      layoutLock: false, // 9단계: 내가 놓은 가구는 나만 이동·회수
       connected: true,
       disconnectedAt: null,
       budget: maxBudget(),
@@ -200,6 +224,7 @@ class World extends EventEmitter {
       out.goal = this.publicGoal(player.nickname);
       out.streak = await this.store.attendanceOf(player.nickname, { tz: this.tz, now: this.now() });
       out.coins = await this.store.getCoins(player.nickname);
+      await this.loadDesk(player);
     } catch (err) {
       this.log.warn(`[world] 프로필 로드 실패 (${player.nickname}): ${err.message}`);
     }
@@ -234,6 +259,7 @@ class World extends EventEmitter {
     this.chatLimiter.forget(id);
     const pomo = this.pomodoros.get(id);
     if (pomo) { pomo.dispose(); this.pomodoros.delete(id); }
+    this.releaseLocks(player);
     player.removed = true;
     this.study.sync(player); // 앉은 채 나가면 세션 저장
     this.emit('playerLeft', player, reason);
@@ -253,8 +279,29 @@ class World extends EventEmitter {
   }
 
   // ── 좌석 ────────────────────────────────────────────────────────────
+  /** 방 좌석 또는 배치 가구 좌석(f:<layoutId> — 빈백/안마의자/침대) */
   seat(seatId) {
+    if (typeof seatId !== 'string') return null;
+    if (seatId.startsWith('f:')) return this.layoutSeat(this.layout.get(Number(seatId.slice(2))));
     return this.room.seats.find((s) => s.id === seatId) || null;
+  }
+
+  /** 배치 항목의 좌석 { id: 'f:<id>', x, y, facing, kind, layoutId } | null */
+  layoutSeat(entry) {
+    if (!entry) return null;
+    const item = this.shop.get(entry.itemId);
+    const s = item && seatOf(item.sprite, entry.x, entry.y, entry.rotation || 0);
+    return s ? { id: `f:${entry.id}`, x: s.tx, y: s.ty, facing: s.facing, kind: s.kind, layoutId: entry.id } : null;
+  }
+
+  /** 방 좌석 + 배치 가구 좌석 전부 */
+  allSeats() {
+    const out = [...this.room.seats];
+    for (const e of this.layout.values()) {
+      const s = this.layoutSeat(e);
+      if (s) out.push(s);
+    }
+    return out;
   }
 
   /** @returns {{ ok: true, seat } | { ok: false, error }} */
@@ -274,9 +321,16 @@ class World extends EventEmitter {
     player.moving = false;
     // 커피(☕ 휴식) 중에 앉으면 공부 중 → 일어날 때는 커피가 아니라 휴식으로
     player.prevStatus = player.status === 'coffee' ? 'rest' : player.status;
-    player.status = 'study';
+    // 침대·안마의자는 자동 휴식 (세션이 쌓이지 않는다). 일어나면 앉기 전 상태로
+    player.status = RESTING_SEATS.has(seat.kind) ? 'rest' : 'study';
     this.study.sync(player);
     return { ok: true, seat };
+  }
+
+  /** 앉아 있는 좌석의 종류 ('bed' | 'massage' | 'beanbag' | 의자 이름) 또는 null */
+  seatKindOf(player) {
+    const s = player.seatId ? this.seat(player.seatId) : null;
+    return s ? s.kind : null;
   }
 
   /** @returns {{ ok: true } | { ok: false, error }} */
@@ -298,6 +352,7 @@ class World extends EventEmitter {
   // ── 상태 / 채팅 / 이모지 ────────────────────────────────────────────
   setStatus(player, status) {
     if (!MANUAL_STATUSES.includes(status)) return { ok: false, error: 'invalid' };
+    if (status === 'study' && RESTING_SEATS.has(this.seatKindOf(player))) return { ok: false, error: 'resting' }; // 침대/안마의자에서는 휴식만
     player.status = status;
     player.prevStatus = status;
     this.study.sync(player); // 앉은 채 휴식으로 바꾸면 세션 종료, 다시 공부면 새 세션
@@ -443,7 +498,7 @@ class World extends EventEmitter {
     return this.award(player.nickname, player.id, bonus, 'focus');
   }
 
-  /** 지갑: 잔액 · 이월 초(다음 코인까지 계산용) · 최근 거래 10건 · 인벤토리 · 카탈로그(탭 + 아이템) */
+  /** 지갑: 잔액 · 이월 초(다음 코인까지 계산용) · 최근 거래 10건 · 인벤토리(placed/slot 표시) · 카탈로그(탭 + 카테고리 + 아이템) */
   async wallet(player) {
     const [coins, carrySeconds, ledger, inventory] = await Promise.all([
       this.store.getCoins(player.nickname),
@@ -451,19 +506,231 @@ class World extends EventEmitter {
       this.store.coinLedger(player.nickname, 10),
       this.store.listInventory(player.nickname),
     ]);
-    return { ok: true, coins, carrySeconds, ledger, inventory, tabs: this.shop.tabs, items: this.shop.items };
+    const placed = new Set([...this.layout.values()].map((e) => e.inventoryId));
+    const equipped = new Map((player.deskItems || []).map((d, i) => [d && d.inventoryId, i]).filter(([k]) => k !== null && k !== undefined));
+    const inv = inventory.map((i) => ({ ...i, placed: placed.has(i.id), slot: equipped.has(i.id) ? equipped.get(i.id) : null }));
+    return { ok: true, coins, carrySeconds, ledger, inventory: inv, tabs: this.shop.tabs, categories: this.shop.categories, items: this.shop.items, layoutLock: Boolean(player.layoutLock) };
+  }
+
+  // ── 가구: 책상 소품 · 공용 가구 배치 · 편집 잠금 (9단계) ────────────────
+  /** 저장된 책상 슬롯·잠금 설정을 플레이어에 싣는다 (입장 때) */
+  async loadDesk(player) {
+    const u = await this.store.getUser(player.nickname);
+    player.layoutLock = Boolean(u && u.layoutLock);
+    const ids = (u && Array.isArray(u.deskItems) ? u.deskItems : []).slice(0, DESK_SLOTS);
+    player.deskItems = await this.resolveDesk(player.nickname, ids);
+  }
+
+  /** inventory id 배열 → [{ inventoryId, itemId, variant } | null] (없어졌거나 책상 소품이 아니면 null) */
+  async resolveDesk(nickname, ids) {
+    const inv = ids.some((id) => id !== null && id !== undefined) ? await this.store.listInventory(nickname) : [];
+    return Array.from({ length: DESK_SLOTS }, (_, i) => {
+      const id = ids[i];
+      const row = id === null || id === undefined ? null : inv.find((r) => r.id === Number(id));
+      const item = row && this.shop.get(row.itemId);
+      return item && item.category === 'desk' ? { inventoryId: row.id, itemId: row.itemId, variant: row.meta.variant || null } : null;
+    });
+  }
+
+  /**
+   * 책상 슬롯 장착: slots = [inventoryId | null] x3. 내 인벤토리의 책상 소품만, 같은 것을 두 슬롯에 못 넣는다.
+   * @returns {{ ok: true, deskItems } | { ok: false, error: 'invalid' | 'no_item' | 'not_desk' | 'duplicate' }}
+   */
+  async equipDesk(player, slots) {
+    if (!Array.isArray(slots) || slots.length > DESK_SLOTS) return { ok: false, error: 'invalid' };
+    const ids = Array.from({ length: DESK_SLOTS }, (_, i) => (slots[i] === null || slots[i] === undefined ? null : Number(slots[i])));
+    if (ids.some((id) => id !== null && !Number.isInteger(id))) return { ok: false, error: 'invalid' };
+    const used = ids.filter((id) => id !== null);
+    if (new Set(used).size !== used.length) return { ok: false, error: 'duplicate' };
+    const inv = used.length ? await this.store.listInventory(player.nickname) : [];
+    for (const id of used) {
+      const row = inv.find((r) => r.id === id);
+      if (!row) return { ok: false, error: 'no_item' };
+      const item = this.shop.get(row.itemId);
+      if (!item || item.category !== 'desk') return { ok: false, error: 'not_desk' };
+    }
+    await this.store.upsertUser(player.nickname, { deskItems: ids });
+    player.deskItems = await this.resolveDesk(player.nickname, ids);
+    this.emit('desk', { player });
+    return { ok: true, deskItems: this.publicDeskItems(player) };
+  }
+
+  /** "내가 놓은 것만" 설정 (users.layout_lock) */
+  async setLayoutLock(player, on) {
+    player.layoutLock = Boolean(on);
+    await this.store.upsertUser(player.nickname, { layoutLock: player.layoutLock });
+    return { ok: true, layoutLock: player.layoutLock };
+  }
+
+  /** 편집 모드 on/off — 끄면 잡고 있던 가구를 모두 놓는다 */
+  setEditing(player, on) {
+    player.editing = Boolean(on);
+    if (!player.editing) this.releaseLocks(player);
+    this.emit('editing', { player });
+    return { ok: true, editing: player.editing };
+  }
+
+  async loadLayout() {
+    const rows = await this.store.roomLayout(this.roomId);
+    this.layout.clear();
+    for (const e of rows) if (this.shop.get(e.itemId)) this.layout.set(e.id, e);
+    this.rebuildCollision();
+  }
+
+  listLayout() {
+    return [...this.layout.values()].map((e) => this.publicLayout(e));
+  }
+
+  publicLayout(e) {
+    return { id: e.id, itemId: e.itemId, x: e.x, y: e.y, rotation: e.rotation || 0, variant: (e.meta && e.meta.variant) || null, placedBy: e.placedBy, placedAt: e.placedAt, lockedBy: this.lockOwner(e.id) };
+  }
+
+  /** 배치 가구의 통과 불가 셀을 방 충돌 맵에 반영 (이동 검증·NPC 길찾기가 즉시 본다) */
+  rebuildCollision() {
+    this.room.collision = buildCollision(this.baseRoom, [...this.layout.values()], (id) => this.shop.get(id));
+  }
+
+  /** 사람(발 박스)·강아지가 서 있는 셀 — 그 위엔 통과 불가 가구를 못 놓는다 */
+  occupiedTiles() {
+    const T = this.room.tileSize;
+    const set = new Set();
+    const add = (px, py) => set.add(`${Math.floor(px / T)},${Math.floor(py / T)}`);
+    for (const p of this.players.values()) {
+      if (p.seatId) continue;
+      const hw = FEET_W / 2;
+      add(p.x - hw, p.y - FEET_H); add(p.x + hw - 1, p.y - FEET_H); add(p.x - hw, p.y - 1); add(p.x + hw - 1, p.y - 1);
+    }
+    for (const n of this.npcs) add(n.x, n.y - 1);
+    return set;
+  }
+
+  validateLayout(item, placement) {
+    // 기본 충돌 맵(baseRoom)으로 검사한다 — 배치 가구끼리의 관계는 규칙(겹침/러그)이 따로 본다
+    return validatePlacement(this.baseRoom, item, placement, [...this.layout.values()], (id) => this.shop.get(id), { occupied: this.occupiedTiles() });
+  }
+
+  lockOwner(id) {
+    const l = this.locks.get(id);
+    if (!l) return null;
+    if (this.now() - l.at > LOCK_MS || !this.players.has(l.by)) { this.locks.delete(id); return null; }
+    return l.by;
+  }
+
+  releaseLocks(player) {
+    for (const [id, l] of [...this.locks]) {
+      if (l.by !== player.id) continue;
+      this.locks.delete(id);
+      if (this.layout.has(id)) this.emit('layout', { op: 'release', id, by: player.id });
+    }
+  }
+
+  /** 이동·회수 권한: 놓은 사람이거나, 놓은 사람이 "내가 놓은 것만" 을 켜지 않았으면 누구나 */
+  async canEditEntry(player, entry) {
+    if (!entry.placedBy || entry.placedBy === player.nickname) return true;
+    const owner = [...this.players.values()].find((p) => p.nickname === entry.placedBy);
+    if (owner) return !owner.layoutLock;
+    const u = await this.store.getUser(entry.placedBy);
+    return !(u && u.layoutLock);
+  }
+
+  seatOccupied(entry) {
+    const s = this.layoutSeat(entry);
+    return Boolean(s && this.seatOwners.get(s.id));
+  }
+
+  /**
+   * 배치: 내 인벤토리의 공용 가구(inventoryId)를 (x, y, rotation) 에 놓는다.
+   * @returns {{ ok: true, entry } | { ok: false, error: 'no_item' | 'not_placeable' | 'already_placed' | 배치 규칙 오류 }}
+   */
+  async placeFurniture(player, { inventoryId, x, y, rotation = 0 } = {}) {
+    const inv = await this.store.getInventoryItem(player.nickname, inventoryId);
+    if (!inv) return { ok: false, error: 'no_item' };
+    const item = this.shop.get(inv.itemId);
+    if (!item || item.category !== 'shared') return { ok: false, error: 'not_placeable' };
+    if ([...this.layout.values()].some((e) => e.inventoryId === inv.id)) return { ok: false, error: 'already_placed' };
+    const v = this.validateLayout(item, { x, y, rotation });
+    if (!v.ok) return v;
+    const entry = await this.store.addLayout(this.roomId, { itemId: item.id, inventoryId: inv.id, x: Number(x), y: Number(y), rotation: Number(rotation) || 0, meta: { variant: inv.meta.variant || null }, placedBy: player.nickname }, this.now());
+    this.layout.set(entry.id, entry);
+    this.rebuildCollision();
+    this.emit('layout', { op: 'add', entry: this.publicLayout(entry), by: player.id });
+    return { ok: true, entry: this.publicLayout(entry) };
+  }
+
+  /** 잡기(드래그 시작): 먼저 잡은 사람 우선. @returns {{ ok } | { ok: false, error: 'not_found' | 'forbidden' | 'locked' | 'occupied' }} */
+  async grabFurniture(player, id) {
+    const entry = this.layout.get(Number(id));
+    if (!entry) return { ok: false, error: 'not_found' };
+    if (!(await this.canEditEntry(player, entry))) return { ok: false, error: 'forbidden' };
+    if (this.seatOccupied(entry)) return { ok: false, error: 'occupied' };
+    const owner = this.lockOwner(entry.id);
+    if (owner && owner !== player.id) return { ok: false, error: 'locked', by: owner };
+    this.locks.set(entry.id, { by: player.id, at: this.now() });
+    if (!owner) this.emit('layout', { op: 'grab', id: entry.id, by: player.id });
+    return { ok: true, id: entry.id };
+  }
+
+  releaseFurniture(player, id) {
+    const entry = this.layout.get(Number(id));
+    if (!entry) return { ok: false, error: 'not_found' };
+    if (this.lockOwner(entry.id) !== player.id) return { ok: false, error: 'not_holder' };
+    this.locks.delete(entry.id);
+    this.emit('layout', { op: 'release', id: entry.id, by: player.id });
+    return { ok: true };
+  }
+
+  /** 이동/회전: 잠금이 없으면 잡으면서 옮긴다. 다른 사람이 잡고 있으면 'locked' */
+  async moveFurniture(player, { id, x, y, rotation } = {}) {
+    const entry = this.layout.get(Number(id));
+    if (!entry) return { ok: false, error: 'not_found' };
+    const g = await this.grabFurniture(player, entry.id);
+    if (!g.ok) return g;
+    const item = this.shop.get(entry.itemId);
+    const next = { id: entry.id, x: x ?? entry.x, y: y ?? entry.y, rotation: rotation ?? entry.rotation ?? 0 };
+    const v = this.validateLayout(item, next);
+    if (!v.ok) return v;
+    const saved = await this.store.updateLayout(this.roomId, entry.id, { x: Number(next.x), y: Number(next.y), rotation: Number(next.rotation) || 0 });
+    if (!saved) return { ok: false, error: 'not_found' };
+    Object.assign(entry, { x: saved.x, y: saved.y, rotation: saved.rotation });
+    this.locks.set(entry.id, { by: player.id, at: this.now() });
+    this.rebuildCollision();
+    this.emit('layout', { op: 'move', entry: this.publicLayout(entry), by: player.id });
+    return { ok: true, entry: this.publicLayout(entry) };
+  }
+
+  /** 회수: 항목을 지운다 → 놓은 사람 인벤토리에서 다시 팔레트에 보인다 */
+  async removeFurniture(player, id) {
+    const entry = this.layout.get(Number(id));
+    if (!entry) return { ok: false, error: 'not_found' };
+    const g = await this.grabFurniture(player, entry.id);
+    if (!g.ok) return g;
+    await this.store.removeLayout(this.roomId, entry.id);
+    this.layout.delete(entry.id);
+    this.locks.delete(entry.id);
+    this.rebuildCollision();
+    this.emit('layout', { op: 'remove', id: entry.id, by: player.id, entry: this.publicLayout(entry) });
+    return { ok: true, id: entry.id };
+  }
+
+  /** 배치 가구가 차지한 셀 (테스트/디버그) */
+  layoutCells(id) {
+    const e = this.layout.get(Number(id));
+    const item = e && this.shop.get(e.itemId);
+    return item ? cellsOf(item.sprite, e.x, e.y, e.rotation || 0) : [];
   }
 
   /**
    * 구매: 카탈로그 확인 → 잔액 확인·차감(저장소가 원자적으로) → 원장 기록 → 인벤토리 저장.
    * @returns {{ ok: true, balance, item, inventory } | { ok: false, error: 'no_item' | 'insufficient', balance? }}
    */
-  async purchase(player, itemId) {
+  async purchase(player, itemId, variant) {
     const item = this.shop.get(itemId);
     if (!item) return { ok: false, error: 'no_item' };
+    const v = pickVariant(item, variant);
+    if (!v.ok) return { ok: false, error: v.error };
     const r = await this.store.adjustCoins(player.nickname, -item.price, `purchase:${item.id}`, this.now());
     if (!r.ok) return { ok: false, error: r.error, balance: r.balance };
-    const inv = await this.store.addInventory(player.nickname, item.id, { name: item.name, price: item.price, tab: item.tab, ...item.meta }, this.now());
+    const inv = await this.store.addInventory(player.nickname, item.id, { name: item.name, price: item.price, tab: item.tab, category: item.category, variant: v.variant, ...item.meta }, this.now());
     this.emit('coins', { nickname: player.nickname, playerId: player.id, delta: -item.price, reason: `purchase:${item.id}`, balance: r.balance });
     return { ok: true, balance: r.balance, item, inventory: inv };
   }
@@ -573,4 +840,4 @@ class World extends EventEmitter {
   }
 }
 
-module.exports = { World, GRACE_MS, SIT_RANGE_PX, EMOJIS, STATUSES, MANUAL_STATUSES, LISTENING_MAX, GOAL_TEXT_MAX, GOAL_MIN, GOAL_MAX, GOAL_STEP, TODO_MAX, seatCenter };
+module.exports = { World, GRACE_MS, SIT_RANGE_PX, EMOJIS, STATUSES, MANUAL_STATUSES, LISTENING_MAX, GOAL_TEXT_MAX, GOAL_MIN, GOAL_MAX, GOAL_STEP, TODO_MAX, LOCK_MS, DESK_SLOTS, RESTING_SEATS, seatCenter };

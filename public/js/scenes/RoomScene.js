@@ -1,4 +1,4 @@
-/* global Phaser, Daylight */
+/* global Phaser, Daylight, Layout, FurnitureLayer */
 /**
  * 방 씬: 서버에서 받은 방 데이터(레이어별 타일 배열)를 타일맵으로 그리고,
  * 내 아바타(입력·충돌·20Hz 전송·서버 보정)와 다른 접속자 아바타(스냅샷 선형 보간)를 그린다.
@@ -20,6 +20,10 @@
  *        (레이어가 항상 같은 프레임을 보여 팻말·말풍선·상태 아이콘 위치는 그대로).
  * 8단계: 개인 뽀모도로가 돌면 상태 아이콘 왼쪽에 "🍅 18:32" / "☕ 4:10" (서버가 준 endsAt 으로 각자 계산, 1초마다 갱신 — 남의 것도 보인다).
  *        코인이 들어오면 머리 위 "+1 🪙" 가 떠오른다 (onCoins). hooks.serverNow 로 서버 시각을 받는다.
+ * 9단계: 공용 가구는 FurnitureLayer(furniture.js) 가 그린다 (충돌 맵·가구 좌석 f:<id>·조명·애니). 편집 모드(setEditMode): 팔레트에서 고른 아이템이
+ *        마우스를 따라 32px 스냅 미리보기(초록/빨강), 클릭 배치 · R 회전 · Esc 취소 · 놓인 가구 클릭-드래그 이동 · Del 회수. 편집 중이면 머리 위 🛠.
+ *        책상 소품(player.deskItems): 앉으면 좌석 앞 책상 슬롯(Layout.deskSlots)에 표시. 침대(seat.kind 'bed')에 앉으면 눕기(회전 프레임 + 이불 오버레이 + 💤),
+ *        안마의자('massage')는 앉은 동안 흔들린다.
  */
 (function () {
   'use strict';
@@ -35,6 +39,8 @@
   const POMO_TICK = 1000; // ms — 머리 위 타이머 글자 갱신 주기
 
   const DEPTH = { sky: 0.5, stars: 0.6, windowDay: 1.5, zone: 2, screen: 2.5, shadow: 9, avatar: 10, label: 25, bubble: 26, darkness: 30, glow: 31 };
+  const HINT_KIND = { bed: 'lie', massage: 'massage' }; // 가구 좌석 종류 → E 힌트
+  const NOTE_MS = 1400; // 스피커 ♪ 간격
   const SIGN_MAX_W = 96; // 팻말 최대 폭(px) — 넘치면 말줄임
   const DAYLIGHT_TICK = 1000; // ms — 시간대 가중치 재계산 주기
 
@@ -77,10 +83,113 @@
       this.emojiText = null;
       this.emojiTimer = null;
       this.sign = null; // 목표 팻말 (앉아 있을 때만)
+      // 9단계
+      this.seat = null; // 앉은 좌석 객체 (kind 로 눕기/안마 판정, 책상 슬롯 계산)
+      this.lying = null; // { rect, rotation } 침대에 누움
+      this.wobble = 0; // 안마의자 흔들림 (px)
+      this.wobbleTween = null;
+      this.zzz = null;
+      this.editMark = null; // 머리 위 🛠
+      this.deskItems = Array.isArray(p.deskItems) ? p.deskItems : [null, null, null];
+      this.deskSprites = [];
+      this.noteTimer = null;
       this.setPosition(p.x, p.y);
       this.setFacing(this.facing);
-      this.setSeated(this.seated);
+      this.setSeated(this.seated, scene.seatById(p.seatId));
       this.setPomodoro(p.pomodoro || null);
+      this.setEditing(Boolean(p.editing));
+    }
+
+    // ── 9단계: 편집 표시 · 책상 소품 · 눕기 · 안마 ────────────────────
+    setEditing(on) {
+      const want = Boolean(on);
+      if (want && !this.editMark) {
+        this.editMark = this.scene.add.text(0, 0, '🛠', { fontSize: '13px', resolution: ZOOM }).setOrigin(0.5, 1).setDepth(DEPTH.bubble);
+        this.setPosition(this.x, this.y);
+      } else if (!want && this.editMark) {
+        this.editMark.destroy();
+        this.editMark = null;
+      }
+      this.editing = want;
+    }
+
+    setDesk(items) {
+      this.deskItems = Array.isArray(items) ? items : [null, null, null];
+      this.syncDesk();
+    }
+
+    /** 앉아 있으면 좌석 앞 책상 슬롯에 장착한 소품을 그린다 (일어나면 사라짐) */
+    syncDesk() {
+      this.clearDesk();
+      const scene = this.scene;
+      const furn = scene.furniture;
+      if (!this.seated || !this.seat || !furn) return;
+      const slots = Layout.deskSlots(scene.room, this.seat);
+      const T = scene.T;
+      this.deskItems.forEach((d, i) => {
+        const slot = slots[i];
+        if (!d || !slot) return;
+        const item = furn.itemOf(d.itemId);
+        const key = item && furn.frameKey(item.id, d.variant, 0, 0);
+        if (!key) return;
+        const sp = scene.add.sprite(slot.tx * T + T / 2, (slot.ty + 1) * T, 'furn', key).setOrigin(0.5, 1).setDepth(DEPTH.avatar + ((slot.ty + 1) * T) / scene.mapH + 0.0002);
+        const anim = furn.animKeyFor(item, d.variant, 0);
+        if (anim) sp.anims.play(anim);
+        this.deskSprites.push(sp);
+        if (item.fx === 'notes') this.startNotes(sp);
+      });
+    }
+
+    clearDesk() {
+      for (const sp of this.deskSprites) sp.destroy();
+      this.deskSprites = [];
+      if (this.noteTimer) this.noteTimer.remove(false);
+      this.noteTimer = null;
+    }
+
+    /** 스피커: ♪ 가 주기적으로 떠오른다 */
+    startNotes(sp) {
+      const scene = this.scene;
+      this.noteTimer = scene.time.addEvent({
+        delay: NOTE_MS,
+        loop: true,
+        callback: () => {
+          const t = scene.add.text(sp.x + (Math.random() * 10 - 5), sp.y - 20, '♪', { fontFamily: FONTS.sans, fontSize: '10px', color: '#ffd08a', stroke: '#14111a', strokeThickness: 2, resolution: ZOOM }).setOrigin(0.5, 1).setDepth(DEPTH.bubble);
+          scene.tweens.add({ targets: t, y: t.y - 16, alpha: 0, duration: 1200, ease: 'Sine.easeOut', onComplete: () => t.destroy() });
+        },
+      });
+    }
+
+    /** 침대에 눕기: 스프라이트를 침대 가운데에 (가로 침대는 90° 회전) + 💤 */
+    setLying(seat) {
+      const furn = this.scene.furniture;
+      const entry = furn && seat && seat.layoutId !== undefined ? furn.entries.get(seat.layoutId) : null;
+      if (!entry) return this.clearLying();
+      this.lying = { rect: furn.rectOf(entry), rotation: entry.rotation || 0 };
+      this.sprite.setOrigin(0.5, 0.5).setAngle(this.lying.rotation ? 90 : 0).setFrame(this.scene.idleFrame('down'));
+      this.shadow.setVisible(false);
+      if (!this.zzz) {
+        this.zzz = this.scene.add.text(0, 0, '💤', { fontSize: '13px', resolution: ZOOM }).setOrigin(0.5, 1).setDepth(DEPTH.bubble);
+        this.zzz.rise = 0;
+        this.scene.tweens.add({ targets: this.zzz, rise: 6, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut', onUpdate: () => this.setPosition(this.x, this.y) });
+      }
+      this.setPosition(this.x, this.y);
+    }
+
+    clearLying() {
+      if (!this.lying) return;
+      this.lying = null;
+      this.sprite.setOrigin(0.5, 1).setAngle(0);
+      this.shadow.setVisible(true);
+      if (this.zzz) { this.scene.tweens.killTweensOf(this.zzz); this.zzz.destroy(); this.zzz = null; }
+      this.setPosition(this.x, this.y);
+    }
+
+    setWobble(on) {
+      if (this.wobbleTween) { this.wobbleTween.stop(); this.wobbleTween = null; }
+      this.wobble = 0;
+      if (on) this.wobbleTween = this.scene.tweens.add({ targets: this, wobble: { from: -1, to: 1 }, duration: 70, yoyo: true, repeat: -1, onUpdate: () => this.setPosition(this.x, this.y) });
+      else this.setPosition(this.x, this.y);
     }
 
     // ── 뽀모도로 머리 위 표시 / 코인 (8단계) ──────────────────────────
@@ -211,7 +320,26 @@
       this.y = y;
       const rx = Math.round(x);
       const ry = Math.round(y);
-      this.sprite.setPosition(rx, ry).setDepth(DEPTH.avatar + y / this.scene.mapH);
+      if (this.lying) {
+        // 침대 가운데에 눕는다. 머리 위 요소는 침대 위쪽(세로) / 오른쪽 머리 쪽(가로) 기준
+        const r = this.lying.rect;
+        const cx = r.x + r.w / 2;
+        const cy = r.y + r.h / 2;
+        this.sprite.setPosition(Math.round(cx), Math.round(cy)).setDepth(DEPTH.avatar + (r.y + r.h) / this.scene.mapH);
+        this.name.setPosition(Math.round(cx), r.y + r.h + 1);
+        const hx = this.lying.rotation ? r.x + r.w - 10 : cx;
+        const hy = this.lying.rotation ? cy - 10 : r.y + 2;
+        if (this.zzz) this.zzz.setPosition(Math.round(hx - 14), Math.round(hy - 6 - (this.zzz.rise || 0)));
+        this.statusBubble.setPosition(Math.round(hx + 16), Math.round(hy - 18));
+        this.pomoText.setPosition(Math.round(hx + 16 - this.statusBubble.bubbleW / 2 - 2), Math.round(hy - 18));
+        if (this.chatBubble) this.chatBubble.setPosition(Math.round(cx), hy - 30 - this.chatBubble.bubbleH / 2);
+        if (this.emojiText) this.emojiText.setPosition(Math.round(cx), hy - 26 - (this.emojiText.rise || 0));
+        if (this.coinText) this.coinText.setPosition(Math.round(cx) - 14, hy - 22 - (this.coinText.rise || 0));
+        if (this.editMark) this.editMark.setPosition(Math.round(cx) - 16, hy - 24);
+        if (this.sign) this.sign.setPosition(Math.round(cx), r.y + r.h + 19);
+        return;
+      }
+      this.sprite.setPosition(rx + Math.round(this.wobble || 0), ry).setDepth(DEPTH.avatar + y / this.scene.mapH);
       this.shadow.setPosition(rx, ry - 2);
       this.name.setPosition(rx, ry + 3);
       if (this.sign) this.sign.setPosition(rx, ry + 19);
@@ -220,6 +348,7 @@
       if (this.chatBubble) this.chatBubble.setPosition(rx, ry - 78 - this.chatBubble.bubbleH / 2);
       if (this.emojiText) this.emojiText.setPosition(rx, ry - 74 - (this.emojiText.rise || 0));
       if (this.coinText) this.coinText.setPosition(rx - 14, ry - 70 - (this.coinText.rise || 0));
+      if (this.editMark) this.editMark.setPosition(rx - 16, ry - 70);
     }
 
     setFacing(f) {
@@ -240,15 +369,22 @@
       }
     }
 
-    setSeated(on) {
+    /** seat: 좌석 객체 (방 좌석 또는 가구 좌석 { kind, layoutId }) — 침대면 눕고, 안마의자면 흔들린다 */
+    setSeated(on, seat = null) {
       this.seated = on;
+      this.seat = on ? seat : null;
       if (on) {
         this.walking = false;
         this.sprite.anims.stop();
         // 앉은 자세 프레임이 없으므로 아래 방향 정지 프레임
         this.sprite.setFrame(this.scene.idleFrame('down'));
       } else this.sprite.setFrame(this.scene.idleFrame(this.facing));
+      const kind = on && seat ? seat.kind : null;
+      if (kind === 'bed') this.setLying(seat);
+      else this.clearLying();
+      this.setWobble(kind === 'massage');
       this.syncSign();
+      this.syncDesk();
     }
 
     setStatus(s) {
@@ -310,6 +446,10 @@
       this.clearChat();
       this.clearEmoji();
       this.clearCoin();
+      this.clearDesk();
+      this.clearLying();
+      this.setWobble(false);
+      if (this.editMark) this.editMark.destroy();
       if (this.sign) this.sign.destroy();
       this.sprite.destroy();
       this.shadow.destroy();
@@ -448,8 +588,17 @@
       this.avatarKit = data.avatarKit; // AvatarKit (catalog + 레이어 PNG)
       this.playerMeta = { frameWidth: this.avatarKit.frame.width, frameHeight: this.avatarKit.frame.height, framesPerRow: this.avatarKit.frame.framesPerRow, rows: this.avatarKit.frame.rows };
       this.dogMeta = data.dog;
+      this.catalog = data.catalog || { items: [] }; // 9단계: 상점 카탈로그 (가구 스프라이트 메타)
       this.onReady = data.onReady || (() => {});
-      this.hooks = { onMove() {}, onSit() {}, onStand() {}, onPet() {}, onUse() {}, onInteract() {}, onEmojiKey() {}, onChatKey() {}, onPositions() {}, serverNow: () => Date.now() };
+      this.hooks = {
+        onMove() {}, onSit() {}, onStand() {}, onPet() {}, onUse() {}, onInteract() {}, onEmojiKey() {}, onChatKey() {}, onPositions() {}, serverNow: () => Date.now(),
+        // 9단계 편집: 서버 판정 결과(Promise<{ ok, error? }>)를 돌려준다. onEditState 는 UI 안내용
+        onPlace: async () => ({ ok: false }), onGrab: async () => ({ ok: false }), onRelease() {}, onMove2: async () => ({ ok: false }), onRemove: async () => ({ ok: false }), onEditState() {},
+      };
+      this.furniture = null;
+      this.extraLights = []; // 가구 조명 (스탠드 조명)
+      this.editMode = false;
+      this.dragging = false;
       this.pomoAcc = 0;
       this.npcs = new Map();
       this.nearNpc = null;
@@ -479,6 +628,7 @@
       const v = this.room.assetVersion ? `?v=${this.room.assetVersion}` : '';
       this.load.image('tiles', `/assets/tiles.png${v}`);
       this.load.spritesheet('dog', `/assets/dog.png${v}`, { frameWidth: this.dogMeta.frameWidth, frameHeight: this.dogMeta.frameHeight });
+      this.load.atlas('furn', `/assets/furniture.png${v}`, `/assets/furniture.json${v}`);
     }
 
     create() {
@@ -496,6 +646,8 @@
       this.buildDogAnims();
       this.buildLighting();
       this.buildScreens();
+      this.furniture = new FurnitureLayer(this, this.catalog);
+      this.bindEditInput();
       this.syncVignette();
       this.setupWindowTwinkle();
       this.applyDaylight(this.currentWeights());
@@ -532,16 +684,18 @@
       this.config = { ...this.config, ...ack.config };
       this.clearSession();
       this.seatOwners = { ...(ack.seats || {}) };
-      this.me = new Avatar(this, ack.self);
       this.lastSent = null;
       this.correction = null;
       this.nearSeat = null;
       this.nearNpc = null;
       this.nearItem = null;
       this.hooks.onInteract(null);
+      this.furniture.setEntries(ack.layout || []); // 아바타보다 먼저 (누운 사람은 침대 사각형이 필요)
+      this.me = new Avatar(this, ack.self);
       for (const p of ack.players) this.addRemote(p);
       for (const n of ack.npcs || []) this.upsertNpc(n);
       this.syncScreens();
+      this.furniture.syncSeated(this.seatOwners);
       const cam = this.cameras.main;
       cam.startFollow(this.me.sprite, true, 0.15, 0.15);
       cam.centerOn(this.me.x, this.me.y);
@@ -554,6 +708,7 @@
       this.npcs.clear();
       if (this.me) this.me.destroy();
       this.me = null;
+      this.setEditMode(false);
       this.cameras.main.stopFollow();
     }
 
@@ -602,19 +757,215 @@
       a.setWalking(false);
       a.setPosition(d.x, d.y);
       a.setFacing(d.facing);
-      a.setSeated(true);
+      a.setSeated(true, this.seatById(d.seatId));
       a.setStatus(d.status);
       this.syncScreens();
+      this.furniture.syncSeated(this.seatOwners);
     }
 
     onStood(d) {
       for (const [seatId, owner] of Object.entries(this.seatOwners)) if (owner === d.id) delete this.seatOwners[seatId];
       this.syncScreens();
+      this.furniture.syncSeated(this.seatOwners);
       const a = this.avatarOf(d.id);
       if (!a) return;
-      a.setSeated(false);
+      a.setSeated(false, null);
+      a.setPosition(d.x, d.y);
       a.setStatus(d.status);
       if (a === this.me) this.lastSent = null;
+    }
+
+    // ── 9단계: 가구 · 책상 소품 · 편집 모드 ─────────────────────────
+    onLayoutUpdate(e) {
+      if (!this.furniture) return;
+      if (e.op === 'add' || e.op === 'move') this.furniture.upsert(e.entry);
+      else if (e.op === 'remove') this.furniture.remove(e.id);
+      else if (e.op === 'grab') this.furniture.setLock(e.id, e.by);
+      else if (e.op === 'release') this.furniture.setLock(e.id, null);
+      // 남이 옮긴 침대에 누워 있던 사람은 새 자리로
+      if (e.op === 'move' || e.op === 'remove') for (const a of this.allAvatars()) if (a.seated && a.seat && a.seat.layoutId === (e.entry ? e.entry.id : e.id)) a.setSeated(true, this.seatById(a.seat.id));
+      this.hooks.onEditState(this.editState());
+    }
+
+    onPlayerDesk(d) {
+      const a = this.avatarOf(d.id);
+      if (a) a.setDesk(d.deskItems);
+    }
+
+    onPlayerEdit(d) {
+      const a = this.avatarOf(d.id);
+      if (a) a.setEditing(d.editing);
+    }
+
+    allAvatars() {
+      return [this.me, ...[...this.remotes.values()].map((r) => r.avatar)].filter(Boolean);
+    }
+
+    /** 가구가 바뀌면: 충돌 맵(FurnitureLayer.collision) · 조명 · 앉은 사람 애니 갱신 */
+    onFurnitureChanged() {
+      if (this.darkness && this.ambient) this.renderDarkness(this.ambient.darkness);
+      if (this.furniture) this.furniture.syncSeated(this.seatOwners);
+    }
+
+    addFurnitureLight(l) {
+      const g = this.add.image(l.x, l.y, 'glow').setScale((l.r * 2.2) / 256).setBlendMode(Phaser.BlendModes.ADD).setDepth(DEPTH.glow);
+      g.baseAlpha = l.intensity * 0.5;
+      g.setAlpha(g.baseAlpha * (this.glowScale || 1));
+      g.light = l;
+      this.glows.push(g);
+      this.extraLights.push(l);
+      return g;
+    }
+
+    removeFurnitureLight(g) {
+      this.glows = this.glows.filter((x) => x !== g);
+      this.extraLights = this.extraLights.filter((l) => l !== g.light);
+      g.destroy();
+      if (this.darkness && this.ambient) this.renderDarkness(this.ambient.darkness);
+    }
+
+    /** 방 좌석 + 가구 좌석 */
+    allSeats() {
+      return this.furniture ? [...this.room.seats, ...this.furniture.seats()] : this.room.seats;
+    }
+
+    seatById(id) {
+      if (!id) return null;
+      return this.room.seats.find((s) => s.id === id) || (this.furniture ? this.furniture.seatById(id) : null);
+    }
+
+    editState() {
+      const f = this.furniture;
+      const p = f && f.preview;
+      if (!this.editMode) return { on: false, mode: 'off' };
+      if (p) return { on: true, mode: p.mode, item: p.item, ok: p.ok, error: p.error || null, rotatable: (p.item.sprite.rotations || []).length > 1 };
+      if (f && f.selectedId !== null && f.entries.has(f.selectedId)) {
+        const e = f.entries.get(f.selectedId);
+        const item = f.itemOf(e.itemId);
+        return { on: true, mode: 'selected', item, id: e.id, rotatable: (item.sprite.rotations || []).length > 1 };
+      }
+      return { on: true, mode: 'idle' };
+    }
+
+    setEditMode(on) {
+      const want = Boolean(on);
+      if (this.editMode === want) return;
+      this.editMode = want;
+      if (!want) {
+        this.furniture.cancelPreview();
+        this.deselect();
+        this.dragging = false;
+      }
+      this.hooks.onEditState(this.editState());
+    }
+
+    /** 팔레트에서 고른 아이템 놓기 시작 (UI → 씬) */
+    startPlacing(item, variant, inventoryId) {
+      if (!this.editMode) return;
+      this.deselect();
+      this.furniture.startPlacing({ item, variant, inventoryId });
+      this.hooks.onEditState(this.editState());
+    }
+
+    deselect() {
+      const f = this.furniture;
+      if (!f || f.selectedId === null) return;
+      const id = f.selectedId;
+      f.select(null);
+      this.hooks.onRelease(id);
+    }
+
+    bindEditInput() {
+      const kb = this.input.keyboard;
+      kb.on('keydown-R', () => { if (this.editMode) this.rotateSelection(); });
+      kb.on('keydown-ESC', () => { if (this.editMode) this.cancelEdit(); });
+      kb.on('keydown-DELETE', () => { if (this.editMode) this.removeSelection(); });
+      kb.on('keydown-BACKSPACE', () => { if (this.editMode) this.removeSelection(); });
+      this.input.on('pointermove', (pointer) => {
+        const p = this.furniture && this.furniture.preview;
+        if (!this.editMode || !p) return;
+        const snap = this.furniture.snap(pointer.worldX, pointer.worldY);
+        if (snap.x !== p.x || snap.y !== p.y) {
+          this.furniture.moveTo(snap.x, snap.y);
+          this.hooks.onEditState(this.editState());
+        }
+      });
+      this.input.on('pointerdown', (pointer) => {
+        if (!this.editMode) return;
+        if (pointer.rightButtonDown()) return this.cancelEdit();
+        const p = this.furniture.preview;
+        if (p && p.mode === 'place') return this.confirmPlace();
+        // 놓인 가구를 잡는다 → 드래그
+        const tx = Math.floor(pointer.worldX / this.T);
+        const ty = Math.floor(pointer.worldY / this.T);
+        const entry = this.furniture.entryAt(tx, ty);
+        if (!entry) return this.deselect();
+        if (this.furniture.selectedId !== entry.id) this.deselect();
+        Promise.resolve(this.hooks.onGrab(entry.id)).then((r) => {
+          if (!r || !r.ok || !this.editMode) return;
+          this.furniture.select(entry.id);
+          this.furniture.startDragging(this.furniture.entries.get(entry.id));
+          this.dragging = true;
+          this.hooks.onEditState(this.editState());
+        });
+      });
+      this.input.on('pointerup', () => {
+        if (!this.editMode || !this.dragging) return;
+        this.dragging = false;
+        const p = this.furniture.preview;
+        if (!p || p.mode !== 'drag') return;
+        const entry = this.furniture.entries.get(p.id);
+        const moved = entry && (p.x !== entry.x || p.y !== entry.y || p.rotation !== (entry.rotation || 0));
+        const { id, x, y, rotation, ok } = p;
+        this.furniture.cancelPreview();
+        if (moved && ok) Promise.resolve(this.hooks.onMove2(id, x, y, rotation)).then(() => this.hooks.onEditState(this.editState()));
+        this.hooks.onEditState(this.editState());
+      });
+    }
+
+    confirmPlace() {
+      const p = this.furniture.preview;
+      if (!p || p.mode !== 'place' || p.x === null) return;
+      if (!p.ok) return this.hooks.onEditState({ ...this.editState(), rejected: p.error });
+      const { inventoryId, x, y, rotation } = p;
+      Promise.resolve(this.hooks.onPlace(inventoryId, x, y, rotation)).then((r) => {
+        if (r && r.ok) this.furniture.cancelPreview();
+        this.hooks.onEditState({ ...this.editState(), rejected: r && !r.ok ? r.error : null });
+      });
+    }
+
+    rotateSelection() {
+      const f = this.furniture;
+      if (f.preview) {
+        if (f.rotatePreview()) this.hooks.onEditState(this.editState());
+        return;
+      }
+      if (f.selectedId === null) return;
+      const e = f.entries.get(f.selectedId);
+      const item = e && f.itemOf(e.itemId);
+      const rots = item ? item.sprite.rotations || [0] : [0];
+      if (rots.length < 2) return;
+      const next = rots[(rots.indexOf(e.rotation || 0) + 1) % rots.length];
+      Promise.resolve(this.hooks.onMove2(e.id, e.x, e.y, next)).then((r) => this.hooks.onEditState({ ...this.editState(), rejected: r && !r.ok ? r.error : null }));
+    }
+
+    removeSelection() {
+      const f = this.furniture;
+      const id = f.preview && f.preview.mode === 'drag' ? f.preview.id : f.selectedId;
+      if (id === null || id === undefined) return;
+      f.cancelPreview();
+      this.dragging = false;
+      Promise.resolve(this.hooks.onRemove(id)).then((r) => {
+        if (r && r.ok) f.select(null);
+        this.hooks.onEditState({ ...this.editState(), rejected: r && !r.ok ? r.error : null });
+      });
+    }
+
+    cancelEdit() {
+      this.furniture.cancelPreview();
+      this.dragging = false;
+      this.deselect();
+      this.hooks.onEditState(this.editState());
     }
 
     onListening(d) {
@@ -752,7 +1103,7 @@
       if (!me) return null;
       const T = this.T;
       const cands = [];
-      if (this.nearSeat) cands.push({ kind: 'sit', target: this.nearSeat, d: Math.hypot((this.nearSeat.x + 0.5) * T - me.x, (this.nearSeat.y + 1) * T - me.y) });
+      if (this.nearSeat) cands.push({ kind: HINT_KIND[this.nearSeat.kind] || 'sit', target: this.nearSeat, d: Math.hypot((this.nearSeat.x + 0.5) * T - me.x, (this.nearSeat.y + 1) * T - me.y) });
       if (this.nearNpc) cands.push({ kind: 'pet', target: this.nearNpc, d: Math.hypot(this.nearNpc.x - me.x, this.nearNpc.y - me.y) });
       if (this.nearItem) cands.push({ kind: this.nearItem.kind, target: this.nearItem, d: Math.hypot(this.nearItem.x - me.x, this.nearItem.y - me.y) });
       if (!cands.length) return null;
@@ -779,7 +1130,7 @@
       const T = this.T;
       let best = null;
       let bestD = SIT_RANGE;
-      for (const s of this.room.seats) {
+      for (const s of this.allSeats()) {
         const owner = this.seatOwners[s.id];
         if (owner && owner !== this.me.id) continue;
         const d = Math.hypot((s.x + 0.5) * T - this.me.x, (s.y + 1) * T - this.me.y);
@@ -797,7 +1148,7 @@
       const pick = this.pickTarget();
       if (!pick) return;
       if (pick.kind === 'pet') return this.hooks.onPet(pick.target.id);
-      if (pick.kind === 'sit') {
+      if (pick.kind === 'sit' || pick.kind === 'lie' || pick.kind === 'massage') {
         if (this.sitPending) return;
         // 앉기 요청 전에 마지막 위치를 보내고, 응답이 올 때까지는 위치 전송을 멈춘다 (착석 뒤 도착한 move 가 거부되지 않도록)
         this.flushMove(false);
@@ -1183,7 +1534,7 @@
       const tx = Math.floor(px / T);
       const ty = Math.floor(py / T);
       if (tx < 0 || ty < 0 || tx >= this.room.width || ty >= this.room.height) return true;
-      return this.room.collision[ty][tx];
+      return (this.furniture ? this.furniture.collision : this.room.collision)[ty][tx];
     }
 
     canStand(x, y) {
@@ -1281,7 +1632,7 @@
       rt.clear();
       rt.fill(0x0d0912, alpha);
       for (const { z, g } of this.zoneStamps) rt.erase(g, z.x - 12, z.y - 12);
-      for (const l of this.room.lights || []) {
+      for (const l of [...(this.room.lights || []), ...this.extraLights]) {
         this.lightStamp.setScale((l.r * 2.8) / 256).setAlpha(Math.min(1, l.intensity + 0.45));
         rt.erase(this.lightStamp, l.x, l.y);
       }

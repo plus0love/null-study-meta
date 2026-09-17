@@ -10,11 +10,13 @@
  *  getGoal / setGoal
  *  resetUser (세션·출석·목표·할 일 삭제 + 코인 이월 초 0, users 행·코인 잔액·인벤토리는 유지)
  *  getCoins / adjustCoins / getCoinCarry / setCoinCarry / coinLedger / coinStats / addInventory / listInventory (8단계)
+ *  roomLayout / addLayout / updateLayout / removeLayout (9단계: 방에 놓인 공용 가구) · users.deskItems / layoutLock 은 upsertUser/getUser
  */
 const { DEFAULT_TZ, dateKey, weekStart, streakOf, totalsOf } = require('./stats');
 
 function createMemoryStore() {
-  const users = new Map(); // nickname → { nickname, avatar, dogName, coins, coinCarrySeconds, createdAt, updatedAt }
+  const users = new Map(); // nickname → { nickname, avatar, dogName, coins, coinCarrySeconds, deskItems, layoutLock, createdAt, updatedAt }
+  const layout = []; // { id, roomId, itemId, inventoryId, x, y, rotation, meta, placedBy, placedAt } — 방에 놓인 공용 가구
   const sessions = []; // { id, nickname, startedAt, endedAt, seconds }
   const attendance = new Set(); // `${nickname}|${date}`
   const todos = []; // { id, nickname, text, done, createdAt, doneAt }
@@ -26,7 +28,7 @@ function createMemoryStore() {
   const ensureUser = (nickname, now = Date.now()) => {
     let u = users.get(nickname);
     if (!u) {
-      u = { nickname, avatar: null, dogName: null, coins: 0, coinCarrySeconds: 0, createdAt: now, updatedAt: now };
+      u = { nickname, avatar: null, dogName: null, coins: 0, coinCarrySeconds: 0, deskItems: [null, null, null], layoutLock: false, createdAt: now, updatedAt: now };
       users.set(nickname, u);
     }
     return u;
@@ -43,6 +45,8 @@ function createMemoryStore() {
       const u = ensureUser(nickname);
       if (data.avatar !== undefined) u.avatar = data.avatar;
       if (data.dogName !== undefined) u.dogName = data.dogName;
+      if (data.deskItems !== undefined) u.deskItems = [...data.deskItems];
+      if (data.layoutLock !== undefined) u.layoutLock = Boolean(data.layoutLock);
       u.updatedAt = Date.now();
       return { ...u };
     },
@@ -194,6 +198,34 @@ function createMemoryStore() {
     },
     async listInventory(nickname) {
       return inventory.filter((i) => i.nickname === nickname).map((i) => ({ ...i, meta: { ...i.meta } }));
+    },
+    async getInventoryItem(nickname, id) {
+      const i = inventory.find((x) => x.id === Number(id) && x.nickname === nickname);
+      return i ? { ...i, meta: { ...i.meta } } : null;
+    },
+
+    // ── 방 배치 (9단계) ───────────────────────────────────────────────
+    async roomLayout(roomId) {
+      return layout.filter((e) => e.roomId === roomId).map((e) => ({ ...e, meta: { ...e.meta } }));
+    },
+    async addLayout(roomId, { itemId, inventoryId, x, y, rotation = 0, meta = {}, placedBy }, now = Date.now()) {
+      const e = { id: seq++, roomId, itemId, inventoryId: inventoryId ?? null, x, y, rotation, meta: { ...meta }, placedBy, placedAt: now };
+      layout.push(e);
+      return { ...e, meta: { ...e.meta } };
+    },
+    async updateLayout(roomId, id, { x, y, rotation }) {
+      const e = layout.find((l) => l.id === Number(id) && l.roomId === roomId);
+      if (!e) return null;
+      if (x !== undefined) e.x = x;
+      if (y !== undefined) e.y = y;
+      if (rotation !== undefined) e.rotation = rotation;
+      return { ...e, meta: { ...e.meta } };
+    },
+    async removeLayout(roomId, id) {
+      const i = layout.findIndex((l) => l.id === Number(id) && l.roomId === roomId);
+      if (i < 0) return null;
+      const [e] = layout.splice(i, 1);
+      return { ...e };
     },
 
     // ── 기록 초기화 (7단계) ───────────────────────────────────────────

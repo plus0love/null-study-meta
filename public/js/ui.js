@@ -2,7 +2,10 @@
 /**
  * HUD + 사이드바 (DOM). 게임 씬/네트워크와는 콜백(this.on*)으로만 연결한다.
  *  - 좌상단: 방 이름 + 인원 + (뽀모도로 진행 중) 남은 시간 배지 + 🪙 잔액   우상단: 설정·멤버·알림·♪·🪙 지갑·나가기 (팝오버)
- *  - 지갑 모달(8단계 뼈대): 탭 가구/펫/펫 꾸미기/탈것 (아이템 없으면 "준비 중") + 최근 거래 10건. 잔액은 서버 coins 이벤트로만 바뀐다
+ *  - 지갑 모달: 탭 가구/펫/펫 꾸미기/탈것 + 최근 거래 10건. 잔액은 서버 coins 이벤트로만 바뀐다.
+ *    9단계 가구 탭: 카테고리(책상 소품/공용 가구) → 카드(아이콘·이름·가격·보유 수·색 선택·구매). 아이콘 클릭 → 미리보기(방 스프라이트 크게)
+ *  - 가구 편집 바(9단계, 하단): 🛠 버튼으로 켠다. 팔레트(내 인벤토리의 공용 가구, 안 놓은 것) + 방에 놓인 가구 목록(회수). 씬의 편집 상태를 안내 줄에 보여준다
+ *  - 설정 → 내 책상: 슬롯 3개(select) 에 책상 소품 장착 · "내가 놓은 가구는 나만 이동·회수" 설정
  *  - 사이드바: 미니맵 · 오늘의 목표 · 오늘의 할 일(서버 저장, 이월 배지) · 뽀모도로(개인 타이머, 원형 게이지) · 랭킹(오늘/이번 주) · 유튜브 · 채팅
  *    카드마다 접기/펼치기(제목 줄만 남음, localStorage nsm.card.<id>)
  *  - 토스트: 출석 스트릭 ("N일 연속 출석 🔥") 등 짧은 안내
@@ -18,7 +21,13 @@
   const $ = (id) => document.getElementById(id);
   const STATUS_LABEL = { study: '공부 중', rest: '휴식 중', coffee: '☕ 휴식 중' };
   const STATUS_ICON = { study: 'i-book', rest: 'i-leaf', coffee: 'i-coffee' };
-  const HINT_LABEL = { sit: '앉기', stand: '일어나기', pet: '쓰다듬기', coffee: '커피 마시기', music: '음악 듣기' };
+  const HINT_LABEL = { sit: '앉기', stand: '일어나기', pet: '쓰다듬기', coffee: '커피 마시기', music: '음악 듣기', lie: '눕기', massage: '안마의자에 앉기' };
+  // 9단계: 편집 거부 사유 → 안내
+  const EDIT_ERR = {
+    blocked: '여기엔 놓을 수 없어요', overlap: '다른 가구와 겹쳐요', wall_only: '벽 타일에만 놓을 수 있어요', needs_base: '놓을 수 있는 자리가 아니에요 (소파·책장·커피머신 위 등)',
+    out_of_bounds: '맵 밖이에요', invalid_rotation: '회전할 수 없어요', player_in_way: '누가 서 있어요', locked: '다른 사람이 잡고 있어요', forbidden: '놓은 사람만 옮길 수 있어요',
+    occupied: '누가 앉아 있어요', already_placed: '이미 놓은 아이템이에요', no_item: '없는 아이템이에요', not_found: '이미 없어진 가구예요', not_placeable: '방에 놓는 가구가 아니에요',
+  };
   const COIN_REASON = { study: '공부 10분마다', focus: '집중 완주 보너스' }; // 원장 reason → 표시. purchase:<id> 는 "구매 · <id>"
   const TODO_KEY = 'nsm.todos'; // 3단계까지의 localStorage 할 일 — 첫 접속 때 서버로 옮기고 지운다
   const GOAL_MINUTES = Array.from({ length: 16 }, (_, i) => (i + 1) * 30); // 30분 ~ 8시간
@@ -68,10 +77,17 @@
   }
 
   class UI {
-    constructor({ room, serverNow, avatarKit }) {
+    constructor({ room, serverNow, avatarKit, catalog = { tabs: [], categories: [], items: [] }, furn = { img: null, frames: {} } }) {
       this.room = room;
       this.serverNow = serverNow || (() => Date.now());
       this.avatarKit = avatarKit;
+      this.catalog = catalog; // 9단계: 상점 카탈로그
+      this.furn = furn; // 9단계: 가구 아틀라스 { img, frames } (DOM 아이콘)
+      this.walletCat = 'desk';
+      this.variantPick = {}; // itemId → 고른 variant
+      this.deskItems = [null, null, null];
+      this.editMode = false;
+      this.editState = { on: false, mode: 'off' };
       this.selfId = null;
       this.players = new Map(); // id → public player (멤버 목록/미니맵용)
       this.status = 'rest';
@@ -104,6 +120,13 @@
       this.onWallet = async () => ({ ok: false }); // 8단계: 지갑 데이터 요청
       this.onBuy = async () => ({ ok: false });
       this.onCoinSound = () => {};
+      // 9단계
+      this.onEditToggle = () => {};
+      this.onPlaceItem = () => {};
+      this.onRemoveEntry = () => {};
+      this.onDeskEquip = async () => ({ ok: false });
+      this.onLayoutLock = () => {};
+      this.getLayout = () => [];
 
       this.todos = [];
       this.coins = 0;
@@ -123,6 +146,7 @@
       this.bindMusic();
       this.bindGoalAndRank();
       this.bindWallet();
+      this.bindEdit();
       this.buildMinimapBase();
       this.renderTodos();
       setInterval(() => this.tickPomodoro(), 250);
@@ -144,6 +168,7 @@
           pops[name].hidden = false;
           btns[name].classList.add('active');
           if (name === 'notify') this.clearUnread();
+          if (name === 'settings') this.refreshWallet(); // 내 책상 슬롯 목록(인벤토리)
         }
       };
       for (const k of Object.keys(btns)) btns[k].addEventListener('click', (e) => { e.stopPropagation(); toggle(k); });
@@ -187,6 +212,8 @@
       const coinSound = $('opt-coin-sound');
       coinSound.addEventListener('change', () => this.onCoinSound(coinSound.checked));
       $('btn-notify-perm').addEventListener('click', () => this.onNotifyPerm());
+      $('opt-layout-lock').addEventListener('change', () => this.onLayoutLock($('opt-layout-lock').checked));
+      this.renderDeskSlots();
 
       // 화면 크기(줌) · 넓게 보기 (7단계, localStorage)
       for (const b of document.querySelectorAll('#zoom-tabs button')) b.addEventListener('click', () => this.setZoom(Number(b.dataset.zoom)));
@@ -657,6 +684,65 @@
       $('wallet-close').addEventListener('click', () => this.closeWallet());
       modal.addEventListener('click', (e) => { if (e.target === modal) this.closeWallet(); });
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !modal.hidden) this.closeWallet(); });
+      const pv = $('item-preview');
+      $('preview-close').addEventListener('click', () => { pv.hidden = true; });
+      pv.addEventListener('click', (e) => { if (e.target === pv) pv.hidden = true; });
+    }
+
+    // ── 가구 아이콘/스프라이트 (DOM 캔버스) ──────────────────────────
+    frameOf(key) {
+      const f = this.furn && this.furn.frames && this.furn.frames[key];
+      return f ? f.frame : null;
+    }
+
+    iconKey(itemId, variant) {
+      if (variant && this.frameOf(`icon/${itemId}/${variant}`)) return `icon/${itemId}/${variant}`;
+      return `icon/${itemId}`;
+    }
+
+    spriteKey(itemId, variant, rotation = 0) {
+      const tries = [`${itemId}|${variant || '-'}|r${rotation}|f0`, `${itemId}|-|r0|f0`];
+      return tries.find((k) => this.frameOf(k)) || null;
+    }
+
+    /** 아틀라스 프레임을 캔버스에 그린다 (nearest). fit 이면 캔버스 안에 정수 배율로 맞춘다 */
+    drawFrame(canvas, key, { fit = true } = {}) {
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const f = this.frameOf(key);
+      if (!f || !this.furn.img) return false;
+      ctx.imageSmoothingEnabled = false;
+      let k = 1;
+      if (fit) k = Math.max(1, Math.floor(Math.min(canvas.width / f.w, canvas.height / f.h)));
+      const w = f.w * k;
+      const h = f.h * k;
+      ctx.drawImage(this.furn.img, f.x, f.y, f.w, f.h, Math.floor((canvas.width - w) / 2), Math.floor((canvas.height - h) / 2), w, h);
+      return true;
+    }
+
+    iconCanvas(itemId, variant, size = 32) {
+      const c = el('canvas', { width: String(size), height: String(size), class: 'furn-icon' });
+      this.drawFrame(c, this.iconKey(itemId, variant));
+      return c;
+    }
+
+    /** 아이템 미리보기 모달: 방 스프라이트를 크게 */
+    openPreview(item, variant) {
+      $('preview-name').textContent = item.name;
+      $('preview-desc').textContent = item.desc || '';
+      const sp = item.sprite || { w: 1, h: 1 };
+      const bits = [item.category === 'desk' ? '책상 소품 · 슬롯 장착' : `공용 가구 · ${sp.w}×${sp.h} 타일`];
+      if (item.category === 'shared') {
+        bits.push(sp.seat ? (sp.seat.kind === 'bed' ? '눕기 가능' : '앉기 가능') : sp.passable ? '통과 가능' : '통과 불가');
+        if ((sp.rotations || []).length > 1) bits.push('회전 가능 (R)');
+        if (sp.wallOnly) bits.push('벽 타일에만');
+        if (sp.replace) bits.push('기존 커피머신 자리에');
+        if (sp.layer === 'floor') bits.push('다른 가구 아래에 깔림');
+      }
+      bits.push(`🪙 ${item.price}`);
+      $('preview-meta').textContent = bits.join(' · ');
+      this.drawFrame($('preview-canvas'), this.spriteKey(item.id, variant) || this.iconKey(item.id, variant));
+      $('item-preview').hidden = false;
     }
 
     /** 잔액 (입장 ack · coins 이벤트). bump 면 배지가 살짝 튄다 */
@@ -685,6 +771,12 @@
       await this.refreshWallet();
     }
 
+    /** 지갑 데이터가 없으면 한 번 받아 둔다 (책상 슬롯·편집 팔레트가 인벤토리를 쓴다) */
+    async ensureWallet() {
+      if (!this.wallet) await this.refreshWallet();
+      return this.wallet;
+    }
+
     closeWallet() {
       $('wallet-modal').hidden = true;
     }
@@ -700,6 +792,9 @@
         this.renderWalletTabs();
         this.renderWalletItems();
         this.renderLedger();
+        this.renderDeskSlots();
+        $('opt-layout-lock').checked = Boolean(r.layoutLock);
+        if (this.editMode) this.renderPalette();
       } catch (_) { /* 오프라인 */ }
     }
 
@@ -720,36 +815,223 @@
       }
     }
 
-    /** 탭의 아이템. 카탈로그가 비어 있으면(지금) "준비 중" */
+    catalogItems() {
+      return (this.wallet && this.wallet.items) || this.catalog.items || [];
+    }
+
+    catalogCategories() {
+      return (this.wallet && this.wallet.categories) || this.catalog.categories || [];
+    }
+
+    /** 탭의 아이템. 가구 탭은 카테고리(책상/공용) 서브탭 + 카드, 다른 탭은 "준비 중" */
     renderWalletItems() {
       const box = $('wallet-items');
+      const cats = $('wallet-cats');
+      const hint = $('wallet-cat-hint');
       box.innerHTML = '';
-      const items = ((this.wallet && this.wallet.items) || []).filter((it) => it.tab === this.walletTab);
+      cats.innerHTML = '';
+      hint.textContent = '';
+      const items = this.catalogItems().filter((it) => it.tab === this.walletTab);
       if (!items.length) {
+        cats.hidden = true;
         box.appendChild(el('span', { text: '준비 중이에요. 코인을 모아 두세요 🪙' }));
         return;
       }
-      const owned = new Set(((this.wallet && this.wallet.inventory) || []).map((i) => i.itemId));
+      const categories = this.catalogCategories();
+      cats.hidden = false;
+      if (!categories.some((c) => c.id === this.walletCat)) this.walletCat = categories[0] ? categories[0].id : 'desk';
+      for (const c of categories) {
+        cats.appendChild(el('button', { type: 'button', 'data-cat': c.id, class: c.id === this.walletCat ? 'active' : '', text: c.label, onclick: () => { this.walletCat = c.id; this.renderWalletItems(); } }));
+      }
+      const cat = categories.find((c) => c.id === this.walletCat);
+      hint.textContent = cat ? cat.hint : '';
+      const inv = (this.wallet && this.wallet.inventory) || [];
       const grid = el('div', { class: 'grid' });
-      for (const it of items) {
-        const has = owned.has(it.id);
-        grid.appendChild(el('div', { class: `wallet-item ${has ? 'owned' : ''}` }, [
+      for (const it of items.filter((i) => (i.category || 'shared') === this.walletCat)) {
+        const count = inv.filter((i) => i.itemId === it.id).length;
+        const variant = this.variantPick[it.id] || (it.variants && it.variants[0] ? it.variants[0].id : null);
+        const icon = this.iconCanvas(it.id, variant, 64);
+        icon.title = '미리보기';
+        icon.addEventListener('click', () => this.openPreview(it, this.variantPick[it.id] || variant));
+        const card = el('div', { class: `wallet-item ${count ? 'owned' : ''}`, 'data-item': it.id }, [
+          icon,
           el('span', { class: 'name', text: it.name }),
-          el('span', { class: 'price', text: has ? '보유 중' : `🪙 ${it.price}` }),
-          has ? null : el('button', { class: 'btn small', type: 'button', text: '구매', onclick: () => this.buy(it) }),
-        ]));
+          el('span', { class: 'price', text: `🪙 ${it.price}` }),
+          el('span', { class: 'count muted', text: count ? `보유 ${count}` : '' }),
+        ]);
+        if (it.variants && it.variants.length) {
+          const sw = el('div', { class: 'swatches' });
+          for (const v of it.variants) {
+            const b = el('button', { type: 'button', class: `swatch ${v.id === variant ? 'active' : ''}`, title: v.label, 'data-variant': v.id, onclick: () => { this.variantPick[it.id] = v.id; this.renderWalletItems(); } });
+            b.style.background = v.color || '#999';
+            sw.appendChild(b);
+          }
+          card.appendChild(sw);
+        }
+        card.appendChild(el('button', { class: 'btn small', type: 'button', text: '구매', onclick: () => this.buy(it, variant) }));
+        grid.appendChild(card);
       }
       box.appendChild(grid);
     }
 
-    async buy(item) {
-      const r = await this.onBuy(item.id);
+    async buy(item, variant) {
+      const r = await this.onBuy(item.id, variant);
       if (!r || !r.ok) {
         this.toast(r && r.error === 'insufficient' ? `코인이 부족해요 (보유 ${r.balance ?? this.coins})` : '구매하지 못했어요.');
         return;
       }
-      this.toast(`${item.name} 을(를) 샀어요 🎁`);
+      const v = item.variants && item.variants.find((x) => x.id === variant);
+      this.toast(`${item.name}${v ? ` (${v.label})` : ''} 을(를) 샀어요 🎁`);
       await this.refreshWallet();
+    }
+
+    // ── 내 책상 슬롯 (설정) ──────────────────────────────────────────
+    /** 서버가 확정한 내 슬롯 [{ itemId, variant } | null] x3 */
+    setDeskItems(items) {
+      this.deskItems = Array.isArray(items) ? items : [null, null, null];
+      this.renderDeskSlots();
+    }
+
+    renderDeskSlots() {
+      const box = $('desk-slots');
+      if (!box) return;
+      box.innerHTML = '';
+      const inv = ((this.wallet && this.wallet.inventory) || []).filter((i) => (i.meta && i.meta.category) === 'desk');
+      const items = new Map(this.catalogItems().map((i) => [i.id, i]));
+      const label = (row) => {
+        const it = items.get(row.itemId);
+        const v = it && it.variants && it.variants.find((x) => x.id === row.meta.variant);
+        return `${it ? it.name : row.itemId}${v ? ` (${v.label})` : ''}`;
+      };
+      for (let i = 0; i < 3; i++) {
+        const cur = this.deskItems[i];
+        const icon = el('canvas', { width: '32', height: '32', class: 'furn-icon slot-icon' });
+        if (cur) this.drawFrame(icon, this.iconKey(cur.itemId, cur.variant));
+        const sel = el('select', { 'data-slot': String(i), title: `슬롯 ${i + 1}` });
+        sel.appendChild(el('option', { value: '', text: '(비움)' }));
+        // 지금 장착된 것은 inventoryId 를 몰라도 목록에서 같은 itemId·variant 인 첫 행을 고른다
+        const used = new Set(this.deskItems.map((d, j) => (j !== i && d ? d.inventoryId : null)).filter(Boolean));
+        let picked = '';
+        for (const row of inv) {
+          if (used.has(row.id)) continue;
+          sel.appendChild(el('option', { value: String(row.id), text: label(row) }));
+          if (!picked && cur && cur.itemId === row.itemId && (cur.variant || null) === (row.meta.variant || null)) picked = String(row.id);
+        }
+        if (cur && cur.inventoryId) picked = String(cur.inventoryId);
+        sel.value = picked;
+        if (picked) this.deskItems[i] = { ...cur, inventoryId: Number(picked) };
+        sel.addEventListener('change', () => this.equipFromSelects());
+        sel.addEventListener('keydown', (e) => e.stopPropagation());
+        box.appendChild(el('div', { class: 'desk-slot' }, [icon, sel]));
+      }
+      if (!inv.length) box.appendChild(el('p', { class: 'hint', text: '지갑 → 가구 → 책상 소품에서 사면 여기서 장착해요.' }));
+    }
+
+    async equipFromSelects() {
+      const slots = [...document.querySelectorAll('#desk-slots select')].map((sel) => (sel.value ? Number(sel.value) : null));
+      const r = await this.onDeskEquip(slots);
+      if (r && r.ok) {
+        this.deskItems = r.deskItems.map((d, i) => (d ? { ...d, inventoryId: slots[i] } : null));
+        this.toast('책상 소품을 장착했어요 🪴');
+      }
+      this.renderDeskSlots();
+    }
+
+    // ── 가구 편집 모드 (9단계) ─────────────────────────────────────────
+    bindEdit() {
+      $('btn-edit').addEventListener('click', () => this.onEditToggle(!this.editMode));
+      $('edit-close').addEventListener('click', () => this.onEditToggle(false));
+    }
+
+    /** 서버가 확정한 편집 모드 on/off */
+    setEditMode(on) {
+      this.editMode = Boolean(on);
+      $('edit-bar').hidden = !this.editMode;
+      $('btn-edit').classList.toggle('active', this.editMode);
+      $('edit-status').textContent = '';
+      if (this.editMode) this.refreshEdit();
+    }
+
+    /** 팔레트·놓인 가구 목록 다시 (인벤토리를 새로 받는다) */
+    async refreshEdit() {
+      if (!this.editMode) return;
+      await this.refreshWallet(); // renderPalette 포함
+      this.renderPlaced();
+    }
+
+    onLayoutChanged() {
+      if (!this.editMode) return;
+      this.renderPlaced();
+    }
+
+    editError(code) {
+      const msg = EDIT_ERR[code] || (code ? `편집하지 못했어요 (${code})` : '편집하지 못했어요');
+      $('edit-status').textContent = `⚠ ${msg}`;
+      $('edit-status').classList.add('warn');
+      this.notify(msg);
+    }
+
+    /** 씬의 편집 상태 → 안내 줄 */
+    setEditState(st) {
+      this.editState = st || { on: false, mode: 'off' };
+      const box = $('edit-status');
+      box.classList.remove('warn');
+      if (!st || !st.on) { box.textContent = ''; return; }
+      if (st.rejected) return this.editError(st.rejected);
+      const rot = st.rotatable ? ' · R 회전' : '';
+      if (st.mode === 'place') box.textContent = `${st.item.name}: 놓을 곳을 클릭${rot} · Esc 취소` + (st.error ? ` — ${EDIT_ERR[st.error] || st.error}` : st.ok ? ' — 여기 놓을 수 있어요' : '');
+      else if (st.mode === 'drag') box.textContent = `${st.item.name}: 원하는 곳에서 놓기${rot}` + (st.error ? ` — ${EDIT_ERR[st.error] || st.error}` : '');
+      else if (st.mode === 'selected') box.textContent = `${st.item.name} 선택됨${rot} · Del 회수 · Esc 선택 해제`;
+      else box.textContent = '팔레트에서 고르거나 놓인 가구를 클릭하세요';
+      for (const b of document.querySelectorAll('#edit-placed li')) b.classList.toggle('selected', st.mode === 'selected' && Number(b.dataset.id) === st.id);
+    }
+
+    /** 내 인벤토리의 공용 가구 중 아직 안 놓은 것 (itemId+variant 로 묶어 ×N) */
+    renderPalette() {
+      const box = $('edit-palette');
+      box.innerHTML = '';
+      const items = new Map(this.catalogItems().map((i) => [i.id, i]));
+      const rows = ((this.wallet && this.wallet.inventory) || []).filter((i) => (i.meta && i.meta.category) === 'shared' && !i.placed);
+      const groups = new Map();
+      for (const r of rows) {
+        const k = `${r.itemId}|${(r.meta && r.meta.variant) || '-'}`;
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(r);
+      }
+      $('edit-palette-count').textContent = rows.length ? `${rows.length}개` : '';
+      if (!groups.size) box.appendChild(el('span', { class: 'hint', text: '놓을 수 있는 가구가 없어요. 지갑 → 가구 → 공용 가구에서 사 오세요.' }));
+      for (const [, list] of groups) {
+        const first = list[0];
+        const item = items.get(first.itemId);
+        if (!item) continue;
+        const variant = (first.meta && first.meta.variant) || null;
+        const v = item.variants && item.variants.find((x) => x.id === variant);
+        const tile = el('button', { type: 'button', class: 'palette-item', 'data-item': item.id, 'data-inventory': String(first.id), title: `${item.name}${v ? ` (${v.label})` : ''}`, onclick: () => this.onPlaceItem(item, variant, first.id) }, [
+          this.iconCanvas(item.id, variant, 32),
+          el('span', { class: 'name', text: item.name }),
+          list.length > 1 ? el('span', { class: 'count', text: `×${list.length}` }) : null,
+        ]);
+        box.appendChild(tile);
+      }
+    }
+
+    renderPlaced() {
+      const list = $('edit-placed');
+      list.innerHTML = '';
+      const items = new Map(this.catalogItems().map((i) => [i.id, i]));
+      const entries = this.getLayout().slice().sort((a, b) => (b.placedAt || 0) - (a.placedAt || 0));
+      $('edit-placed-count').textContent = entries.length ? `${entries.length}개` : '';
+      if (!entries.length) list.appendChild(el('li', { class: 'empty', text: '아직 놓인 가구가 없어요.' }));
+      for (const e of entries) {
+        const item = items.get(e.itemId);
+        const mine = e.placedBy === this.selfNickname;
+        list.appendChild(el('li', { 'data-id': String(e.id), class: mine ? 'me' : '' }, [
+          this.iconCanvas(e.itemId, e.variant, 24),
+          el('span', { class: 'name', text: item ? item.name : e.itemId }),
+          el('span', { class: 'muted', text: `${e.placedBy || '?'} · (${e.x}, ${e.y})` }),
+          el('button', { class: 'btn small ghost', type: 'button', text: '회수', title: '놓은 사람 인벤토리로', onclick: () => this.onRemoveEntry(e.id) }),
+        ]));
+      }
     }
 
     static coinReasonLabel(reason) {

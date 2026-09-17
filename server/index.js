@@ -25,12 +25,13 @@ const { getStudyRoom } = require('./rooms/studyroom');
 const { attachSocket } = require('./socket');
 const { createGate } = require('./gate');
 const { CATALOG_PATH, assetFiles: avatarAssetFiles } = require('./game/avatar');
+const { createShop } = require('./game/shop');
 
 // 아틀라스/캐릭터/아바타 파츠 파일 해시 → 클라이언트가 ?v= 로 붙여 요청하므로 에셋을 다시 빌드하면 캐시가 자동 무효화된다
 function assetVersion() {
   const dir = path.join(__dirname, '..', 'public', 'assets');
   const h = crypto.createHash('sha1');
-  for (const f of ['tiles.json', 'tiles.png', 'dog.json', 'dog.png']) h.update(fs.readFileSync(path.join(dir, f)));
+  for (const f of ['tiles.json', 'tiles.png', 'dog.json', 'dog.png', 'furniture.json', 'furniture.png']) h.update(fs.readFileSync(path.join(dir, f)));
   for (const f of [CATALOG_PATH, ...avatarAssetFiles()]) h.update(fs.readFileSync(f));
   return h.digest('hex').slice(0, 10);
 }
@@ -88,6 +89,19 @@ function createApp(ctx) {
 
   app.get('/healthz', (_req, res) => {
     res.json({ ok: true, store: ctx.store.kind, uptime: Math.round(process.uptime()), node: process.version, players: ctx.world ? ctx.world.connectedCount : 0 });
+  });
+
+  // 9단계: 배치 규칙은 서버 모듈을 그대로 브라우저에도 내려보낸다 (window.Layout) — 미리보기 초록/빨강 판정이 서버와 같다
+  app.get('/js/layout.js', (_req, res) => {
+    res.set('Cache-Control', 'no-cache');
+    res.type('application/javascript').sendFile(path.join(__dirname, 'game', 'layout.js'));
+  });
+
+  // 9단계: 상점 카탈로그 (탭·카테고리·아이템 + 스프라이트 메타) — 씬이 가구를 그리고 배치 규칙을 미리 판정하는 데 쓴다
+  app.get('/api/shop', (_req, res) => {
+    res.set('Cache-Control', 'no-cache');
+    const shop = ctx.world ? ctx.world.shop : createShop();
+    res.json({ tabs: shop.tabs, categories: shop.categories, items: shop.items });
   });
 
   // 방 데이터 (레이어별 타일 배열 + 충돌/의자/문/조명)

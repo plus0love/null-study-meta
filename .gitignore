@@ -15,3 +15,7 @@ screenshots/*
 !screenshots/s5_hair_row.png
 !screenshots/s5_builder.png
 __pycache__/
+!screenshots/s9_icons.png
+!screenshots/s9_desk.png
+!screenshots/s9_edit.png
+!screenshots/s9_bed.png

@@ -36,6 +36,10 @@ class RoomBuilder {
     this.interactables = [];
     this.spawn = { x: 0, y: 0 };
     this.placed = [];
+    // 9단계: 바닥이 아닌 오브젝트 목록(props) + 셀마다 마지막으로 놓인 오브젝트의 props 인덱스(occupant, 없으면 -1).
+    // 가구 배치 검증(벽 전용·소파 위·책장 빈 칸·기존 커피머신 교체)과 책상 소품 슬롯(책상 셀 찾기)에 쓴다.
+    this.props = [];
+    this.occupant = grid(width, height, -1);
   }
 
   obj(name) {
@@ -78,6 +82,7 @@ class RoomBuilder {
   place(name, x, y, opts = {}) {
     const o = this.obj(name);
     const seatCells = new Set((o.seats || []).map((s) => `${s.dx},${s.dy}`));
+    const propIndex = !opts.layer && o.layer !== 'floor' ? this.props.push({ name, x, y, w: o.w, h: o.h }) - 1 : -1;
     for (let dy = 0; dy < o.h; dy++) {
       for (let dx = 0; dx < o.w; dx++) {
         const tx = x + dx;
@@ -91,6 +96,7 @@ class RoomBuilder {
         const isTop = dy < (o.top || 0) || o.layer === 'top';
         const layer = isTop ? 'top' : o.layer;
         this.layers[layer][ty][tx] = idx;
+        if (propIndex >= 0) this.occupant[ty][tx] = propIndex;
         if (isTop) continue;
         let solid = opts.solid !== undefined ? opts.solid : o.solid;
         if (seatCells.has(`${dx},${dy}`) || o.door) solid = false;
@@ -194,6 +200,8 @@ class RoomBuilder {
       screens: this.screens,
       interactables: this.interactables,
       spawn: this.spawn,
+      props: this.props,
+      occupant: this.occupant,
     };
   }
 }
@@ -216,4 +224,11 @@ function interactableById(room, id) {
   return (room.interactables || []).find((i) => i.id === id) || null;
 }
 
-module.exports = { RoomBuilder, TILES, TILE, FACING_DELTA, isBlocked, seatAt, doorAt, interactableById };
+/** (tx, ty) 셀을 마지막으로 차지한 바닥 아닌 오브젝트 { name, x, y, w, h } 또는 null (9단계) */
+function occupantAt(room, tx, ty) {
+  if (tx < 0 || ty < 0 || tx >= room.width || ty >= room.height || !room.occupant) return null;
+  const i = room.occupant[ty][tx];
+  return i >= 0 ? room.props[i] : null;
+}
+
+module.exports = { RoomBuilder, TILES, TILE, FACING_DELTA, isBlocked, seatAt, doorAt, interactableById, occupantAt };

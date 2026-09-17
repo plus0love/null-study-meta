@@ -21,7 +21,8 @@ function createSupabaseStore({ url, key }) {
   const ensureUser = async (nickname) => {
     check(await client.from('users').upsert({ nickname }, { onConflict: 'nickname', ignoreDuplicates: true }));
   };
-  const userRow = (r) => (r ? { nickname: r.nickname, avatar: r.avatar, dogName: r.dog_name, coins: Number(r.coins) || 0, coinCarrySeconds: Number(r.coin_carry_seconds) || 0, createdAt: ms(r.created_at), updatedAt: ms(r.updated_at) } : null);
+  const userRow = (r) => (r ? { nickname: r.nickname, avatar: r.avatar, dogName: r.dog_name, coins: Number(r.coins) || 0, coinCarrySeconds: Number(r.coin_carry_seconds) || 0, deskItems: Array.isArray(r.desk_items) ? r.desk_items : [null, null, null], layoutLock: Boolean(r.layout_lock), createdAt: ms(r.created_at), updatedAt: ms(r.updated_at) } : null);
+  const layoutRow = (r) => ({ id: r.id, roomId: r.room_id, itemId: r.item_id, inventoryId: r.inventory_id, x: r.x, y: r.y, rotation: r.rotation, meta: r.meta || {}, placedBy: r.placed_by, placedAt: ms(r.placed_at) });
   const ledgerRow = (r) => ({ id: r.id, nickname: r.nickname, delta: Number(r.delta), reason: r.reason, createdAt: ms(r.created_at) });
   const invRow = (r) => ({ id: r.id, nickname: r.nickname, itemId: r.item_id, acquiredAt: ms(r.acquired_at), meta: r.meta || {} });
   const todoRow = (r) => ({ id: r.id, nickname: r.nickname, text: r.text, done: r.done, createdAt: ms(r.created_at), doneAt: ms(r.done_at), carried: Boolean(r.carried) });
@@ -38,6 +39,8 @@ function createSupabaseStore({ url, key }) {
       const patch = { nickname, updated_at: iso(Date.now()) };
       if (data.avatar !== undefined) patch.avatar = data.avatar;
       if (data.dogName !== undefined) patch.dog_name = data.dogName;
+      if (data.deskItems !== undefined) patch.desk_items = data.deskItems;
+      if (data.layoutLock !== undefined) patch.layout_lock = Boolean(data.layoutLock);
       return userRow(check(await client.from('users').upsert(patch, { onConflict: 'nickname' }).select().single()));
     },
     async getUser(nickname) {
@@ -147,6 +150,31 @@ function createSupabaseStore({ url, key }) {
     async listInventory(nickname) {
       const rows = check(await client.from('inventory').select('*').eq('nickname', nickname).order('acquired_at')) || [];
       return rows.map(invRow);
+    },
+    async getInventoryItem(nickname, id) {
+      const r = check(await client.from('inventory').select('*').eq('id', id).eq('nickname', nickname).maybeSingle());
+      return r ? invRow(r) : null;
+    },
+
+    // ── 방 배치 (9단계) ───────────────────────────────────────────────
+    async roomLayout(roomId) {
+      const rows = check(await client.from('room_layout').select('*').eq('room_id', roomId).order('placed_at')) || [];
+      return rows.map(layoutRow);
+    },
+    async addLayout(roomId, { itemId, inventoryId, x, y, rotation = 0, meta = {}, placedBy }, now = Date.now()) {
+      return layoutRow(check(await client.from('room_layout').insert({ room_id: roomId, item_id: itemId, inventory_id: inventoryId ?? null, x, y, rotation, meta, placed_by: placedBy, placed_at: iso(now) }).select().single()));
+    },
+    async updateLayout(roomId, id, { x, y, rotation }) {
+      const patch = {};
+      if (x !== undefined) patch.x = x;
+      if (y !== undefined) patch.y = y;
+      if (rotation !== undefined) patch.rotation = rotation;
+      const r = check(await client.from('room_layout').update(patch).eq('id', id).eq('room_id', roomId).select().maybeSingle());
+      return r ? layoutRow(r) : null;
+    },
+    async removeLayout(roomId, id) {
+      const rows = check(await client.from('room_layout').delete().eq('id', id).eq('room_id', roomId).select());
+      return rows && rows[0] ? layoutRow(rows[0]) : null;
     },
 
     // ── 기록 초기화 (7단계) ───────────────────────────────────────────

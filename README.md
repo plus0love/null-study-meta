@@ -14,6 +14,14 @@
 > 8단계에서는 **코인**이 생겼습니다. 앉아서 공부 10분마다 1코인, 뽀모도로 집중 사이클을 자리에서 끝까지 채우면 +5. 잔액은 좌상단 🪙 배지,
 > 우상단 🪙 로 지갑·상점 모달(가구/펫/펫 꾸미기/탈것 탭은 아직 "준비 중", 최근 거래 10건)이 열리고, 랭킹에 "이번 주 코인" 탭이 붙었습니다.
 > 개인 뽀모도로가 돌면 머리 위에 "🍅 18:32" / "☕ 4:10" 이 남에게도 보입니다.
+> 9단계에서는 **가구 상점**이 열렸습니다. 코인으로 책상 소품 12종(내 자리 책상 위에 3개 장착)과 공용 가구 11종(🛠 편집 모드로 방 안 어디든 배치,
+> 모두가 봄)을 삽니다. 침대에 누우면 💤, 안마의자는 흔들리고, 스탠드 조명은 주변을 밝힙니다. 배치는 `room_layout` 에 저장돼 서버를 재시작해도 남습니다.
+
+![가구 아이콘 23종](screenshots/s9_icons.png)
+
+| 책상 소품 장착 (설정 → 내 책상) | 편집 모드 (팔레트 · 미리보기 · 🛠) | 침대에 눕기 |
+|---|---|---|
+| ![책상](screenshots/s9_desk.png) | ![편집](screenshots/s9_edit.png) | ![침대](screenshots/s9_bed.png) |
 
 ![머리 모양 12종](screenshots/s5_hair_row.png)
 
@@ -59,7 +67,8 @@ null-study-meta/
 │   │   ├── pomodoro.js       # 개인 뽀모도로 (기본 25/5, 집중 20~90·휴식 5~20분, 자동 전환, 서버 시각 기준)
 │   │   ├── study.js          # 공부 세션(앉아서 공부 중, 60초 미만 폐기) · 출석 · 오늘 목표 달성 · 랭킹 통계 (저장소 인터페이스만 사용)
 │   │   ├── coins.js          # 8단계: 코인 규칙 (세션 10분당 1, 집중 완주 보너스 5 · 20분 미만 없음) — 순수 함수
-│   │   ├── shop.js           # 8단계: 상점 카탈로그 뼈대 (탭 4개, 아이템 비어 있음) — 구매 검증에 사용
+│   │   ├── shop.js           # 8·9단계: 상점 카탈로그 (탭 4개, 가구 23종 — 스프라이트 메타·변형) — 구매 검증·프레임 키 규칙
+│   │   ├── layout.js         # 9단계: 공용 가구 배치 규칙 (풋프린트 회전·벽/소파/책장 전용·겹침·러그·충돌 맵·책상 슬롯) — /js/layout.js 로 브라우저에도 그대로
 │   │   └── npc.js            # 강아지 NPC: 어슬렁/앉기/자기/산책 상태기계, BFS 경로(충돌 준수), 쳐다보기, 쓰다듬기 쿨다운, 이름
 │   ├── rooms/
 │   │   ├── build.js          # RoomBuilder: tiles.json 기준으로 레이어 배열 + 충돌/의자/문/조명/창문/구역/화면/상호작용 지점 생성
@@ -130,6 +139,7 @@ npm test
 | 파일 | 내용 |
 |---|---|
 | `game.test.js` | 단위: 닉네임 규칙/중복, 이동 예산(정상 속도 허용·순간이동 거부·벽), 채팅 이스케이프/도배, 뽀모도로 자동 전환, 월드(좌석 점유·상태 복귀·유예 재접속) |
+| `stage9.test.js` | 9단계: 카탈로그 23종·아틀라스 프레임 존재(아이콘 32x32·회전·애니·이불), 배치 규칙(빈 바닥/벽/좌석/문/스폰/맵 밖/기존 오브젝트/겹침/러그 예외/벽 전용/소파·책장·커피머신 위/사람이 선 셀/충돌 맵), 월드(구매 variant·책상 슬롯 장착·`playerDesk`, 배치/이동/회수·충돌 맵 반영·이동 검증, 잠금(먼저 잡은 사람·30초 만료·편집 종료/퇴장 해제·앉아 있으면 못 잡음), 권한("내가 놓은 것만" 접속 중/오프라인), 침대·안마의자(자동 휴식·공부로 못 바꿈·세션 없음·1인 점유·가로 침대 좌석), 재시작 로드), 소켓 E2E(ack `layout`·`layout:update`·`playerEdit`·`playerDesk`·동시 잡기 `locked`·끊기면 해제), 브라우저(지갑 가구 탭 카드·색 선택·구매·미리보기·편집 모드 배치 초록/빨강·R 회전·Del 회수·조명·침대 눕기 💤·책상 소품 표시) |
 | `stage8.test.js` | 8단계: 적립 계산(10분 경계 599/600·이월 정산 `settleStudy`·세션 분할 9+9 = 1코인+480초 이월·59초 폐기는 이월에도 안 들어감·재시작 뒤 이월 유지·사람마다 따로·기록 초기화 시 이월 0), 집중 완주 보너스(시작 전부터 끝까지 앉아 공부 중일 때만 · 중간에 일어나면 없음 · 20분 미만 없음 · 정지/휴식 종료 없음), 이중 지급 방지(같은 사이클 두 번 정산 · 세션 end 두 번), 저장소 `adjustCoins` 원자성(음수 불가·거부는 원장 없음)·최근순 원장·이번 주 획득 합계·인벤토리·초기화는 코인 유지, 구매(없는 아이템·잔액 부족 거부·성공 시 차감/원장/인벤토리), stats 의 coins/weekCoins, 소켓 E2E(`coins` 본인 balance/남은 없음·`wallet`·`shop:buy`·`playerPomodoro` 동기화·늦게 들어온 사람도 봄·재입장 잔액), 브라우저(배지·머리 위 "+2 🪙"·지갑 모달 탭 4개 "준비 중"·거래 내역·머리 위 🍅 남은 시간·랭킹 코인 탭·코인 소리 설정) |
 | `stage7.test.js` | 7단계: 뽀모도로 configure 범위(20~90/5~20)·진행 중 거부, 월드 개인 타이머(따로 돌고·시작 때 설정·퇴장 정리·재접속 유지), 기록 초기화(메모리 저장소 resetUser 는 세션·출석·목표·할 일만, StudyTracker.reset 은 진행 중 세션 폐기, World.resetProfile 토큰·닉네임 확인), 소켓 `profile:reset` E2E(거부·삭제·playerGoal null·leaderboard:refresh·랭킹 0), 브라우저(카드 접기 새로고침 유지·채팅 높이·뽀모도로 입력 범위/잠김·줌 2.5 텍스트 해상도·넓게 보기 캔버스 전체·초기화 모달 닉네임 확인) |
 | `study.test.js` | 4단계: 날짜 규칙(시간대 0시·월요일 주 시작·세션은 시작 날짜), 출석 스트릭(경계일·끊김·주 경계), 메모리 저장소(세션·출석·목표·할 일 이월·강아지 이름), 세션 규칙(60초 폐기·휴식/커피 전환·일어나기·퇴장·재접속 유지·종료 저장), 출석 이벤트, 목표 달성(검증·한 번만·다음 날 리셋), 랭킹 통계, 저장소 폴백·인터페이스 동일성, 소켓 E2E(프로필·playerGoal·leaderboard:refresh·attendance·goalReached·할 일 CRUD·강아지 이름 저장) |
@@ -161,8 +171,14 @@ npm test
 | `chat { text }` | 200자·이스케이프·300ms 검사 → 모두에게 `chat { id, nickname, text, ts }` |
 | `emoji { index 0..5 }` | `playerEmoji { id, emoji }` |
 | `pomodoro:start { focusMinutes?, breakMinutes? }` / `pomodoro:stop` | **개인 타이머** (7단계). ack `{ ok, ...snapshot }` 또는 `{ ok:false, error: running \| not_running \| invalid_focus \| invalid_break }`. 집중 20~90분 · 휴식 5~20분(정수), 진행 중엔 설정 변경 불가. 자동 전환 때 **본인에게만** `pomodoro { running, phase, startedAt, endsAt, startedBy, focusMs, breakMs, serverTime }`. 8단계: 시작·정지·전환 때 **모두에게** `playerPomodoro { id, pomodoro: { phase, endsAt } \| null }` (머리 위 남은 시간, `publicPlayer.pomodoro` 에도 실림) |
-| `wallet` | 8단계 지갑: `{ ok, coins, carrySeconds, ledger: [{ id, delta, reason, createdAt }](최근 10건), inventory: [{ id, itemId, acquiredAt, meta }], tabs, items }` |
-| `shop:buy { itemId }` | 8단계 구매: 카탈로그 확인 → 잔액 확인·차감(저장소가 원자적으로) → `coin_ledger` → `inventory`. `{ ok, balance, item, inventory }` 또는 `{ ok:false, error: no_item \| insufficient, balance? }`. 카탈로그가 비어 있어 지금은 항상 `no_item` |
+| `wallet` | 지갑: `{ ok, coins, carrySeconds, ledger: [...](최근 10건), inventory: [{ id, itemId, acquiredAt, meta, placed, slot }], tabs, categories, items, layoutLock }` (9단계: `placed` 방에 놓임, `slot` 책상 슬롯 번호) |
+| `shop:buy { itemId, variant? }` | 구매: 카탈로그 확인 → 변형(색/종류) 확인 → 잔액 확인·차감(저장소가 원자적으로) → `coin_ledger` → `inventory`(meta.variant). `{ ok, balance, item, inventory }` 또는 `{ ok:false, error: no_item \| no_variant \| insufficient, balance? }` |
+| `desk:equip { slots: [inventoryId \| null] x3 }` | 9단계 책상 슬롯 장착 (내 인벤토리의 책상 소품만, 중복 불가). ack `{ ok, deskItems }`, 모두에게 `playerDesk { id, deskItems }` |
+| `edit:mode { on }` | 9단계 편집 모드. ack `{ ok, editing }`, 모두에게 `playerEdit { id, editing }` (머리 위 🛠). 끄면 잡고 있던 가구를 놓는다 |
+| `layout:place { inventoryId, x, y, rotation }` | 9단계 배치. 서버가 규칙(`server/game/layout.js`)을 검증. ack `{ ok, entry }` 또는 `{ ok:false, error: no_item \| not_placeable \| already_placed \| blocked \| overlap \| wall_only \| needs_base \| out_of_bounds \| invalid_rotation \| player_in_way }`. 모두에게 `layout:update { op:'add', entry, by }` |
+| `layout:grab { id }` / `layout:release { id }` | 9단계 잡기/놓기 (드래그 시작/끝). 먼저 잡은 사람 우선 — 남이 잡고 있으면 `{ ok:false, error:'locked', by }`, 30초 손대지 않으면 풀림. `forbidden`(놓은 사람이 "내가 놓은 것만" 을 켬) · `occupied`(누가 앉아 있음). 모두에게 `layout:update { op:'grab' \| 'release', id, by }` |
+| `layout:move { id, x, y, rotation }` / `layout:remove { id }` | 9단계 이동(회전)/회수. 잠금이 없으면 잡으면서 처리. ack `{ ok, entry }` / `{ ok, id }`. 모두에게 `layout:update { op:'move', entry }` / `{ op:'remove', id, entry }`. 회수하면 놓은 사람 인벤토리에서 다시 놓을 수 있다 |
+| `layout:lock { on }` | 9단계 "내가 놓은 가구는 나만 이동·회수" 설정 (`users.layout_lock`). ack `{ ok, layoutLock }` |
 | `profile:reset { nickname, token }` | 내 기록 초기화 (7단계): 세션 토큰·닉네임이 모두 맞아야 `{ ok, counts: { sessions, attendance, goals, todos } }`, 아니면 `confirm_mismatch`. 공부 세션·출석·오늘 목표·할 일 삭제(아바타·강아지 이름 유지), 진행 중 세션은 버리고 앉아 있으면 새로 센다 → 모두에게 `playerGoal { id, goal: null }` + `leaderboard:refresh` |
 | `time:ping { t0 }` | `{ t0, serverTime }` — 클라이언트가 왕복/2 를 빼서 시계 차이를 맞춤 |
 | `leave` | 즉시 정리 → `playerLeft` |
@@ -201,7 +217,7 @@ HTTP: `GET /api/oembed?url=…` 은 유튜브 주소만 받아 서버가 oEmbed 
 ### Supabase 설정
 
 1. Supabase 프로젝트 → SQL Editor 에서 [`supabase/schema.sql`](supabase/schema.sql) 실행 (여러 번 실행해도 안전 — `if not exists` / `add column if not exists`).
-   테이블 `users`(8단계: `coins` · `coin_carry_seconds` 컬럼) · `study_sessions` · `todos` · `daily_goals` · `attendance` · `coin_ledger` · `inventory` 와
+   테이블 `users`(8단계: `coins` · `coin_carry_seconds`, 9단계: `desk_items` · `layout_lock` 컬럼) · `study_sessions` · `todos` · `daily_goals` · `attendance` · `coin_ledger` · `inventory` · `room_layout`(9단계) 와
    함수 `study_totals(tz)` · `attendance_streaks(tz, only_nickname)` · `list_todos(nickname, tz)` · `adjust_coins(nickname, delta, reason, at)`(잔액 확인·차감·원장 기록을 한 트랜잭션으로) · `coin_stats(tz)` 가 생깁니다.
    모든 테이블은 RLS 가 켜져 있고 정책이 없으며 함수도 anon/authenticated 에서 실행을 막아 두어, **service_role 키를 가진 서버만** 접근합니다.
 2. `.env` 에 `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`(service_role) 를 넣고 서버를 시작하면 로그에 `store=supabase` 가 찍힙니다. 연결에 실패하면 경고 후 메모리로 폴백합니다.
@@ -239,6 +255,26 @@ HTTP: `GET /api/oembed?url=…` 은 유튜브 주소만 받아 서버가 oEmbed 
 - **지갑·상점 뼈대**: 우상단 🪙(또는 좌상단 배지) → 모달. 탭 가구 / 펫 / 펫 꾸미기 / 탈것 — 카탈로그(`server/game/shop.js`)가 비어 있어 "준비 중". 하단에 최근 거래 10건.
   구매 API(`shop:buy { itemId }`)는 잔액 확인 → 차감 → 원장 → `inventory(id, nickname, item_id, acquired_at, meta)` 저장까지 동작합니다 (테스트는 `World` 옵션 `shop: [...]` 로 아이템을 넣어 검증).
 - **랭킹**: "이번 주 코인" 탭 — 월요일부터 획득한 코인 합(양수 delta 만, 구매로 쓴 건 빼지 않음). `stats` 행에 `coins`(잔액)·`weekCoins` 가 붙습니다.
+
+## 가구 상점 + 자유 배치 (9단계)
+
+- **카탈로그** (`server/game/shop.js`, 가구 탭 23종). 그림은 `tools/furniture.py` 가 현재 화풍(16px 논리 → 2배)으로 그려 `public/assets/furniture.png/json`(Phaser 아틀라스)에 담습니다.
+  프레임 키: 아이콘 `icon/<id>[/<variant>]`(32x32), 방 스프라이트 `<id>|<variant|->|r<rot>|f<frame>`, 오버레이 `…|top`(침대 이불 — 누운 아바타 위).
+  - **책상 소품** (1x1): 머그컵 3(색 5) · 작은 화분 4 · 연필꽂이 4 · 포스트잇 5 · 탁상 램프 8(3종) · 미니 피규어 10 · 탁상 액자 8 · 향초 10(불꽃 2프레임) ·
+    듀얼 모니터 18 · 기계식 키보드 15(RGB 4프레임) · 미니 스피커 18(♪ 떠오름) · 어항 22(물고기 3프레임).
+    설정 → **내 책상** 슬롯 3개에 장착(`users.desk_items`, `player.deskItems` 로 방송). 앉으면 좌석 앞 책상 셀(`Layout.deskSlots`: 앞 두 칸의 좌우 → 가운데 순)에 보이고 일어나면 사라집니다.
+  - **공용 가구**: 벽 포스터 10(5종, `wallOnly`) · 쿠션 10(색 6, 소파/푸프/빈 바닥 `on`) · 작은 러그 14(3x2, `layer:'floor'` — 다른 가구 아래, 회전) · 스탠드 조명 18(1x2, `glow` 로 어둠을 지우고 앰버 글로우) ·
+    벽시계 20(3종, 벽) · 책장 채우기 20(큰 책장 선반 칸 `on: bookshelf_big dy≥2`) · 라운지 담요 20(2x1, 소파 위) · 커피머신 업그레이드 35(`replace: coffee_machine` 자리에 정확히, 김 3프레임) ·
+    빈백 소파 25(앉기) · 안마의자 45(앉으면 자동 휴식 + 흔들림 2프레임 `whenSeated`) · 1인용 침대 40(이불 3색, 회전 0/1, 앞에서 E → **눕기**: 회전 프레임 + 이불 오버레이 + 머리 위 💤, 자동 휴식, 세션 안 쌓임, 1인 점유).
+    가구 좌석은 `f:<layoutId>` 로 방 좌석과 같은 점유 규칙(`sit`/`stand`, `playerSat`)을 씁니다. 침대·안마의자에선 상태를 공부로 못 바꿉니다(`resting`).
+- **배치 규칙** (`server/game/layout.js` — 서버가 `/js/layout.js` 로 같은 파일을 내려보내 클라이언트 미리보기가 같은 판정을 씁니다):
+  풋프린트(x, y 좌상단 + 회전 1 = 시계 90°, seat 도 회전) · 일반 가구는 빈 바닥(충돌·좌석·문·스폰·기존 오브젝트 없음) · `wallOnly` 는 맨 벽(`wall_face`) · `on` 은 그 오브젝트 위 ·
+  다른 배치 가구와 셀이 겹치면 `overlap`(러그는 예외) · 통과 불가 가구는 사람·강아지가 선 셀엔 못 놓음(`player_in_way`). 방 데이터에 `props`(바닥 아닌 오브젝트 목록)·`occupant`(셀 → props 인덱스) 가 추가됐습니다.
+  놓인 가구의 통과 불가 셀은 `World.room.collision` 에 반영돼 이동 검증·강아지 길찾기가 즉시 보고, 클라이언트도 `FurnitureLayer.collision` 으로 같은 맵을 씁니다.
+- **편집 모드** (우상단 🛠 / 하단 편집 바 `public/js/scenes/furniture.js` + `ui.js`): 팔레트(내 인벤토리 중 안 놓은 공용 가구, ×N) 에서 고르면 마우스를 따라 32px 스냅 미리보기(초록 = 가능 / 빨강 = 불가 + 사유),
+  클릭 배치 · **R** 회전(가능한 것만) · **Esc** 취소 · 놓인 가구 클릭-드래그 이동 · **Del** 회수(놓은 사람 인벤토리로) · 오른쪽 목록에서도 회수. 편집 중인 사람은 머리 위 🛠, 변경은 `layout:update` 로 모두에게 실시간.
+  같은 가구를 동시에 잡으면 **먼저 잡은 사람 우선**(서버 잠금, 30초·편집 종료·퇴장 시 해제, 남이 잡은 가구는 주황 틴트). 기본은 누구나 이동·회수, 설정 → "내가 놓은 가구는 나만 이동·회수" 로 잠급니다(`users.layout_lock`).
+- **저장**: `room_layout(id, room_id, item_id, inventory_id, x, y, rotation, meta{variant}, placed_by, placed_at)` + 메모리 폴백. 서버 시작(`World.init`)과 입장 ack(`layout`)에서 로드합니다.
 
 ## 아바타 (5단계)
 
@@ -353,12 +389,14 @@ Free 플랜은 15분 무요청 시 잠들고, 재시작 시 메모리 상태가 
 
 ```bash
 node tools/screenshot_stage3.js http://localhost:3000 screenshots   # 낮/노을/밤, 스터디룸 확대, 커피, 전체 맵
+python tools/furniture.py                                            # 9단계 가구 아틀라스 + tools/out/furniture_icons.png
+node tools/screenshot_stage9.js                                      # 9단계: 지갑 가구 탭·책상 소품·편집 모드·침대 (서버를 스스로 띄운다)
 python tools/compare_mockup.py                                        # screenshots/compare_mockup.png
 ```
 
 ## 다음 단계
 
-- 상점 카탈로그 채우기 (가구 배치 · 펫 · 펫 꾸미기 · 탈것) — 구매·인벤토리 API 는 준비됨
+- 상점 펫 · 펫 꾸미기 · 탈것 탭 채우기 (가구 탭은 9단계에서 완성)
 - 뽀모도로 회차 기록, 주간 리포트
 - 유리문/입구 `doors` 로 방 이동, 실외 연결
 - 앉은 자세 프레임, 아바타 파츠 확장(치마·가방·모자 색)

@@ -31,6 +31,10 @@ Null Study Meta — 에셋 출처 / 제작자 / 라이선스
      hair/ short·part·curly·spiky·bob·long·ponytail·twintail·bun·cap(네이비 야구모자)·beanie(머스터드 비니) 11종,
      top/ tshirt·shirt(흰 카라·단추)·hoodie(후드·끈·주머니)·knit(터틀넥·케이블·밑단) 4종 (원본 튜닉 레이어를 프레임별로 가공),
      acc/ glasses_round·glasses_square·sunglasses 3종, body/base.png 의 민머리 두상(4방향)
+   - 9단계 가구 상점 스프라이트 public/assets/furniture.png/json (tools/furniture.py, 16px 논리 → 2배, 같은 팔레트):
+     책상 소품 12종(머그컵 5색·작은 화분·연필꽂이·포스트잇·탁상 램프 3종·미니 피규어·탁상 액자·향초 2프레임·듀얼 모니터·기계식 키보드 4프레임·미니 스피커·어항 3프레임),
+     공용 가구 11종(벽 포스터 5종·쿠션 6색·작은 러그(회전)·스탠드 조명·벽시계 3종·책장 채우기·라운지 담요·커피머신 업그레이드 3프레임·빈백·안마의자 2프레임·침대 3색(회전·이불 오버레이)),
+     아이콘 32x32 42장 — 전부 코드로 직접 그린 오리지널 (커피머신 업그레이드의 뒤 선반은 props.backbar_upper 재사용)
    - 라이선스: 프로젝트 라이선스를 따름
 
 4. UI 라인 아이콘 (public/index.html 의 인라인 SVG <symbol>) — 이 저장소에서 직접 그린 오리지널 (24px 그리드, stroke 기반)

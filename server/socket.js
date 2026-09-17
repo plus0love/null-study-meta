@@ -15,8 +15,16 @@
  *   pomodoro:start { focusMinutes?, breakMinutes? } / pomodoro:stop → ack { ok, ...snapshot | error }. 7단계: **개인 타이머** —
  *             본인에게만 pomodoro { ...snapshot } (자동 전환 때도). 집중 20~90분 · 휴식 5~20분, 진행 중엔 설정 변경 불가.
  *             8단계: 시작·정지·전환 때 모두에게 playerPomodoro { id, pomodoro: { phase, endsAt } | null } (머리 위 남은 시간 — 각자 서버 시각으로 계산)
- *   wallet                                   → ack { ok, coins, ledger[≤10], inventory, tabs, items } (8단계 지갑·상점)
- *   shop:buy  { itemId }                     → ack { ok, balance, item, inventory } | { ok:false, error: no_item | insufficient, balance? }
+ *   wallet                                   → ack { ok, coins, ledger[≤10], inventory(placed/slot), tabs, categories, items, layoutLock } (8·9단계 지갑·상점)
+ *   shop:buy  { itemId, variant? }           → ack { ok, balance, item, inventory } | { ok:false, error: no_item | no_variant | insufficient, balance? }
+ *   ── 9단계 가구 ──
+ *   desk:equip { slots: [inventoryId|null x3] } → ack { ok, deskItems } | error invalid|no_item|not_desk|duplicate. 모두에게 playerDesk { id, deskItems }
+ *   edit:mode { on }                         → ack { ok, editing }, 모두에게 playerEdit { id, editing } (머리 위 🛠)
+ *   layout:place { inventoryId, x, y, rotation } → ack { ok, entry } | error no_item|not_placeable|already_placed|blocked|overlap|wall_only|needs_base|out_of_bounds|invalid_rotation|player_in_way
+ *   layout:grab { id } / layout:release { id } → ack { ok } | error not_found|forbidden|locked{by}|occupied|not_holder (먼저 잡은 사람 우선, 30초 잠금)
+ *   layout:move { id, x, y, rotation }       → ack { ok, entry } | 위 오류들.  layout:remove { id } → ack { ok, id } (놓은 사람 인벤토리로 회수)
+ *   layout:lock { on }                       → ack { ok, layoutLock } — "내가 놓은 것만 이동·회수" 설정 (users.layout_lock)
+ *   서버 → layout:update { op: add|move|remove|grab|release, entry?, id?, by } (모두에게). 입장 ack 에 layout: [entry...]
  *   profile:reset { nickname, token }        → ack { ok, counts?, error?: confirm_mismatch }. 본인 토큰·닉네임 확인 후 세션·출석·목표·할 일 삭제,
  *                                              모두에게 playerGoal { id, goal: null } + leaderboard:refresh
  *   time:ping { t0 }                         → ack { t0, serverTime }
@@ -68,6 +76,9 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, gate = createGa
   });
   world.on('npcName', ({ npc, name }) => io.emit('npc:name', { id: npc, name }));
   world.on('sessionSaved', ({ nickname, seconds }) => io.emit('leaderboard:refresh', { nickname, seconds }));
+  world.on('layout', (e) => io.emit('layout:update', e));
+  world.on('desk', ({ player }) => io.emit('playerDesk', { id: player.id, deskItems: world.publicDeskItems(player) }));
+  world.on('editing', ({ player }) => io.emit('playerEdit', { id: player.id, editing: Boolean(player.editing) }));
   world.on('attendance', ({ playerId, streak, weekDays, inserted }) => {
     const p = world.players.get(playerId);
     if (!p || !inserted) return;
@@ -116,6 +127,7 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, gate = createGa
         seats: world.seatSnapshot(),
         pomodoro: world.pomodoroOf(player).snapshot(),
         npcs: world.npcSnapshots(),
+        layout: world.listLayout(),
         config: world.config,
         serverTime: world.now(),
         profile,
@@ -223,7 +235,16 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, gate = createGa
     })));
     socket.on('todo:list', requirePlayer(safe(async () => ({ ok: true, todos: await world.listTodos(player) }))));
     socket.on('wallet', requirePlayer(safe(() => world.wallet(player))));
-    socket.on('shop:buy', requirePlayer(safe((payload) => world.purchase(player, payload && payload.itemId))));
+    socket.on('shop:buy', requirePlayer(safe((payload) => world.purchase(player, payload && payload.itemId, payload && payload.variant))));
+    // ── 가구 (9단계) ────────────────────────────────────────────────
+    socket.on('desk:equip', requirePlayer(safe((payload) => world.equipDesk(player, payload && payload.slots))));
+    socket.on('edit:mode', requirePlayer((payload, ack) => ack(world.setEditing(player, payload && payload.on))));
+    socket.on('layout:place', requirePlayer(safe((payload) => world.placeFurniture(player, payload || {}))));
+    socket.on('layout:grab', requirePlayer(safe((payload) => world.grabFurniture(player, payload && payload.id))));
+    socket.on('layout:release', requirePlayer((payload, ack) => ack(world.releaseFurniture(player, payload && payload.id))));
+    socket.on('layout:move', requirePlayer(safe((payload) => world.moveFurniture(player, payload || {}))));
+    socket.on('layout:remove', requirePlayer(safe((payload) => world.removeFurniture(player, payload && payload.id))));
+    socket.on('layout:lock', requirePlayer(safe((payload) => world.setLayoutLock(player, payload && payload.on))));
     socket.on('todo:add', requirePlayer(safe((payload) => world.addTodo(player, payload && payload.text))));
     socket.on('todo:toggle', requirePlayer(safe((payload) => world.setTodoDone(player, payload && payload.id, payload && payload.done))));
     socket.on('todo:delete', requirePlayer(safe((payload) => world.deleteTodo(player, payload && payload.id))));
@@ -249,6 +270,7 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, gate = createGa
 
     socket.on('disconnect', () => {
       if (!player || player.socketId !== socket.id) return;
+      if (player.editing) world.setEditing(player, false); // 끊기면 편집 모드·잠금 해제
       world.disconnect(player);
       socket.broadcast.emit('playerDisconnected', { id: player.id });
       io.emit('roomCount', { count: world.connectedCount });

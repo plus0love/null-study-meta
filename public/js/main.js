@@ -19,14 +19,24 @@
   let tiles;
   let dog;
   let avatarKit;
+  let catalog; // 9단계: 상점 카탈로그 (가구 스프라이트 메타)
+  let furn; // 9단계: 가구 아틀라스 (DOM 아이콘용) { img, frames }
   let config = { passwordRequired: false };
   try {
     room = await fetch('/api/rooms/studyroom').then((r) => r.json());
-    [tiles, dog, avatarKit, config] = await Promise.all([
+    const v = room.assetVersion ? `?v=${room.assetVersion}` : '';
+    [tiles, dog, avatarKit, config, catalog, furn] = await Promise.all([
       fetch('/assets/tiles.json').then((r) => r.json()),
       fetch('/assets/dog.json').then((r) => r.json()),
       AvatarKit.load(room.assetVersion),
       fetch('/api/config').then((r) => r.json()).catch(() => ({ passwordRequired: false })),
+      fetch('/api/shop').then((r) => r.json()).catch(() => ({ tabs: [], categories: [], items: [] })),
+      fetch(`/assets/furniture.json${v}`).then((r) => r.json()).then((json) => new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve({ img, frames: json.frames });
+        img.onerror = () => resolve({ img: null, frames: json.frames });
+        img.src = `/assets/furniture.png${v}`;
+      })).catch(() => ({ img: null, frames: {} })),
     ]);
   } catch (err) {
     fail(`방 데이터를 불러오지 못했습니다: ${err.message}`);
@@ -42,7 +52,7 @@
   } catch (_) { /* 폰트 없이 진행 */ }
 
   const net = new Net();
-  const ui = new UI({ room, serverNow: () => net.serverNow(), avatarKit });
+  const ui = new UI({ room, serverNow: () => net.serverNow(), avatarKit, catalog, furn });
   const sound = new FX.Sound();
 
   const game = new Phaser.Game({
@@ -59,7 +69,7 @@
   });
   // 부팅 중에는 add() 가 인스턴스를 돌려주지 않으므로 직접 만들어 넘긴다
   const scene = new RoomScene();
-  await new Promise((onReady) => game.scene.add('room', scene, true, { room, tiles, avatarKit, dog, onReady }));
+  await new Promise((onReady) => game.scene.add('room', scene, true, { room, tiles, avatarKit, dog, catalog, onReady }));
   ui.hideLoading();
 
   // ── 씬 → 네트워크/UI ───────────────────────────────────────────
@@ -76,6 +86,22 @@
   scene.hooks.onChatKey = () => ui.focusChat();
   scene.hooks.onPositions = (map) => ui.drawMinimap(map);
   scene.hooks.serverNow = () => net.serverNow(); // 머리 위 뽀모도로 남은 시간 (8단계)
+  // 9단계 편집: 씬이 서버 판정을 기다린다 (배치·잡기·이동·회수). 거부 사유는 UI 가 안내한다
+  scene.hooks.onPlace = (inventoryId, x, y, rotation) => net.layoutPlace(inventoryId, x, y, rotation).then((r) => { if (r.ok) ui.refreshEdit(); return r; }).catch(() => ({ ok: false }));
+  scene.hooks.onGrab = (id) => net.layoutGrab(id).then((r) => { if (!r.ok) ui.editError(r.error); return r; }).catch(() => ({ ok: false }));
+  scene.hooks.onRelease = (id) => net.layoutRelease(id).catch(() => {});
+  scene.hooks.onMove2 = (id, x, y, rotation) => net.layoutMove(id, x, y, rotation).catch(() => ({ ok: false }));
+  scene.hooks.onRemove = (id) => net.layoutRemove(id).then((r) => { if (r.ok) ui.refreshEdit(); return r; }).catch(() => ({ ok: false }));
+  scene.hooks.onEditState = (st) => ui.setEditState(st);
+  ui.getLayout = () => (scene.furniture ? [...scene.furniture.entries.values()] : []);
+  ui.onEditToggle = (on) => net.setEditing(on).then((r) => { if (r.ok) { scene.setEditMode(r.editing); ui.setEditMode(r.editing); } }).catch(() => {});
+  ui.onPlaceItem = (item, variant, inventoryId) => scene.startPlacing(item, variant, inventoryId);
+  ui.onRemoveEntry = (id) => net.layoutRemove(id).then((r) => { if (!r.ok) ui.editError(r.error); else ui.refreshEdit(); }).catch(() => {});
+  ui.onDeskEquip = (slots) => net.equipDesk(slots).then((r) => { if (!r.ok) ui.notify('책상 소품을 장착하지 못했어요.'); return r; }).catch(() => ({ ok: false }));
+  ui.onLayoutLock = (on) => net.layoutLock(on).catch(() => {});
+  net.on('layout:update', (e) => { scene.onLayoutUpdate(e); ui.onLayoutChanged(e); });
+  net.on('playerDesk', (d) => { scene.onPlayerDesk(d); if (scene.me && d.id === scene.me.id) ui.setDeskItems(d.deskItems); });
+  net.on('playerEdit', (d) => scene.onPlayerEdit(d));
 
   // 채팅/할 일 입력 중엔 게임 키 차단
   const isField = (el) => Boolean(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'));
@@ -190,7 +216,7 @@
 
   // ── 코인 / 지갑 (8단계): 판정은 서버, 여기서는 결과만 보여준다 ──────────
   ui.onWallet = () => net.wallet();
-  ui.onBuy = (itemId) => net.buy(itemId).catch(() => ({ ok: false }));
+  ui.onBuy = (itemId, variant) => net.buy(itemId, variant).catch(() => ({ ok: false }));
   net.on('coins', (d) => {
     scene.onCoins(d); // 머리 위 "+N 🪙" (남의 것도)
     if (!scene.me || d.id !== scene.me.id) return;
@@ -219,6 +245,9 @@
     const profile = ack.profile || {};
     ui.setGoal(profile.goal || null);
     ui.setCoins(profile.coins || 0);
+    ui.setDeskItems(ack.self.deskItems || [null, null, null]);
+    ui.setEditMode(false);
+    scene.setEditMode(false);
     if (profile.streak && profile.streak.attendedToday) ui.toast(`${profile.streak.streak}일 연속 출석 🔥`);
     migrateTodos();
     startStatsPolling();
@@ -347,5 +376,5 @@
   }
 
   // 디버그/테스트용 전역 핸들
-  window.NSM = { game, room, net, ui, scene, sound, avatarKit };
+  window.NSM = { game, room, net, ui, scene, sound, avatarKit, catalog };
 })();
