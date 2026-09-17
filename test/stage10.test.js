@@ -49,15 +49,15 @@ function makeWorld(opts = {}) {
 // ── 카탈로그 · 에셋 ──────────────────────────────────────────────────
 test('카탈로그: 개인 펫 10 · 공용 펫 3 · 꾸미기 8(슬롯/색) · 행동 3, 탭·카테고리', () => {
   assert.equal(PET_ITEMS.length, 24);
-  assert.equal(ITEMS.length, 47);
+  assert.equal(ITEMS.length, 58); // 12단계: 탈것 5(인력거 포함) · 데칼 3 · 경적 3 추가
   const by = (c) => ITEMS.filter((i) => i.category === c);
   assert.equal(by('pet').length, 10);
   assert.equal(by('sharedPet').length, 3);
   assert.equal(by('petSkill').length, 3);
   assert.equal(by('petDeco').length, 8);
   assert.deepEqual(by('pet').map((i) => i.species), ['hamster', 'chick', 'turtle', 'rabbit', 'cat', 'maltese', 'poodle_black', 'shiba', 'parrot', 'slime']);
-  assert.deepEqual(by('sharedPet').map((i) => [i.species, i.price]), [['cat', 50], ['turtle', 35], ['fish', 40]]);
-  assert.deepEqual(by('petSkill').map((i) => [i.skill, i.price]), [['come', 10], ['sleep_beside', 10], ['high_five', 8]]);
+  assert.deepEqual(by('sharedPet').map((i) => [i.species, i.price]), [['cat', 35], ['turtle', 25], ['fish', 28]] // 12단계 30% 인하가);
+  assert.deepEqual(by('petSkill').map((i) => [i.skill, i.price]), [['come', 7], ['sleep_beside', 7], ['high_five', 6]]);
   assert.deepEqual(by('petDeco').map((i) => [i.id, i.slot, i.variants ? i.variants.length : 0]), [
     ['deco_ribbon', 'head', 4], ['deco_collar', 'neck', 4], ['deco_scarf', 'neck', 4], ['deco_straw_hat', 'head', 0], ['deco_beanie', 'head', 0], ['deco_glasses', 'head', 0], ['deco_crown', 'head', 0], ['deco_wings', 'back', 0]]);
   assert.ok(by('pet').every((i) => i.tab === 'pet') && by('petDeco').every((i) => i.tab === 'petDeco'));
@@ -299,7 +299,7 @@ test('월드: 스킬 — 대상 필수·펫별 1회, 이름 부르면 달려옴(
   assert.deepEqual(await world.purchase(a, 'skill_come', null, 's:999'), { ok: false, error: 'no_target' });
   assert.equal((await world.purchase(a, 'skill_come', null, 'dog')).ok, true);
   assert.deepEqual(await world.purchase(a, 'skill_come', null, 'dog'), { ok: false, error: 'already_has' });
-  assert.equal((await store.getCoins('민수')), 190, '거부는 차감 없음');
+  assert.equal((await store.getCoins('민수')), 200 - 7, '거부는 차감 없음 (이름 부르면 달려옴 7)');
   assert.ok(world.dog.skills.has('come'));
   assert.deepEqual(world.dogRow.skills, ['come']);
   // 개인 펫에 하이파이브 + 자기

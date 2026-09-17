@@ -50,6 +50,7 @@
     <div id="hud-tl">
       <!-- 11단계: 스터디 이름 배지 → 클릭하면 스터디 정보 팝오버 (코드·멤버·주간 목표·방장 설정) -->
       <button id="room-name" class="badge badge-study" type="button" title="스터디 정보"><span class="study-lock" id="study-lock" hidden>🔒</span><span id="study-name">스터디</span></button>
+      <div id="place-badge" class="badge badge-place" hidden title="공용 야외 — 모든 스터디 사람이 만나요. 건물 문으로 들어가면 내 스터디로 돌아가요"><span>🌳 야외</span></div>
       <div id="room-count" class="badge badge-count"><svg class="icon"><use href="#i-users"/></svg><span>0</span></div>
       <div id="pomo-badge" class="badge badge-pomo" hidden title="뽀모도로 남은 시간"><svg class="icon"><use href="#i-timer"/></svg><span>25:00</span></div>
       <button id="coin-badge" class="badge badge-coin" type="button" title="내 코인 (지갑 열기)" hidden><em>🪙</em><span>0</span></button>
@@ -148,6 +149,20 @@
           <label>내 책상 <span class="muted">앉으면 책상 위에 보여요</span></label>
           <div class="desk-slots" id="desk-slots"></div>
         </div>
+        <!-- 12단계: 내 탈것 (활성 탈것 · 데칼 · 경적) + 야외 프로필 공개 -->
+        <div class="field" id="vehicle-field">
+          <label>내 탈것 <span class="muted">야외에서 V 소환/해제 · H 경적</span></label>
+          <div class="vehicle-slots">
+            <select id="veh-active" title="활성 탈것"></select>
+            <select id="veh-decal" title="데칼"></select>
+            <select id="veh-horn" title="경적"></select>
+          </div>
+          <p class="hint" id="veh-hint"></p>
+        </div>
+        <div class="field">
+          <label>야외 프로필</label>
+          <label class="opt"><input type="checkbox" id="opt-stats-public" /><span class="emoji-icon">📊</span><span>다른 스터디 사람에게 이번 주 공부 시간 공개</span></label>
+        </div>
         <div class="field">
           <label>가구 편집</label>
           <label class="opt"><input type="checkbox" id="opt-layout-lock" /><span class="emoji-icon">🔒</span><span>내가 놓은 가구는 나만 이동·회수</span></label>
@@ -156,7 +171,7 @@
           <label>기록</label>
           <button class="btn small ghost danger" id="btn-reset" type="button"><svg class="icon"><use href="#i-trash"/></svg><span>내 기록 초기화</span></button>
         </div>
-        <p class="hint">이동 방향키/WASD · E 앉기/눕기/쓰다듬기/커피/음악 · 채팅 Enter · 이모지 1~6 · 🛠 가구 편집</p>
+        <p class="hint">이동 방향키/WASD · E 앉기/눕기/쓰다듬기/커피/음악 · 채팅 Enter · 이모지 1~6 · 🛠 가구 편집 · 입구 이중문 → 🌳 야외 (V 탈것 · H 경적)</p>
       </div>
       <div class="popover" id="pop-members" hidden>
         <h3>멤버 <span class="muted" id="members-count"></span></h3>
@@ -173,7 +188,10 @@
       <div class="bar" id="status-bar">
         <button class="btn status" id="btn-status" title="상태 전환"><svg class="icon"><use href="#i-coffee"/></svg><span>휴식 중</span></button>
         <span class="hint-key" id="sit-hint" hidden><kbd>E</kbd><span>앉기</span></span>
+        <span class="hint-key" id="vehicle-hint" hidden><kbd>V</kbd><span>탈것</span></span>
       </div>
+      <!-- 12단계: 랩 HUD (트랙 진행 중) -->
+      <div class="bar lap-hud" id="lap-hud" hidden><span class="emoji-icon">🏁</span><span id="lap-text"></span><span class="muted" id="lap-best"></span></div>
     </div>
 
     <!-- 9단계: 가구 편집 모드 바 (하단) — 팔레트(내 인벤토리의 공용 가구) + 놓인 가구 목록 -->
@@ -387,10 +405,33 @@
       <div class="wallet-cats" id="wallet-cats"></div>
       <p class="hint" id="wallet-cat-hint"></p>
       <div id="wallet-items" class="wallet-items"></div>
+      <p class="hint wallet-best" id="wallet-best" hidden></p>
       <section class="wallet-ledger">
         <h3>최근 거래 <span class="muted">10건</span></h3>
         <ul class="list" id="wallet-ledger"></ul>
       </section>
+    </div>
+  </div>
+
+  <!-- 12단계: 전광판 (오늘 상위 5 · 역대 상위 5) -->
+  <div id="board-modal" class="modal" hidden>
+    <div class="modal-box board-box">
+      <header class="row"><h1>🏁 트랙 기록</h1><span class="muted" id="board-track"></span><button class="icon-btn small ghost" id="board-close" type="button" title="닫기"><svg class="icon"><use href="#i-x"/></svg></button></header>
+      <div class="board-cols">
+        <section><h3>오늘 상위 5</h3><ol class="list board-list" id="board-today"></ol></section>
+        <section><h3>역대 상위 5</h3><ol class="list board-list" id="board-all"></ol></section>
+      </div>
+      <p class="hint" id="board-mine"></p>
+    </div>
+  </div>
+
+  <!-- 12단계: 야외 프로필 (아바타 클릭) -->
+  <div id="profile-modal" class="modal" hidden>
+    <div class="modal-box profile-box">
+      <header class="row"><h1 id="profile-nick">닉네임</h1><button class="icon-btn small ghost" id="profile-close" type="button" title="닫기"><svg class="icon"><use href="#i-x"/></svg></button></header>
+      <p class="muted" id="profile-study"></p>
+      <p id="profile-week"></p>
+      <p class="hint" id="profile-vehicle"></p>
     </div>
   </div>
 
@@ -437,9 +478,11 @@
   <script src="/js/avatar-schema.js"></script>
   <script src="/js/avatar.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/vehicles.js"></script>
   <script src="/js/net.js"></script>
   <script src="/js/ui.js"></script>
   <script src="/js/scenes/furniture.js"></script>
+  <script src="/js/scenes/vehicles.js"></script>
   <script src="/js/scenes/RoomScene.js"></script>
   <script src="/js/main.js"></script>
 </body>

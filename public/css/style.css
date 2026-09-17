@@ -815,3 +815,27 @@ input::placeholder { color: var(--cream-faint); }
 #card-rank header { flex-wrap: wrap; row-gap: 6px; }
 label.field > span { font-size: 12px; color: var(--cream-dim); }
 label.field .muted { margin-left: 4px; }
+
+/* ── 12단계: 야외 · 탈것 · 전광판 · 프로필 ─────────────────────────── */
+.badge-place { padding: 7px 10px; font-size: 12px; color: #cfe8f5; border-color: rgba(159, 211, 154, 0.35); }
+body.outdoor #btn-edit { display: none; }
+.lap-hud { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--amber-2); gap: 8px; }
+.lap-hud .muted { font-size: 11px; }
+.vehicle-slots { display: flex; flex-direction: column; gap: 6px; }
+.vehicle-slots select { font: 12px var(--font); color: var(--cream); background: var(--panel-2); border: 1px solid var(--line); border-radius: 7px; padding: 5px 6px; }
+.wallet-best { margin: 4px 0 8px; color: var(--amber-2); }
+.wallet-item .count.active { color: var(--ok); }
+.board-box { width: min(640px, calc(100vw - 32px)); }
+.board-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.board-cols h3 { font-size: 13px; font-weight: 700; color: var(--amber-2); margin: 0 0 6px; }
+.board-list { padding: 0; margin: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.board-list li { display: flex; align-items: center; gap: 8px; padding: 6px 9px; font-size: 12px; background: var(--panel-2); border-radius: var(--radius-sm); }
+.board-list li .rank-no { width: 16px; text-align: right; color: var(--amber); font-weight: 700; }
+.board-list li .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.board-list li .study { color: var(--cream-faint); font-size: 11px; max-width: 90px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.board-list li .time { font-variant-numeric: tabular-nums; color: var(--amber-2); }
+.board-list li.me { outline: 1px solid var(--line-strong); }
+.board-list li.empty { justify-content: center; color: var(--cream-faint); background: transparent; }
+.profile-box { width: min(320px, calc(100vw - 32px)); }
+.profile-box #profile-week { font-size: 14px; }
+@media (max-width: 720px) { .board-cols { grid-template-columns: 1fr; } }

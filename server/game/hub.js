@@ -13,12 +13,17 @@
  *  - 60일간 아무도 안 들어온 스터디는 서버 시작 시 삭제. 스터디가 하나도 없고 옛 데이터(study_id 없는 가구·펫)가 있으면
  *    '우리의 스터디룸' 을 만들어 그리로 옮긴다.
  *  - 그룹 주간 목표: goalCheckMs 마다 사람이 있는 월드의 checkWeeklyGoal().
+ *  - 12단계 야외: OutdoorWorld 하나(outdoor, 처음 나갈 때 생성·계속 유지). 스터디 이중문 → goOutdoor(): 스터디 월드에서 detach 해
+ *    야외로 adopt (같은 플레이어 객체, player.homeStudy = { id, name }). 건물 문 → goInside(): 소속 스터디 월드로(비어서 해제됐으면 다시 만든다,
+ *    삭제됐으면 no_study, 정원이 찼으면 study_full). 재접속(findSession)·닉네임 중복·랭킹 online 은 야외 사람도 포함한다.
  * 이벤트: 'worldCreated' (world), 'worldReleased' (world), 'studyUpdated' ({ study, world }), 'studyDeleted' ({ study })
  */
 const EventEmitter = require('node:events');
 const crypto = require('node:crypto');
 
 const { World } = require('./world');
+const { OutdoorWorld } = require('./outdoor');
+const { getOutdoor } = require('../rooms/outdoor');
 const { StudyTracker } = require('./study');
 const { normalizeNickname, uniqueNickname } = require('./nickname');
 const { createStudyGate, hashPassword, newAccessToken, hashToken } = require('../gate');
@@ -74,6 +79,7 @@ class Hub extends EventEmitter {
     this.gate = createStudyGate({ now, log, ...gateOpts });
     this.studies = new Map(); // id → 행 (저장소 캐시)
     this.worlds = new Map(); // id → World
+    this.outdoor = null; // 12단계: 공용 야외 (OutdoorWorld), 처음 나갈 때 만든다
     this.creating = new Map(); // id → Promise<World> (동시 입장 때 init 한 번만)
     this.releaseTimers = new Map(); // id → timeout
     this.goals = new Map(); // nickname → 오늘 목표 (모든 월드가 공유)
@@ -185,29 +191,89 @@ class Hub extends EventEmitter {
     if (s) s.lastActiveAt = now;
   }
 
+  /** 스터디 월드 + 야외 (사람 찾기용) */
+  allWorlds() {
+    return this.outdoor ? [...this.worlds.values(), this.outdoor] : [...this.worlds.values()];
+  }
+
   /** 접속 중(유예 포함)인 모든 플레이어 (랭킹 '전체' 의 online 표시) */
   allPlayers() {
     const out = [];
-    for (const w of this.worlds.values()) out.push(...w.players.values());
+    for (const w of this.allWorlds()) out.push(...w.players.values());
     return out;
   }
 
   /** 접속 중(유예 포함)인 모든 닉네임 */
   takenNicknames() {
     const out = [];
-    for (const w of this.worlds.values()) for (const p of w.players.values()) out.push(p.nickname);
+    for (const w of this.allWorlds()) for (const p of w.players.values()) out.push(p.nickname);
     return out;
   }
 
   findSession(token) {
     if (typeof token !== 'string') return null;
-    for (const w of this.worlds.values()) if (w.sessions.has(token)) return { world: w, player: w.sessions.get(token) };
+    for (const w of this.allWorlds()) if (w.sessions.has(token)) return { world: w, player: w.sessions.get(token) };
     return null;
   }
 
   playerByNickname(nickname) {
-    for (const w of this.worlds.values()) for (const p of w.players.values()) if (p.nickname === nickname) return { world: w, player: p };
+    for (const w of this.allWorlds()) for (const p of w.players.values()) if (p.nickname === nickname) return { world: w, player: p };
     return null;
+  }
+
+  /** 플레이어가 속한 스터디 id (야외에 있으면 homeStudy) */
+  studyIdOf(world, player) {
+    return world.outdoor ? (player.homeStudy ? player.homeStudy.id : null) : world.studyId;
+  }
+
+  // ── 야외 (12단계) ───────────────────────────────────────────────────
+  ensureOutdoor() {
+    if (this.outdoor) return this.outdoor;
+    const world = new OutdoorWorld(getOutdoor(), {
+      ...this.worldRest,
+      store: this.store, tz: this.tz, now: this.now, log: this.log,
+      study: this.study, goals: this.goals,
+      studyInfo: () => null,
+      members: null,
+      takenNicknames: () => this.takenNicknames(),
+      allPlayers: () => this.allPlayers(),
+      studyNameOf: (id) => { const st = this.studies.get(Number(id)); return st ? st.name : null; },
+    });
+    this.outdoor = world;
+    this.emit('worldCreated', world);
+    return world;
+  }
+
+  /**
+   * 스터디 이중문으로 나간다: 스터디 월드에서 떼어 내 야외로. @returns {{ ok: true, world, player, study } | { ok: false, error }}
+   */
+  async goOutdoor(player, from) {
+    if (!from || from.outdoor) return { ok: false, error: 'already_outdoor' };
+    const study = this.studies.get(from.studyId);
+    if (!study) return { ok: false, error: 'no_study' };
+    const outdoor = this.ensureOutdoor();
+    const { pomodoro } = from.detach(player, 'outdoor');
+    player.homeStudy = { id: study.id, name: study.name };
+    await outdoor.adopt(player, { pomodoro });
+    return { ok: true, world: outdoor, player, study };
+  }
+
+  /**
+   * 건물 문으로 들어온다: 야외에서 떼어 내 소속 스터디 월드로. 스터디가 삭제됐으면 no_study, 정원이 찼으면 study_full (야외에 그대로 남는다).
+   * @returns {{ ok: true, world, player, study } | { ok: false, error }}
+   */
+  async goInside(player, from) {
+    if (!from || !from.outdoor) return { ok: false, error: 'not_outdoor' };
+    const study = player.homeStudy ? this.studies.get(player.homeStudy.id) : null;
+    if (!study) return { ok: false, error: 'no_study' };
+    const world = await this.ensureWorld(study.id);
+    if (world.players.size >= study.maxPlayers) return { ok: false, error: 'study_full' };
+    const { pomodoro } = from.detach(player, 'inside');
+    player.homeStudy = null;
+    await world.adopt(player, { pomodoro });
+    this.cancelRelease(study.id);
+    await this.touch(study.id);
+    return { ok: true, world, player, study };
   }
 
   // ── 월드 수명 ───────────────────────────────────────────────────────
@@ -353,8 +419,13 @@ class Hub extends EventEmitter {
     if (nickname === byNickname) return { ok: false, error: 'self' };
     const removed = await this.store.removeMember(study.id, nickname);
     const w = this.worlds.get(study.id);
-    const p = w && [...w.players.values()].find((x) => x.nickname === nickname);
+    let p = w && [...w.players.values()].find((x) => x.nickname === nickname);
     if (p) w.remove(p.id, 'kicked');
+    else if (this.outdoor) {
+      // 12단계: 야외에 나가 있는 멤버도 내보낸다
+      p = [...this.outdoor.players.values()].find((x) => x.nickname === nickname && x.homeStudy && x.homeStudy.id === study.id) || null;
+      if (p) this.outdoor.remove(p.id, 'kicked');
+    }
     if (!removed && !p) return { ok: false, error: 'not_member' };
     await this.store.clearAccess(study.id, nickname); // 그 닉네임으로 발급된 기기 토큰도 무효 → 다시 들어오려면 비밀번호
     return { ok: true, player: p ? { id: p.id, socketId: p.socketId } : null };
@@ -408,10 +479,11 @@ class Hub extends EventEmitter {
   async join({ study: ref, nickname, token, avatar, socketId, studyPassword, studyAccess, key = 'unknown' } = {}) {
     const found = this.findSession(token);
     const target = this.resolve(ref);
-    if (found && (!target || target.id === found.world.studyId)) {
+    if (found && (!target || target.id === this.studyIdOf(found.world, found.player))) {
       const res = found.world.join({ token, socketId });
-      this.cancelRelease(found.world.studyId);
-      return { ok: true, world: found.world, player: res.player, study: this.studies.get(found.world.studyId), resumed: true, oldSocketId: res.oldSocketId, access: null };
+      const sid = this.studyIdOf(found.world, found.player);
+      if (!found.world.outdoor) this.cancelRelease(sid);
+      return { ok: true, world: found.world, player: res.player, study: this.studies.get(sid) || null, resumed: true, oldSocketId: res.oldSocketId, access: null };
     }
     if (found) found.world.remove(found.player.id, 'leave'); // 다른 스터디로 옮겨 간다
     if (!target) return { ok: false, error: 'no_study' };
@@ -521,10 +593,10 @@ class Hub extends EventEmitter {
     };
   }
 
-  /** 접속 중인 인원 (모든 스터디) */
+  /** 접속 중인 인원 (모든 스터디 + 야외) */
   get connectedCount() {
     let n = 0;
-    for (const w of this.worlds.values()) n += w.connectedCount;
+    for (const w of this.allWorlds()) n += w.connectedCount;
     return n;
   }
 
@@ -534,8 +606,9 @@ class Hub extends EventEmitter {
     this.goalTimer = null;
     for (const t of this.releaseTimers.values()) clearTimeout(t);
     this.releaseTimers.clear();
-    const worlds = [...this.worlds.values()];
+    const worlds = this.allWorlds();
     this.worlds.clear();
+    this.outdoor = null;
     for (const w of worlds) await w.dispose();
     await this.study.flushAll('shutdown');
   }

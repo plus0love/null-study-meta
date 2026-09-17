@@ -24,6 +24,7 @@ import props as P  # noqa: E402
 import props_room as R  # noqa: E402
 import props_v2 as V  # noqa: E402
 import props_v3 as G  # noqa: E402
+import props_outdoor as O  # noqa: E402
 from pixel import Canvas  # noqa: E402
 from recolor import recolor  # noqa: E402
 
@@ -69,10 +70,11 @@ def over(bg, fg):
 OBJECTS = {}
 
 
-def add(name, cv, layer="furniture", solid=True, top=0, anim=None, seats=None, door=False):
-    """seats: [(dx, dy, facing)] — 해당 셀은 통과 가능 + 앉기 가능."""
+def add(name, cv, layer="furniture", solid=True, top=0, anim=None, seats=None, door=False, cycle=False):
+    """seats: [(dx, dy, facing)] — 해당 셀은 통과 가능 + 앉기 가능.
+    anim: 다음 프레임 오브젝트 이름. cycle=True 면 창문 깜빡임(무작위)이 아니라 일정 속도로 순환한다 (물·분수, cycleTiles)."""
     w, h = cv.w // T, cv.h // T
-    OBJECTS[name] = dict(img=cv.im, w=w, h=h, layer=layer, solid=solid, top=top, anim=anim, seats=seats or [], door=door)
+    OBJECTS[name] = dict(img=cv.im, w=w, h=h, layer=layer, solid=solid, top=top, anim=anim, seats=seats or [], door=door, cycle=cycle)
 
 
 def build_objects():
@@ -208,6 +210,49 @@ def build_objects():
     add("sign_left", V.sign_outdoor_blank())
     add("sign_right", V.sign_outdoor_blank())
 
+    # ── 12단계 야외 (기존 인덱스가 바뀌지 않도록 항상 맨 뒤에 추가) ──
+    for tone in range(3):
+        for seed in range(2):
+            add(f"grass_{'abc'[tone]}{seed}", O.grass(tone, seed), "floor", False)
+    add("hill_a", O.hill(0, 1), "floor", False)
+    add("hill_b", O.hill(1, 2), "floor", False)
+    add("hill_edge", O.hill_edge(3), "floor", False)
+    add("dirt_a", O.dirt(0, 1), "floor", False)
+    add("dirt_b", O.dirt(1, 2), "floor", False)
+    for side in "NSEW":
+        add(f"dirt_edge_{side}", O.dirt_edge(side), "floor", False)
+    add("start_line", O.start_line(), "floor", False)
+    add("stone_path_a", O.stone_path(0), "floor", False)
+    add("stone_path_b", O.stone_path(1), "floor", False)
+    add("plaza_a", O.plaza(0), "floor", False)
+    add("plaza_b", O.plaza(1), "floor", False)
+    add("plaza_ring", O.plaza_ring(), "floor", False)
+    add("water_f0", O.water(0), "floor", True, anim="water_f1", cycle=True)
+    add("water_f1", O.water(1), "floor", True, anim="water_f0", cycle=True)
+    for sides in ("N", "S", "E", "W", "NE", "NW", "SE", "SW"):
+        add(f"shore_{sides}", O.shore(sides), "floor", True)
+    add("deck_a", O.deck(0), "floor", False)
+    add("deck_b", O.deck(1), "floor", False)
+    add("sky", O.sky_tile(), "floor", True)
+    add("tree_round", O.tree_round(), top=2)
+    add("tree_pine", O.tree_pine(), top=2)
+    add("tree_small", O.tree_small(), top=1)
+    for i in range(3):
+        add(f"flower_{i}", O.flower(i), solid=False)
+    add("rock_a", O.rock(False))
+    add("rock_b", O.rock(True))
+    for f in range(3):
+        add(f"fountain_f{f}", O.fountain(f), anim=f"fountain_f{(f + 1) % 3}", cycle=True)
+    add("lamp_post", O.lamp_post(), top=1)
+    add("bench_park", O.bench_park(), solid=False, seats=[(0, 0, "down"), (1, 0, "down")])
+    add("stand_bench", O.stand_bench(), solid=False, seats=[(0, 0, "left"), (1, 0, "left"), (2, 0, "left")])
+    add("picnic_table", O.picnic_table())
+    add("kart_stop", O.kart_stop(), top=1)
+    add("scoreboard", O.scoreboard())
+    add("railing_h", O.railing("H"))
+    add("railing_v", O.railing("V"))
+    add("telescope", O.telescope(), top=1)
+
 
 # ── 아틀라스 패킹 ──────────────────────────────────────────────────────
 def build_atlas():
@@ -236,15 +281,17 @@ def build_atlas():
     atlas = atlas.resize((atlas.width * SCALE, atlas.height * SCALE), Image.NEAREST)
     os.makedirs(OUT, exist_ok=True)
     atlas.save(os.path.join(OUT, "tiles.png"), optimize=True)
-    # anim 을 타일 인덱스 쌍으로도 풀어둔다 (클라이언트 편의)
+    # anim 을 타일 인덱스 쌍으로도 풀어둔다 (클라이언트 편의). cycle 오브젝트는 cycleTiles (일정 속도 순환), 나머지는 animTiles (창문 깜빡임)
     anim_tiles = {}
+    cycle_tiles = {}
     for name, m in meta.items():
         if "anim" in m:
             other = meta[m["anim"]]
+            target = cycle_tiles if OBJECTS[name]["cycle"] else anim_tiles
             for ty in range(m["h"]):
                 for tx in range(m["w"]):
-                    anim_tiles[str(m["tiles"][ty][tx])] = other["tiles"][ty][tx]
-    data = dict(tileSize=T * SCALE, columns=COLUMNS, count=len(tiles), image="tiles.png", objects=meta, animTiles=anim_tiles)
+                    target[str(m["tiles"][ty][tx])] = other["tiles"][ty][tx]
+    data = dict(tileSize=T * SCALE, columns=COLUMNS, count=len(tiles), image="tiles.png", objects=meta, animTiles=anim_tiles, cycleTiles=cycle_tiles)
     with open(os.path.join(OUT, "tiles.json"), "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
     print(f"atlas: {len(tiles)} tiles, {atlas.size}, {len(meta)} objects")

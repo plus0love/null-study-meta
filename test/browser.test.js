@@ -125,7 +125,7 @@ test('브라우저 2탭 (B 는 300ms 지연): 입장·이동 유지·채팅·착
   await a.waitForSelector('#avatar-modal:not([hidden])');
   await a.click('#ab-tabs button[data-tab="hair"]');
   await a.click('#ab-grid .ab-item[title="단발"]');
-  await a.click('#ab-colors .swatch[data-color="pink"]');
+  await a.$eval('#ab-colors .swatch[data-color="pink"]', (el) => el.click()); // 서버 avatar:update 재렌더와의 경쟁을 피해 DOM 에서 직접 클릭
   await b.waitForFunction((id) => { const av = window.NSM.scene.remotes.get(id).avatar.avatar; return av.hair === 'bob' && av.hairColor === 'pink'; }, { timeout: 5000 }, idA);
   assert.equal(await a.evaluate(() => JSON.parse(localStorage.getItem('nsm.avatar')).hair), 'bob');
   assert.equal(await a.evaluate(() => window.NSM.scene.me.avatar.hairColor), 'pink');

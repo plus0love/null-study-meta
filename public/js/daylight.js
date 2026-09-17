@@ -77,6 +77,17 @@
     };
   }
 
+  /** 12단계 야외: 밤은 실내보다 훨씬 어둡고 푸르게(darkness), 노을은 주황 틴트(sunsetTint), 가로등 글로우는 밤에만 */
+  function outdoorAmbient(w) {
+    return {
+      darkness: 0.55 * w.night + 0.22 * w.sunset + 0.03 * w.day,
+      glow: 1 * w.night + 0.6 * w.sunset + 0.15 * w.day,
+      dayLayer: 0,
+      stars: w.night,
+      sunsetTint: 0.35 * w.sunset,
+    };
+  }
+
   function hourOf(date) {
     const d = date || new Date();
     return d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600;
@@ -89,5 +100,5 @@
     return 'night';
   }
 
-  return { DAY_START, SUNSET_START, NIGHT_START, BLEND_HOURS, SKY, weightsAt, skyStops, ambient, hourOf, phaseOf };
+  return { DAY_START, SUNSET_START, NIGHT_START, BLEND_HOURS, SKY, weightsAt, skyStops, ambient, outdoorAmbient, hourOf, phaseOf };
 });

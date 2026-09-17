@@ -15,6 +15,9 @@
  *  - 10단계: 펫. 개인 펫(FollowerNpc 'p:<playerId>', users.pet_config: 활성 펫·이름·꾸미기·스킬) · 공용 펫(SharedPetNpc/FishNpc 's:<roomPetId>',
  *    room_pets, 최대 3마리, 푼 사람만 이름/회수) · 기존 강아지의 꾸미기/스킬은 room_pets 의 item_id 'dog' 행. 쓰다듬기는 종별 반응 이모지.
  *    스킬은 펫별 1회 구매(shop:buy target): 'come'(채팅에 이름 → comeTo) · 'sleep_beside' · 'high_five'.
+ *  - 12단계: 야외. OutdoorWorld(outdoor.js) 가 outdoor: true 로 만든다 — 강아지 없음(dog = null), 좌석은 휴식만, 가구 편집 불가,
+ *    move 에 탈것 { type, angle, speed } (검증은 vehicles.js, 예산은 종류별 최고 속도) + 랩 판정. 플레이어 객체는 스터디 ↔ 야외를 오갈 때
+ *    detach()/adopt() 로 그대로 옮긴다 (id·토큰·아바타·펫 설정 유지, 개인 뽀모도로도 같이).
  *  - 11단계: 스터디. World 하나 = 스터디 하나 (Hub 가 지연 생성·비면 해제). 플레이어·채팅·좌석·가구·공용 펫·강아지는 스터디마다 따로,
  *    사람에게 붙은 것(코인·인벤토리·개인 펫·아바타·공부 기록·출석·목표·할 일)은 전역 — StudyTracker 와 goals 맵은 Hub 것을 공유한다
  *    (studyId 로 자기 스터디의 이벤트만 골라 쓴다). 저장소의 가구·펫 키는 studyId (독립 실행이면 room.id).
@@ -27,6 +30,7 @@
  *         'coins' { nickname, playerId, delta, reason, balance } (코인 증감이 저장된 뒤)
  *         'layout' { op: 'add'|'move'|'remove'|'grab'|'release', entry?, id?, by } (배치 변경 — 소켓이 layout:update 로 방송)
  *         'desk' { player } (책상 소품 변경), 'editing' { player } (편집 모드 on/off)
+ *         'vehicle' { player } (12단계: 탑승·해제·데칼 변경 — 소켓이 playerVehicle 로 방송)
  *         'weeklyGoal' { weekStart, totalSeconds, targetSeconds, bonus, awarded: [playerId] } (11단계 그룹 목표 달성)
  */
 const EventEmitter = require('node:events');
@@ -45,6 +49,7 @@ const { normalizeAvatar } = require('./avatar');
 const { settleStudy, focusBonusFor } = require('./coins');
 const { createShop, pickVariant, PET_SLOTS } = require('./shop');
 const { validatePlacement, buildCollision, seatOf, cellsOf } = require('./layout');
+const { validateVehiclePayload, typeOf: vehicleType } = require('./vehicles');
 
 const GRACE_MS = 30 * 1000; // 연결 끊김 후 플레이어를 유지하는 시간
 const SIT_RANGE_PX = 56; // 좌석 중심까지 이 거리 안이어야 앉을 수 있다 (대각선 인접 포함)
@@ -75,8 +80,9 @@ class World extends EventEmitter {
    *   studyInfo(() => 스터디 행: ownerNickname·editPolicy·weeklyGoalMinutes·name) · members(async () => 멤버 닉네임[]) ·
    *   takenNicknames(() => 다른 스터디까지 포함해 쓰고 있는 닉네임[])
    */
-  constructor(room, { graceMs = GRACE_MS, pomodoro = {}, npc = {}, now = () => Date.now(), store = null, tz = DEFAULT_TZ, study = {}, shop = undefined, log = console, studyId = null, goals = null, studyInfo = () => null, members = null, takenNicknames = null, allPlayers = null } = {}) {
+  constructor(room, { graceMs = GRACE_MS, pomodoro = {}, npc = {}, now = () => Date.now(), store = null, tz = DEFAULT_TZ, study = {}, shop = undefined, log = console, studyId = null, goals = null, studyInfo = () => null, members = null, takenNicknames = null, allPlayers = null, outdoor = false } = {}) {
     super();
+    this.outdoor = Boolean(outdoor); // 12단계: 공용 야외 (강아지 없음 · 좌석은 휴식만 · 편집 불가 · 탈것)
     // 충돌 맵은 배치 가구에 따라 바뀌므로 방 데이터를 얕게 복사하고 collision 만 새로 만든다 (NPC 도 같은 객체를 본다)
     this.baseRoom = room;
     this.room = { ...room, collision: room.collision.map((r) => r.slice()) };
@@ -127,8 +133,11 @@ class World extends EventEmitter {
     this.npcs = [];
     this.roomPets = new Map(); // roomPetId → { row, npc } (10단계 공용 펫)
     this.dogRow = null; // 강아지 꾸미기/스킬 설정 행 (room_pets item_id 'dog')
-    this.dog = new DogNpc(this.room, this.npcOpts);
-    this.addNpc(this.dog);
+    this.dog = null;
+    if (!this.outdoor) {
+      this.dog = new DogNpc(this.room, this.npcOpts);
+      this.addNpc(this.dog);
+    }
   }
 
   // ── NPC 공통 배선 (10단계) ──────────────────────────────────────────
@@ -159,8 +168,8 @@ class World extends EventEmitter {
       await this.loadLayout();
       await this.loadPets();
       // 강아지 이름: 스터디의 'dog' 행. 독립 실행(스터디 없음)이면 옛 users.dog_name 의 마지막 값
-      if (this.dogRow && this.dogRow.name) this.dog.setName(this.dogRow.name);
-      else if (this.studyId === null) {
+      if (this.dog && this.dogRow && this.dogRow.name) this.dog.setName(this.dogRow.name);
+      else if (this.dog && this.studyId === null) {
         const name = await this.store.getLatestDogName();
         if (name) this.dog.setName(name);
       }
@@ -183,12 +192,18 @@ class World extends EventEmitter {
   }
 
   get config() {
-    return { speed: SPEED, feetW: FEET_W, feetH: FEET_H, sendHz: 20, chatMax: CHAT_MAX, emojis: EMOJIS, graceMs: this.graceMs };
+    return { speed: SPEED, feetW: FEET_W, feetH: FEET_H, sendHz: 20, chatMax: CHAT_MAX, emojis: EMOJIS, graceMs: this.graceMs, outdoor: this.outdoor };
   }
 
   /** 다른 클라이언트에 보내는 공개 정보 */
   publicPlayer(p) {
-    return { id: p.id, nickname: p.nickname, avatar: p.avatar, x: p.x, y: p.y, facing: p.facing, moving: p.moving, status: p.status, seatId: p.seatId, connected: p.connected, listening: p.listening || null, goal: this.publicGoal(p.nickname), pomodoro: this.publicPomodoro(p), editing: Boolean(p.editing), deskItems: this.publicDeskItems(p) };
+    return { id: p.id, nickname: p.nickname, avatar: p.avatar, x: p.x, y: p.y, facing: p.facing, moving: p.moving, status: p.status, seatId: p.seatId, connected: p.connected, listening: p.listening || null, goal: this.publicGoal(p.nickname), pomodoro: this.publicPomodoro(p), editing: Boolean(p.editing), deskItems: this.publicDeskItems(p), vehicle: this.publicVehicle(p), studyName: p.homeStudy ? p.homeStudy.name : null };
+  }
+
+  /** 탑승 중인 탈것 (12단계): { type, color, decal, angle, speed } | null */
+  publicVehicle(p) {
+    const v = p.vehicle;
+    return v ? { type: v.type, color: v.color || null, decal: v.decal || null, angle: v.angle || 0, speed: v.speed || 0 } : null;
   }
 
   /** 책상 소품 슬롯 (9단계): [{ itemId, variant } | null] x3 */
@@ -258,6 +273,10 @@ class World extends EventEmitter {
       editing: false, // 9단계: 편집 모드 (머리 위 🛠)
       deskItems: [null, null, null], // 9단계: 책상 소품 { inventoryId, itemId, variant } | null
       layoutLock: false, // 9단계: 내가 놓은 가구는 나만 이동·회수
+      vehicle: null, // 12단계: 탑승 중인 탈것 { type, color, decal, horn, inventoryId, angle, speed } (야외에서만)
+      vehicleConfig: null, // 12단계: users.vehicle_config { active, decal, horn } (inventory id)
+      statsPublic: false, // 12단계: 야외 프로필에 이번 주 공부 시간 공개
+      homeStudy: null, // 12단계: 야외에 있는 동안 소속 스터디 { id, name } (Hub 가 채운다)
       connected: true,
       disconnectedAt: null,
       budget: maxBudget(),
@@ -291,6 +310,8 @@ class World extends EventEmitter {
       out.rewards = await this.claimRewards(player);
       out.coins = await this.store.getCoins(player.nickname);
       await this.loadDesk(player);
+      out.vehicleConfig = this.vehicleConfigOf(player);
+      out.statsPublic = Boolean(player.statsPublic);
     } catch (err) {
       this.log.warn(`[world] 프로필 로드 실패 (${player.nickname}): ${err.message}`);
     }
@@ -329,19 +350,65 @@ class World extends EventEmitter {
   remove(id, reason = 'leave') {
     const player = this.players.get(id);
     if (!player) return null;
+    const { pomodoro } = this.detach(player, reason);
+    if (pomodoro) pomodoro.dispose();
+    return player;
+  }
+
+  /**
+   * 12단계: 플레이어를 이 월드에서 떼어 낸다 (다른 월드로 옮기거나 퇴장). 좌석·세션·잠금·개인 펫을 정리하고 'playerLeft' 를 낸다.
+   * 개인 뽀모도로는 버리지 않고 돌려준다 (옮겨 갈 월드가 adopt 로 이어받는다 — 퇴장이면 remove 가 dispose).
+   * @returns {{ pomodoro: Pomodoro | null }}
+   */
+  detach(player, reason = 'leave') {
+    const id = player.id;
     clearTimeout(this.graceTimers.get(id));
     this.graceTimers.delete(id);
     if (player.seatId) this.seatOwners.delete(player.seatId);
     this.players.delete(id);
     this.sessions.delete(player.token);
     this.chatLimiter.forget(id);
-    const pomo = this.pomodoros.get(id);
-    if (pomo) { pomo.dispose(); this.pomodoros.delete(id); }
+    const pomodoro = this.pomodoros.get(id) || null;
+    if (pomodoro) { pomodoro.removeAllListeners(); this.pomodoros.delete(id); }
     this.releaseLocks(player);
+    player.editing = false;
     this.removeNpc(`p:${player.id}`); // 개인 펫은 주인과 함께 사라진다
     player.removed = true;
     this.study.sync(player); // 앉은 채 나가면 세션 저장
+    if (player.seatId) { player.seatId = null; player.status = player.prevStatus === 'coffee' ? 'rest' : player.prevStatus || 'rest'; }
     this.emit('playerLeft', player, reason);
+    return { pomodoro };
+  }
+
+  /**
+   * 12단계: 다른 월드에서 온 플레이어를 이어받는다 (같은 객체 — id·토큰·아바타·펫 설정 그대로). 스폰 위치에 세우고 개인 펫을 다시 만든다.
+   * pomodoro 를 주면 그 타이머를 계속 쓴다 (change 이벤트만 이 월드로 다시 묶는다).
+   */
+  async adopt(player, { pomodoro = null, x, y } = {}) {
+    player.removed = false;
+    player.studyId = this.studyId;
+    player.x = x ?? this.room.spawn.x;
+    player.y = y ?? this.room.spawn.y;
+    player.facing = 'down';
+    player.moving = false;
+    player.seatId = null;
+    player.editing = false;
+    player.vehicle = null;
+    player.budget = maxBudget();
+    player.lastMoveAt = this.now();
+    if (player.status === 'coffee') player.status = 'rest';
+    if (this.outdoor && player.status === 'study') player.status = 'rest'; // 야외에서는 공부 상태가 없다
+    player.prevStatus = player.status;
+    player.connected = true;
+    player.disconnectedAt = null;
+    this.players.set(player.id, player);
+    this.sessions.set(player.token, player);
+    if (pomodoro) {
+      pomodoro.on('change', (snap, reason) => this.emit('pomodoro', snap, reason, player));
+      pomodoro.on('phaseEnd', (cycle) => this.settleFocusCycle(player, cycle));
+      this.pomodoros.set(player.id, pomodoro);
+    }
+    await this.syncFollower(player);
     return player;
   }
 
@@ -350,12 +417,22 @@ class World extends EventEmitter {
   move(player, payload) {
     if (!payload || typeof payload !== 'object') return { ok: false, reason: 'invalid', x: player.x, y: player.y };
     if (player.seatId) return { ok: false, reason: 'seated', x: player.x, y: player.y };
-    const res = applyMove(this.room, player, { x: Number(payload.x), y: Number(payload.y) }, this.now());
+    // 12단계: 탑승 중이면 종류별 최고 속도로 예산을 세고 각도·속도를 받아 둔다 (남에게 그대로 중계)
+    const v = validateVehiclePayload(player.vehicle, payload.vehicle);
+    if (!v.ok) return { ok: false, reason: v.reason, x: player.x, y: player.y };
+    const speed = v.vehicle ? vehicleType(v.vehicle.type).maxSpeed : undefined;
+    const from = { x: player.x, y: player.y };
+    const res = applyMove(this.room, player, { x: Number(payload.x), y: Number(payload.y) }, this.now(), speed);
     if (FACINGS.includes(payload.facing)) player.facing = payload.facing;
     player.moving = Boolean(payload.moving);
+    if (v.vehicle) { player.vehicle.angle = v.vehicle.angle; player.vehicle.speed = v.vehicle.speed; }
     if (!res.ok) return { ok: false, reason: res.reason, x: player.x, y: player.y };
+    this.afterMove(player, from);
     return { ok: true };
   }
+
+  /** 이동이 받아들여진 뒤 (12단계: OutdoorWorld 가 랩 판정에 쓴다) */
+  afterMove() {}
 
   // ── 좌석 ────────────────────────────────────────────────────────────
   /** 방 좌석 또는 배치 가구 좌석(f:<layoutId> — 빈백/안마의자/침대) */
@@ -390,6 +467,7 @@ class World extends EventEmitter {
     if (!seat) return { ok: false, error: 'no_seat' };
     const owner = this.seatOwners.get(seatId);
     if (owner && owner !== player.id) return { ok: false, error: 'occupied' };
+    if (player.vehicle) return { ok: false, error: 'riding' }; // 12단계: 탑승 중엔 앉을 수 없다
     const c = seatCenter(this.room, seat);
     if (Math.hypot(c.x - player.x, c.y - player.y) > SIT_RANGE_PX) return { ok: false, error: 'too_far' };
     this.seatOwners.set(seatId, player.id);
@@ -401,7 +479,7 @@ class World extends EventEmitter {
     // 커피(☕ 휴식) 중에 앉으면 공부 중 → 일어날 때는 커피가 아니라 휴식으로
     player.prevStatus = player.status === 'coffee' ? 'rest' : player.status;
     // 침대·안마의자는 자동 휴식 (세션이 쌓이지 않는다). 일어나면 앉기 전 상태로
-    player.status = RESTING_SEATS.has(seat.kind) ? 'rest' : 'study';
+    player.status = this.outdoor || RESTING_SEATS.has(seat.kind) ? 'rest' : 'study'; // 야외 벤치는 휴식만
     this.study.sync(player);
     return { ok: true, seat };
   }
@@ -431,6 +509,7 @@ class World extends EventEmitter {
   // ── 상태 / 채팅 / 이모지 ────────────────────────────────────────────
   setStatus(player, status) {
     if (!MANUAL_STATUSES.includes(status)) return { ok: false, error: 'invalid' };
+    if (status === 'study' && this.outdoor) return { ok: false, error: 'outdoor' }; // 12단계: 야외에서는 공부 상태가 없다
     if (status === 'study' && RESTING_SEATS.has(this.seatKindOf(player))) return { ok: false, error: 'resting' }; // 침대/안마의자에서는 휴식만
     player.status = status;
     player.prevStatus = status;
@@ -448,6 +527,7 @@ class World extends EventEmitter {
     const it = interactableById(this.room, id);
     if (!it) return { ok: false, error: 'no_interactable' };
     if (Math.hypot(it.x - player.x, it.y - player.y) > it.range) return { ok: false, error: 'too_far' };
+    if (player.vehicle) return { ok: false, error: 'riding' };
     if (it.kind === 'coffee') {
       if (player.seatId) return { ok: false, error: 'seated' };
       player.status = player.status === 'coffee' ? 'rest' : 'coffee';
@@ -591,11 +671,78 @@ class World extends EventEmitter {
     const cfg = this.petConfigOf(player);
     const decoUsed = new Map(); // 꾸미기 inventoryId → 어디에 달렸는지
     const mark = (cos, where) => { for (const slot of PET_SLOTS) if (cos && cos[slot] && cos[slot].inventoryId) decoUsed.set(cos[slot].inventoryId, where); };
-    mark(this.dog.cosmetics, 'dog');
+    if (this.dog) mark(this.dog.cosmetics, 'dog');
     for (const { row, npc } of this.roomPets.values()) mark(npc.cosmetics, `s:${row.id}`);
     for (const [pid, pc] of Object.entries(cfg.pets)) mark(pc.cosmetics, `pet:${pid}`);
-    const inv = inventory.map((i) => ({ ...i, placed: placed.has(i.id), slot: equipped.has(i.id) ? equipped.get(i.id) : null, active: cfg.active === i.id, released: released.get(i.id) ?? null, equippedOn: decoUsed.get(i.id) || null }));
-    return { ok: true, coins, carrySeconds, ledger, inventory: inv, tabs: this.shop.tabs, categories: this.shop.categories, items: this.shop.items, layoutLock: Boolean(player.layoutLock), pets: this.petSummary(player) };
+    const vc = this.vehicleConfigOf(player);
+    const inv = inventory.map((i) => ({ ...i, placed: placed.has(i.id), slot: equipped.has(i.id) ? equipped.get(i.id) : null, active: cfg.active === i.id, released: released.get(i.id) ?? null, equippedOn: decoUsed.get(i.id) || null, vehicleActive: vc.active === i.id, decalActive: vc.decal === i.id, hornActive: vc.horn === i.id }));
+    let trackBest = null;
+    try { trackBest = await this.store.trackBest(player.nickname); } catch (err) { this.log.warn(`[world] 기록 조회 실패: ${err.message}`); }
+    return { ok: true, coins, carrySeconds, ledger, inventory: inv, tabs: this.shop.tabs, categories: this.shop.categories, items: this.shop.items, layoutLock: Boolean(player.layoutLock), pets: this.petSummary(player), vehicleConfig: vc, trackBest, outdoor: this.outdoor };
+  }
+
+  // ── 탈것 설정 (12단계) — 탑승·랩은 OutdoorWorld ────────────────────────
+  /** users.vehicle_config 형태 보정: { active, decal, horn } (내 인벤토리 id | null) */
+  vehicleConfigOf(player) {
+    const c = player.vehicleConfig && typeof player.vehicleConfig === 'object' ? player.vehicleConfig : {};
+    return { active: c.active ?? null, decal: c.decal ?? null, horn: c.horn ?? null };
+  }
+
+  /**
+   * 설정 → 내 탈것: 활성 탈것·데칼·경적 (각각 내 인벤토리의 해당 카테고리 아이템 id 또는 null).
+   * 야외에서 탑승 중이면 바뀐 설정을 바로 반영한다 (활성 탈것을 바꾸면 내린다).
+   * @returns {{ ok: true, vehicleConfig } | { ok: false, error: 'no_item' | 'not_vehicle' | 'not_decal' | 'not_horn' }}
+   */
+  async setVehicleConfig(player, { active, decal, horn } = {}) {
+    const cfg = this.vehicleConfigOf(player);
+    const check = async (id, category, err) => {
+      if (id === null) return { ok: true, id: null };
+      const row = await this.store.getInventoryItem(player.nickname, id);
+      const item = row && this.shop.get(row.itemId);
+      if (!row || !item) return { ok: false, error: 'no_item' };
+      if (item.category !== category) return { ok: false, error: err };
+      return { ok: true, id: row.id };
+    };
+    for (const [key, category, err] of [['active', 'vehicle', 'not_vehicle'], ['decal', 'vehicleDecal', 'not_decal'], ['horn', 'vehicleHorn', 'not_horn']]) {
+      const v = { active, decal, horn }[key];
+      if (v === undefined) continue;
+      const r = await check(v === '' ? null : v, category, err);
+      if (!r.ok) return r;
+      cfg[key] = r.id;
+    }
+    player.vehicleConfig = cfg;
+    await this.store.upsertUser(player.nickname, { vehicleConfig: cfg });
+    if (player.vehicle && active !== undefined && cfg.active !== player.vehicle.inventoryId) this.dismount(player);
+    else if (player.vehicle) await this.refreshVehicle(player);
+    return { ok: true, vehicleConfig: cfg };
+  }
+
+  /** 탑승 중인 탈것의 데칼·경적을 설정에 맞춰 갱신 ('vehicle' 이벤트 → 소켓이 방송) */
+  async refreshVehicle(player) {
+    const v = player.vehicle;
+    if (!v) return null;
+    const cfg = this.vehicleConfigOf(player);
+    const inv = await this.store.listInventory(player.nickname);
+    const decalRow = cfg.decal !== null ? inv.find((r) => r.id === cfg.decal) : null;
+    const hornRow = cfg.horn !== null ? inv.find((r) => r.id === cfg.horn) : null;
+    v.decal = decalRow ? this.shop.get(decalRow.itemId).decal : null;
+    v.horn = hornRow ? this.shop.get(hornRow.itemId).horn : null;
+    this.emit('vehicle', { player });
+    return v;
+  }
+
+  dismount(player) {
+    if (!player.vehicle) return { ok: false, error: 'not_riding' };
+    player.vehicle = null;
+    this.emit('vehicle', { player });
+    return { ok: true, vehicle: null };
+  }
+
+  /** 야외 프로필 공개 설정 (users.stats_public) */
+  async setStatsPublic(player, on) {
+    player.statsPublic = Boolean(on);
+    await this.store.upsertUser(player.nickname, { statsPublic: player.statsPublic });
+    return { ok: true, statsPublic: player.statsPublic };
   }
 
   // ── 가구: 책상 소품 · 공용 가구 배치 · 편집 잠금 (9단계) ────────────────
@@ -606,6 +753,8 @@ class World extends EventEmitter {
     const ids = (u && Array.isArray(u.deskItems) ? u.deskItems : []).slice(0, DESK_SLOTS);
     player.deskItems = await this.resolveDesk(player.nickname, ids);
     player.petConfig = (u && u.petConfig) || null; // 10단계
+    player.vehicleConfig = (u && u.vehicleConfig) || null; // 12단계
+    player.statsPublic = Boolean(u && u.statsPublic);
     await this.syncFollower(player);
   }
 
@@ -652,6 +801,7 @@ class World extends EventEmitter {
 
   /** 가구 편집 권한 (11단계): editPolicy 'owner' 면 방장만. 스터디 없이 돌면 누구나 */
   canEditLayout(player) {
+    if (this.outdoor) return false; // 12단계: 야외엔 가구를 놓지 않는다
     const info = this.studyInfo();
     if (!info || info.editPolicy !== 'owner') return true;
     return Boolean(info.ownerNickname) && info.ownerNickname === player.nickname;
@@ -978,6 +1128,7 @@ class World extends EventEmitter {
 
   /** 강아지 이름 변경 → 스터디의 'dog' 행 (+ 옛 users.dog_name 도 남긴다: 스터디 없이 돌 때의 복원용) */
   async setDogName(player, raw) {
+    if (!this.dog) return { ok: false, error: 'no_npc' };
     const res = this.dog.setName(raw);
     if (!res.ok) return res;
     this.store.upsertUser(player.nickname, { dogName: res.name }).catch((err) => this.log.warn(`[world] 강아지 이름 저장 실패: ${err.message}`));
@@ -997,6 +1148,7 @@ class World extends EventEmitter {
     for (const row of rows) {
       if (row.itemId === 'dog') {
         this.dogRow = row;
+        if (!this.dog) continue;
         this.dog.setCosmetics(row.cosmetics);
         for (const sk of row.skills || []) this.dog.addSkill(sk);
       } else if (this.shop.get(row.itemId)) this.spawnSharedPet(row);
@@ -1147,7 +1299,7 @@ class World extends EventEmitter {
 
   /** 강아지 설정 행 (없으면 만든다) */
   async ensureDogRow() {
-    if (!this.dogRow) this.dogRow = await this.store.addRoomPet(this.scopeId, { itemId: 'dog', name: this.dog.name, releasedBy: null, roomId: this.roomId }, this.now());
+    if (!this.dogRow) this.dogRow = await this.store.addRoomPet(this.scopeId, { itemId: 'dog', name: this.dog ? this.dog.name : '', releasedBy: null, roomId: this.roomId }, this.now());
     return this.dogRow;
   }
 
@@ -1203,6 +1355,7 @@ class World extends EventEmitter {
   /** 스킬 구매 대상 검증: 'dog' | 's:<roomPetId>' | inventoryId(내 개인 펫). @returns {{ ok, apply(): Promise }} */
   async skillTarget(player, item, target) {
     if (target === 'dog') {
+      if (!this.dog) return { ok: false, error: 'no_target' };
       if (this.dog.skills.has(item.skill)) return { ok: false, error: 'already_has' };
       return { ok: true, apply: async () => { await this.ensureDogRow(); const skills = [...new Set([...(this.dogRow.skills || []), item.skill])]; this.dogRow = (await this.store.updateRoomPet(this.scopeId, this.dogRow.id, { skills })) || this.dogRow; this.dog.addSkill(item.skill); } };
     }
@@ -1236,7 +1389,7 @@ class World extends EventEmitter {
   petSummary(player) {
     const npcInfo = (n, extra = {}) => ({ id: n.id, species: n.species, name: n.name, cosmetics: n.cosmetics, skills: [...n.skills], ...extra });
     return {
-      dog: npcInfo(this.dog),
+      dog: this.dog ? npcInfo(this.dog) : null,
       shared: [...this.roomPets.values()].map(({ row, npc }) => npcInfo(npc, { roomPetId: row.id, itemId: row.itemId, releasedBy: row.releasedBy, mine: row.releasedBy === player.nickname })),
       config: this.petConfigOf(player),
       maxShared: MAX_SHARED_PETS,

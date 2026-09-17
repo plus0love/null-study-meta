@@ -19,6 +19,9 @@ alter table public.users add column if not exists desk_items jsonb not null defa
 alter table public.users add column if not exists layout_lock boolean not null default false;
 -- 10단계: 내 펫 설정 { active: inventory.id|null, pets: { [inventory.id]: { name, cosmetics: { head, neck, back }, skills: [] } } }
 alter table public.users add column if not exists pet_config jsonb;
+-- 12단계: 내 탈것 설정 { active: inventory.id|null(탈것), decal: inventory.id|null, horn: inventory.id|null } + 야외 프로필에 이번 주 공부 시간 공개 여부
+alter table public.users add column if not exists vehicle_config jsonb;
+alter table public.users add column if not exists stats_public boolean not null default false;
 
 create table if not exists public.study_sessions (
   id          bigint generated always as identity primary key,
@@ -168,7 +171,20 @@ alter table public.room_pets   add column if not exists study_id bigint referenc
 create index if not exists room_layout_study_id on public.room_layout (study_id);
 create index if not exists room_pets_study_id on public.room_pets (study_id);
 
+-- 12단계: 트랙 랩 기록 (야외 트랙을 탈것으로 한 바퀴 돌 때마다 1행). study_id: 완주 당시 소속 스터디 (삭제되면 null), vehicle: bicycle | kickboard | kart | sport
+create table if not exists public.track_records (
+  id          bigint generated always as identity primary key,
+  nickname    text not null references public.users(nickname) on delete cascade,
+  study_id    bigint references public.studies(id) on delete set null,
+  vehicle     text not null,
+  ms          integer not null check (ms >= 0),
+  created_at  timestamptz not null default now()
+);
+create index if not exists track_records_ms on public.track_records (ms);
+create index if not exists track_records_nickname_created_at on public.track_records (nickname, created_at);
+
 alter table public.users          enable row level security;
+alter table public.track_records  enable row level security;
 alter table public.study_sessions enable row level security;
 alter table public.todos          enable row level security;
 alter table public.daily_goals    enable row level security;
@@ -299,7 +315,29 @@ as $$
                    and (l.created_at at time zone tz)::date between b.week_start and b.today)
 $$;
 
+-- 12단계: 트랙 상위 기록 — 닉네임마다 최고 1건, ms 오름차순. today_only 면 tz 기준 오늘 것만, only_nickname 으로 한 사람만
+create or replace function public.track_top(tz text default 'Asia/Seoul', today_only boolean default false, lim integer default 5, only_nickname text default null)
+returns table (id bigint, nickname text, study_id bigint, vehicle text, ms integer, created_at timestamptz)
+language sql stable
+as $$
+  with bounds as (select (now() at time zone tz)::date as today)
+  select distinct on (r.nickname) r.id, r.nickname, r.study_id, r.vehicle, r.ms, r.created_at
+  from public.track_records r cross join bounds b
+  where (not today_only or (r.created_at at time zone tz)::date = b.today)
+    and (only_nickname is null or r.nickname = only_nickname)
+  order by r.nickname, r.ms asc, r.created_at asc
+$$;
+-- distinct on 은 닉네임 순이라 바깥에서 ms 로 다시 정렬한다
+create or replace function public.track_top_sorted(tz text default 'Asia/Seoul', today_only boolean default false, lim integer default 5, only_nickname text default null)
+returns table (id bigint, nickname text, study_id bigint, vehicle text, ms integer, created_at timestamptz)
+language sql stable
+as $$
+  select * from public.track_top(tz, today_only, lim, only_nickname) order by ms asc, created_at asc limit lim
+$$;
+
 -- 집계 함수도 anon/authenticated 에서는 못 부르게 (PostgREST rpc 차단). service_role 은 그대로.
+revoke execute on function public.track_top(text, boolean, integer, text) from public, anon, authenticated;
+revoke execute on function public.track_top_sorted(text, boolean, integer, text) from public, anon, authenticated;
 revoke execute on function public.study_totals(text) from public, anon, authenticated;
 revoke execute on function public.attendance_streaks(text, text) from public, anon, authenticated;
 revoke execute on function public.list_todos(text, text) from public, anon, authenticated;

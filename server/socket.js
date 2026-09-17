@@ -66,6 +66,18 @@
  * 입장 ack 에 profile { goal, streak, coins, rewards }, store('memory'|'supabase'), tz 가 포함된다.
  * 서버 → 클라이언트 알림: playerJoined { player }, playerLeft { id, nickname, reason }, playerReconnected { id }, playerDisconnected { id }
  * 모든 방 안 이벤트는 Socket.io room `study:<id>` 안에서만 오간다 (다른 스터디 사람·가구·펫은 보이지 않는다).
+ *   ── 12단계 야외 (Socket.io room 'outdoor' 하나 — 모든 스터디 사람이 만난다) ──
+ *   door      { }                            → ack { ok, room: 'outdoor'|'studyroom', ...입장 ack 와 같은 세션 필드 } | error not_on_door | no_study | study_full
+ *             발 위치가 to 가 있는 문 타일이면 스터디 ↔ 야외로 옮긴다. 옛 방에는 playerLeft { reason: 'outdoor' | 'inside' }, 새 방에는 playerJoined.
+ *             입장/door ack 의 study 는 소속 스터디(야외에서도), room 은 지금 있는 맵 id.
+ *   move      { ..., vehicle?: { type, angle, speed } } → 탑승 중이면 playerMoved 에 vehicle 이 실린다 (서버가 종류별 최고 속도로 검증)
+ *   vehicle:mount / vehicle:dismount          → ack { ok, vehicle } | error seated | already_riding | no_vehicle | no_item | not_riding | not_outdoor. 모두에게 playerVehicle { id, vehicle }
+ *   vehicle:config { active?, decal?, horn? } → ack { ok, vehicleConfig } (설정 → 내 탈것, 어디서나). 탑승 중이면 반영
+ *   horn                                     → ack { ok, horn } | not_riding | no_horn. 모두에게 playerHorn { id, horn }
+ *   track:board                              → ack { ok, today[≤5], all[≤5], myBest, track } (전광판). 새 기록이 저장되면 모두에게 track:board (다시 받으라는 신호)
+ *   profile { id }                           → ack { ok, nickname, studyName, weekSeconds|null(비공개), statsPublic, vehicle }
+ *   profile:visibility { public }            → ack { ok, statsPublic } (users.stats_public)
+ *   서버 → lap:progress { event: 'start'|'checkpoint'|'reset'|'lap', next, total, ms?, startedAt } (본인), lap { id, nickname, ms, best, isBest, reward, vehicle } (모두, 완주 시)
  */
 const { Server } = require('socket.io');
 const { Hub } = require('./game/hub');
@@ -82,7 +94,8 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, hub: hubOpts = 
   });
   const { store, tz, ...restWorld } = worldOpts;
   const hub = new Hub({ room, store, tz, log, now: restWorld.now, world: restWorld, ...hubOpts }); // world.now(테스트 시계)는 허브·트래커도 같이 쓴다
-  const roomOf = (world) => `study:${world.studyId}`;
+  const roomOf = (world) => (world.outdoor ? 'outdoor' : `study:${world.studyId}`);
+  const TRANSFER = new Set(['outdoor', 'inside']); // 다른 월드로 옮겨 가는 퇴장 — 소켓은 그대로 (transfer 가 방을 바꾼다)
   const to = (world) => io.to(roomOf(world));
   const socketOf = (p) => (p ? io.sockets.sockets.get(p.socketId) : undefined);
   const roomCount = (world) => to(world).emit('roomCount', { count: world.connectedCount });
@@ -92,7 +105,7 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, hub: hubOpts = 
   function bindWorld(world) {
     world.on('playerLeft', (player, reason) => {
       const s = socketOf(player);
-      if (s && s.data.player === player) {
+      if (s && s.data.player === player && !TRANSFER.has(reason)) {
         s.data.player = null;
         s.leave(roomOf(world));
         if (reason === 'kicked') s.emit('kicked', { study: world.studyId });
@@ -133,6 +146,15 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, hub: hubOpts = 
       to(world).emit('goalReached', { id: playerId, nickname });
       chat(world, `${nickname}님이 오늘 목표를 달성했어요 🎉`, { notify: true });
     });
+    // 12단계 야외
+    world.on('vehicle', ({ player }) => to(world).emit('playerVehicle', { id: player.id, vehicle: world.publicVehicle(player) }));
+    world.on('horn', ({ player, horn }) => to(world).emit('playerHorn', { id: player.id, horn }));
+    world.on('lap', ({ player, event, ms, next, total }) => socketOf(player)?.emit('lap:progress', { event, next, total, ms, startedAt: world.lapOf ? world.lapOf(player).startedAt : null }));
+    world.on('lapDone', ({ player, ms, best, isBest, reward }) => {
+      to(world).emit('lap', { id: player.id, nickname: player.nickname, ms, best, isBest, reward, vehicle: player.vehicle ? player.vehicle.type : null });
+      chat(world, `${player.nickname}님이 트랙 한 바퀴 완주 🏁 ${(ms / 1000).toFixed(1)}초${isBest ? ' (개인 최고!)' : ''}`);
+    });
+    world.on('board', () => to(world).emit('track:board', {}));
     world.on('weeklyGoal', (e) => {
       const info = world.studyInfo();
       to(world).emit('studyGoal', { weekStart: e.weekStart, totalSeconds: e.totalSeconds, targetSeconds: e.targetSeconds, bonus: e.bonus, name: info ? info.name : '' });
@@ -147,6 +169,25 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, hub: hubOpts = 
   });
 
   const ackOf = (cb) => (typeof cb === 'function' ? cb : () => {});
+
+  /** 입장·door ack 공용 세션 필드 */
+  const sessionAck = (world, player, study, extra = {}) => ({
+    ok: true,
+    room: world.room.id,
+    token: player.token,
+    self: world.publicPlayer(player),
+    study: study ? hub.publicStudy(study, { isOwner: hub.isOwner(study, player.nickname) }) : null,
+    players: world.listPlayers().filter((p) => p.id !== player.id),
+    seats: world.seatSnapshot(),
+    pomodoro: world.pomodoroOf(player).snapshot(),
+    npcs: world.npcSnapshots(),
+    layout: world.listLayout(),
+    config: world.config,
+    serverTime: world.now(),
+    store: world.store.kind,
+    tz: world.tz,
+    ...extra,
+  });
 
   io.on('connection', (socket) => {
     socket.data.player = null;
@@ -224,44 +265,61 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, hub: hubOpts = 
       }
       const profile = await world.loadProfile(player); // 오늘 목표 · 출석 스트릭 · 코인 · 그룹 보너스 (저장소)
       if (!socket.connected || player.socketId !== socket.id || player.removed) return; // 기다리는 사이 끊김
-      ack({
-        ok: true,
-        resumed: res.resumed,
-        token: player.token,
-        self: world.publicPlayer(player),
-        study: hub.publicStudy(res.study, { isOwner: hub.isOwner(res.study, player.nickname) }),
-        ...(res.access ? { studyAccess: res.access } : {}),
-        players: world.listPlayers().filter((p) => p.id !== player.id),
-        seats: world.seatSnapshot(),
-        pomodoro: world.pomodoroOf(player).snapshot(),
-        npcs: world.npcSnapshots(),
-        layout: world.listLayout(),
-        config: world.config,
-        serverTime: world.now(),
-        profile,
-        store: world.store.kind,
-        tz: world.tz,
-      });
+      ack(sessionAck(world, player, res.study, { resumed: res.resumed, profile, ...(res.access ? { studyAccess: res.access } : {}) }));
       if (res.resumed) socket.to(roomOf(world)).emit('playerReconnected', { id: player.id, player: world.publicPlayer(player) });
       else socket.to(roomOf(world)).emit('playerJoined', { player: world.publicPlayer(player) }); // 입장 시스템 채팅·알림은 클라이언트가 만든다
       roomCount(world);
-      log.log(`[socket] ${res.resumed ? '재접속' : '입장'} ${player.nickname} (${player.id}) → ${res.study.name}`);
+      log.log(`[socket] ${res.resumed ? '재접속' : '입장'} ${player.nickname} (${player.id}) → ${res.study ? res.study.name : '(야외)'}`);
     });
 
+    // ── 야외 (12단계): 문 · 탈것 · 랩 · 전광판 · 프로필 ────────────────────
+    socket.on('door', requirePlayer(async (_payload, ack, player, world) => {
+      const T = world.room.tileSize;
+      const tx = Math.floor(player.x / T);
+      const ty = Math.floor((player.y - 1) / T);
+      if (player.seatId) return ack({ ok: false, error: 'seated' });
+      const door = (world.room.doors || []).find((d) => d.to && Math.abs(d.x - tx) <= 1 && Math.abs(d.y - ty) <= 1);
+      if (!door) return ack({ ok: false, error: 'not_on_door' });
+      let res;
+      try {
+        socket.leave(roomOf(world)); // 옛 방 방송(playerLeft)은 나 빼고
+        res = world.outdoor ? await hub.goInside(player, world) : await hub.goOutdoor(player, world);
+      } catch (err) {
+        log.warn(`[socket] 문 이동 실패: ${err.message}`);
+        res = { ok: false, error: 'store_error' };
+      }
+      if (!res.ok) { socket.join(roomOf(world)); return ack(res); }
+      const next = res.world;
+      socket.data.world = next;
+      socket.join(roomOf(next));
+      roomCount(world);
+      ack(sessionAck(next, player, res.study, { resumed: false, profile: { vehicleConfig: next.vehicleConfigOf(player), statsPublic: Boolean(player.statsPublic) } }));
+      socket.to(roomOf(next)).emit('playerJoined', { player: next.publicPlayer(player) });
+      roomCount(next);
+      log.log(`[socket] ${player.nickname} → ${next.outdoor ? '야외' : res.study.name}`);
+    }));
+    socket.on('vehicle:mount', requirePlayer(safe(async (_p, player, world) => (world.outdoor ? world.mount(player) : { ok: false, error: 'not_outdoor' }))));
+    socket.on('vehicle:dismount', requirePlayer((_p, ack, player, world) => ack(world.dismount(player))));
+    socket.on('vehicle:config', requirePlayer(safe((payload, player, world) => world.setVehicleConfig(player, payload || {}))));
+    socket.on('horn', requirePlayer((_p, ack, player, world) => ack(world.outdoor ? world.horn(player) : { ok: false, error: 'not_outdoor' })));
+    socket.on('track:board', requirePlayer(safe(async (_p, player) => hub.ensureOutdoor().board(player))));
+    socket.on('profile', requirePlayer(safe((payload, player, world) => (world.outdoor ? world.profile(player, payload && payload.id) : { ok: false, error: 'not_outdoor' }))));
+    socket.on('profile:visibility', requirePlayer(safe((payload, player, world) => world.setStatsPublic(player, payload && payload.public))));
+
     // ── 스터디 정보/설정 (11단계) ─────────────────────────────────────
-    socket.on('study:info', requirePlayer(safe((_p, player, world) => hub.info(world.studyId, player.nickname))));
+    socket.on('study:info', requirePlayer(safe((_p, player, world) => hub.info(hub.studyIdOf(world, player), player.nickname))));
     socket.on('study:update', requirePlayer(safe(async (payload, player, world) => {
-      const r = await hub.updateStudy(world.studyId, player.nickname, payload || {});
+      const r = await hub.updateStudy(hub.studyIdOf(world, player), player.nickname, payload || {});
       if (!r.ok) return r;
       return r.access ? { ok: true, study: r.study, studyAccess: r.access } : { ok: true, study: r.study };
     })));
     socket.on('study:kick', requirePlayer(safe(async (payload, player, world) => {
-      const r = await hub.kickMember(world.studyId, player.nickname, String((payload && payload.nickname) || ''));
+      const r = await hub.kickMember(hub.studyIdOf(world, player), player.nickname, String((payload && payload.nickname) || ''));
       if (r.ok) chat(world, `${payload.nickname} 님이 스터디에서 내보내졌어요.`);
       return r;
     })));
     socket.on('study:delete', requirePlayer(safe(async (_p, player, world) => {
-      const r = await hub.deleteStudy(world.studyId, player.nickname);
+      const r = await hub.deleteStudy(hub.studyIdOf(world, player), player.nickname);
       if (r.ok) { socket.data.player = null; socket.data.world = null; socket.leave(roomOf(world)); }
       return r;
     })));
@@ -272,8 +330,10 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, hub: hubOpts = 
         socket.emit('move:correct', { x: res.x, y: res.y, reason: res.reason });
         return;
       }
-      // 발신자에게는 되돌려 보내지 않는다
-      socket.to(roomOf(world)).emit('playerMoved', { id: player.id, x: player.x, y: player.y, facing: player.facing, moving: player.moving });
+      // 발신자에게는 되돌려 보내지 않는다 (탑승 중이면 각도·속도도)
+      const out = { id: player.id, x: player.x, y: player.y, facing: player.facing, moving: player.moving };
+      if (player.vehicle) out.vehicle = { angle: player.vehicle.angle, speed: player.vehicle.speed };
+      socket.to(roomOf(world)).emit('playerMoved', out);
     }));
 
     socket.on('sit', requirePlayer((payload, ack, player, world) => {
@@ -340,7 +400,16 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, hub: hubOpts = 
     }));
 
     // ── 공부 기록: 랭킹 · 오늘 목표 · 할 일 (영구 저장소) ────────────────
-    socket.on('stats', requirePlayer(safe((payload, _player, world) => world.stats({ scope: payload && payload.scope === 'study' ? 'study' : 'all' }))));
+    socket.on('stats', requirePlayer(safe(async (payload, player, world) => {
+      const scope = payload && payload.scope === 'study' ? 'study' : 'all';
+      if (!world.outdoor || scope !== 'study') return world.stats({ scope });
+      // 야외에서 '이 스터디' 는 소속 스터디 멤버 기준
+      const sid = hub.studyIdOf(world, player);
+      const names = new Set(sid !== null ? await hub.memberNames(sid) : []);
+      names.add(player.nickname);
+      const all = await world.stats({ scope: 'all' });
+      return { ...all, scope: 'study', rows: all.rows.filter((r) => names.has(r.nickname)) };
+    })));
     socket.on('npc:name', requirePlayer(safe((payload, player, world) => world.setNpcName(player, payload && payload.id, payload && payload.name))));
     // ── 펫 (10단계) ─────────────────────────────────────────────────
     socket.on('pet:config', requirePlayer(safe((payload, player, world) => world.setPetConfig(player, payload || {}))));

@@ -8,6 +8,8 @@
  *  - 잠긴 스터디는 비밀번호 모달 → 맞춘 값은 스터디별 localStorage. 소속되면 서버가 다시 묻지 않는다 (방장이 바꾸면 다시).
  *  - 세션 토큰이 살아 있으면 서버가 이어받는다 (재접속). 나가기 → 로비. 내보내짐/삭제 → 로비.
  *  - 그룹 주간 목표 달성(studyGoal): 창밖 불꽃놀이 10초 + 조명 플래시 + 차임 + 토스트. 오프라인 사이 달성분은 입장 ack profile.rewards 로 토스트.
+ * 12단계 야외: 세션 ack 의 room 이 지금 씬의 맵과 다르면 /api/rooms/<id> 를 받아(한 번만) 씬을 restart 하고 미니맵을 바꾼다 (ensureRoom).
+ *  - 문 밟기 → net.door() → 'session' → 같은 흐름. 탈것 V(mount/dismount) · H(경적) · 아바타 클릭 프로필 · 전광판 E · 랩 HUD/완주 연출(🏁 + 차임 + 토스트).
  */
 (async function main() {
   'use strict';
@@ -26,12 +28,13 @@
   let furn; // 9단계: 가구 아틀라스 (DOM 아이콘용) { img, frames }
   let pets; // 10단계: 펫 시트 메타 + 이미지 { meta, img }
   let petdeco; // 10단계: 꾸미기 아틀라스 { img, frames, slots }
+  let vehicles; // 12단계: 탈것 아틀라스 { img, frames, meta }
   let config = { passwordRequired: false };
   try {
     room = await fetch('/api/rooms/studyroom').then((r) => r.json());
     const v = room.assetVersion ? `?v=${room.assetVersion}` : '';
     const loadImg = (src) => new Promise((resolve) => { const img = new Image(); img.onload = () => resolve(img); img.onerror = () => resolve(null); img.src = src; });
-    [tiles, dog, avatarKit, config, catalog, furn, pets, petdeco] = await Promise.all([
+    [tiles, dog, avatarKit, config, catalog, furn, pets, petdeco, vehicles] = await Promise.all([
       fetch('/assets/tiles.json').then((r) => r.json()),
       fetch('/assets/dog.json').then((r) => r.json()),
       AvatarKit.load(room.assetVersion),
@@ -45,6 +48,7 @@
       })).catch(() => ({ img: null, frames: {} })),
       fetch(`/assets/pets.json${v}`).then((r) => r.json()).then(async (meta) => ({ meta, img: await loadImg(`/assets/pets.png${v}`) })),
       fetch(`/assets/petdeco.json${v}`).then((r) => r.json()).then(async (json) => ({ img: await loadImg(`/assets/petdeco.png${v}`), frames: json.frames, slots: json.meta.slots })).catch(() => ({ img: null, frames: {}, slots: {} })),
+      fetch(`/assets/vehicles.json${v}`).then((r) => r.json()).then(async (json) => ({ img: await loadImg(`/assets/vehicles.png${v}`), frames: json.frames, meta: json.meta })).catch(() => ({ img: null, frames: {}, meta: { seat: {}, decal: {} } })),
     ]);
   } catch (err) {
     fail(`방 데이터를 불러오지 못했습니다: ${err.message}`);
@@ -60,7 +64,7 @@
   } catch (_) { /* 폰트 없이 진행 */ }
 
   const net = new Net();
-  const ui = new UI({ room, serverNow: () => net.serverNow(), avatarKit, catalog, furn, pets, petdeco });
+  const ui = new UI({ room, serverNow: () => net.serverNow(), avatarKit, catalog, furn, pets, petdeco, vehicles, tiles });
   const sound = new FX.Sound();
 
   const game = new Phaser.Game({
@@ -77,8 +81,29 @@
   });
   // 부팅 중에는 add() 가 인스턴스를 돌려주지 않으므로 직접 만들어 넘긴다
   const scene = new RoomScene();
-  await new Promise((onReady) => game.scene.add('room', scene, true, { room, tiles, avatarKit, dog, pets: pets.meta, catalog, onReady }));
+  const sceneData = (r, onReady) => ({ room: r, tiles, avatarKit, dog, pets: pets.meta, vehicles: vehicles.meta, catalog, onReady });
+  await new Promise((onReady) => game.scene.add('room', scene, true, sceneData(room, onReady)));
   ui.hideLoading();
+
+  // ── 12단계: 맵 전환 (studyroom ↔ outdoor). 방 데이터는 한 번만 받아 둔다 ──
+  const rooms = { [room.id]: room };
+  const loadRoom = async (id) => {
+    if (!rooms[id]) rooms[id] = await fetch(`/api/rooms/${id}`).then((r) => r.json());
+    return rooms[id];
+  };
+  let switching = null;
+  const ensureRoom = async (id) => {
+    if (switching) await switching;
+    if (scene.room && scene.room.id === id) return scene.room;
+    switching = (async () => {
+      const data = await loadRoom(id);
+      ui.setRoom(data);
+      await new Promise((onReady) => scene.scene.restart(sceneData(data, onReady)));
+      scene.setZoom(ui.zoom);
+      return data;
+    })().finally(() => { switching = null; });
+    return switching;
+  };
 
   // ── 씬 → 네트워크/UI ───────────────────────────────────────────
   scene.hooks.onMove = (p) => net.move(p);
@@ -88,6 +113,8 @@
   scene.hooks.onPet = (id) => net.petNpc(id).catch(() => {}); // 쿨다운/거리 거부는 조용히 무시
   scene.hooks.onUse = (kind, id) => {
     if (kind === 'music') return ui.openMusic(); // 소리는 본인에게만 → 서버는 모른다
+    if (kind === 'board') return ui.openBoard(); // 12단계: 전광판
+    if (kind === 'shop') return ui.openWallet('mount'); // 12단계: 카트 정류장 → 탈것 상점
     net.interact(id).then((r) => { if (!r.ok && r.error === 'too_far') ui.notify('조금 더 가까이 가 주세요.'); }).catch(() => {});
   };
   scene.hooks.onEmojiKey = (i) => net.emoji(i).catch(() => {});
@@ -101,6 +128,40 @@
   scene.hooks.onMove2 = (id, x, y, rotation) => net.layoutMove(id, x, y, rotation).catch(() => ({ ok: false }));
   scene.hooks.onRemove = (id) => net.layoutRemove(id).then((r) => { if (r.ok) ui.refreshEdit(); return r; }).catch(() => ({ ok: false }));
   scene.hooks.onEditState = (st) => ui.setEditState(st);
+  // 12단계: 문 · 탈것 · 경적 · 프로필
+  scene.hooks.onDoor = () => net.door().then((r) => {
+    if (!r.ok) ui.notify({ no_study: '돌아갈 스터디가 없어요. 로비로 가려면 나가기를 눌러 주세요.', study_full: '스터디 정원이 다 찼어요. 잠시 뒤 다시 들어가 보세요.' }[r.error] || '문을 지나지 못했어요.');
+    return r;
+  }).catch(() => ({ ok: false }));
+  scene.hooks.onMount = () => {
+    const riding = scene.me && scene.me.riding;
+    return (riding ? net.dismount() : net.mount()).then((r) => {
+      if (r.ok) return;
+      ui.notify({ no_vehicle: '탈것이 없어요. 지갑 → 탈것에서 사고 설정 → 내 탈것에서 골라 주세요.', seated: '앉아 있을 땐 탈 수 없어요.', no_item: '고른 탈것을 찾지 못했어요.', not_outdoor: '탈것은 야외에서만 탈 수 있어요.' }[r.error] || '탈것을 소환하지 못했어요.');
+    }).catch(() => {});
+  };
+  scene.hooks.onCreak = () => sound.creak();
+  scene.hooks.onHorn = () => net.horn().then((r) => { if (!r.ok && r.error === 'no_horn') ui.notify('경적이 없어요. 지갑 → 탈것 → 경적'); }).catch(() => {});
+  scene.hooks.onProfile = (id) => net.profile(id).then((r) => ui.showProfile(r)).catch(() => {});
+  net.on('playerVehicle', (d) => {
+    scene.onVehicle(d);
+    ui.upsertPlayer({ id: d.id, vehicle: d.vehicle });
+    if (scene.me && d.id === scene.me.id) { ui.toast(d.vehicle ? '탑승! 방향키로 달려요 (키를 떼면 미끄러져요) · H 경적 · V 내리기' : '내렸어요'); ui.setLap(null); }
+  });
+  net.on('playerHorn', (d) => { scene.onHorn(d); sound.horn(d.horn); });
+  net.on('lap:progress', (d) => ui.setLap(d));
+  net.on('lap', (d) => {
+    scene.onLap(d);
+    if (scene.me && d.id === scene.me.id) {
+      sound.chime('lap');
+      ui.setLapBest(d.best);
+      ui.toast(`🏁 한 바퀴 ${(d.ms / 1000).toFixed(1)}초${d.isBest ? ' · 개인 최고!' : ''}${d.reward ? ` · 오늘 첫 완주 +${d.reward} 🪙` : ''}`, 4000);
+    }
+  });
+  net.on('track:board', () => { net.trackBoard().then((r) => { if (!r.ok) return; scene.refreshBoard(r); if (ui.isBoardOpen()) ui.renderBoard(r); }).catch(() => {}); });
+  ui.onBoard = () => net.trackBoard();
+  ui.onVehicleConfig = (cfg) => net.vehicleConfig(cfg).then((r) => { if (!r.ok) ui.notify({ no_item: '없는 아이템이에요.', not_vehicle: '탈것이 아니에요.', not_decal: '데칼이 아니에요.', not_horn: '경적이 아니에요.' }[r.error] || '탈것 설정을 저장하지 못했어요.'); return r; }).catch(() => ({ ok: false }));
+  ui.onStatsPublic = (on) => net.setStatsPublic(on).then((r) => { if (r.ok) ui.toast(r.statsPublic ? '이번 주 공부 시간을 공개해요' : '이번 주 공부 시간을 숨겨요'); }).catch(() => {});
   ui.getLayout = () => (scene.furniture ? [...scene.furniture.entries.values()] : []);
   ui.onEditToggle = (on) => net.setEditing(on).then((r) => {
     if (r.ok) { scene.setEditMode(r.editing); ui.setEditMode(r.editing); }
@@ -126,7 +187,7 @@
     else if (r.error === 'too_long') ui.addChat({ system: true, text: '메시지는 200자까지예요.' });
   }).catch(() => {});
   ui.onEmoji = (i) => net.emoji(i).catch(() => {});
-  ui.onToggleStatus = () => net.setStatus(ui.status === 'study' ? 'rest' : 'study').catch(() => {});
+  ui.onToggleStatus = () => net.setStatus(ui.status === 'study' ? 'rest' : 'study').then((r) => { if (r && !r.ok && r.error === 'outdoor') ui.notify('야외에서는 휴식만 할 수 있어요. 공부는 스터디룸에서!'); }).catch(() => {});
   ui.onAvatar = (avatar) => net.setAvatar(avatar).catch(() => {});
   ui.onPomodoro = (action, cfg) => {
     // 시작 버튼(사용자 제스처)에서 브라우저 알림 권한을 한 번 물어본다
@@ -299,9 +360,12 @@
   ui.onNotifyPerm = () => FX.Notify.request().then((st) => ui.setNotifyPermission(st));
 
   // ── 네트워크 → 씬/UI ───────────────────────────────────────────
-  const applySession = (ack) => {
+  const applySession = async (ack) => {
     ui.hideLobby();
+    await ensureRoom(ack.room || 'studyroom'); // 12단계: 맵이 다르면 씬을 바꾼다
+    if (net.session !== ack) return; // 기다리는 사이 더 새 세션이 왔다
     ui.setStudy(ack.study || null);
+    ui.setOutdoor(Boolean(scene.room.outdoor));
     scene.applySession(ack);
     ui.setSelf(ack.self.id, ack.self.nickname);
     ui.setAvatar(ack.self.avatar);
@@ -322,7 +386,11 @@
     if (profile.streak && profile.streak.attendedToday) ui.toast(`${profile.streak.streak}일 연속 출석 🔥`);
     // 11단계: 오프라인 사이에 달성된 그룹 목표 보너스
     for (const r of profile.rewards || []) ui.toast(`🎆 ${r.studyName || '스터디'} 그룹 목표 달성 보너스 +${r.coins} 🪙`, 5000);
-    if (!ack.resumed && ack.study) ui.addChat({ system: true, text: `"${ack.study.name}" 스터디에 들어왔어요. 코드 ${ack.study.code}` });
+    if (profile.statsPublic !== undefined) ui.setStatsPublic(profile.statsPublic);
+    if (scene.room.outdoor) {
+      if (!ack.resumed) ui.addChat({ system: true, text: '🌳 공용 야외로 나왔어요. 다른 스터디 사람들도 여기서 만나요. 건물 이중문으로 들어가면 내 스터디로 돌아가요.' });
+      net.trackBoard().then((r) => { if (r.ok) { scene.refreshBoard(r); ui.setLapBest(r.myBest ? r.myBest.ms : null); } }).catch(() => {});
+    } else if (!ack.resumed && ack.study) ui.addChat({ system: true, text: `"${ack.study.name}" 스터디에 들어왔어요. 코드 ${ack.study.code}` });
     migrateTodos();
     startStatsPolling();
   };
@@ -336,11 +404,12 @@
     ui.notify(`${p.nickname} 님이 입장했어요.`);
     ui.addChat({ system: true, text: `${p.nickname} 님이 입장했어요.` });
   });
-  net.on('playerLeft', ({ id, nickname }) => {
+  net.on('playerLeft', ({ id, nickname, reason }) => {
     scene.removeRemote(id);
     ui.removePlayer(id);
-    ui.notify(`${nickname} 님이 나갔어요.`);
-    ui.addChat({ system: true, text: `${nickname} 님이 나갔어요.` });
+    const text = reason === 'outdoor' ? `${nickname} 님이 야외로 나갔어요.` : reason === 'inside' ? `${nickname} 님이 스터디룸으로 들어갔어요.` : `${nickname} 님이 나갔어요.`;
+    ui.notify(text);
+    ui.addChat({ system: true, text });
   });
   net.on('playerReconnected', ({ id, player: p }) => {
     if (scene.remotes.has(id)) {
@@ -514,5 +583,5 @@
   }
 
   // 디버그/테스트용 전역 핸들
-  window.NSM = { game, room, net, ui, scene, sound, avatarKit, catalog, enterStudy, openLobby };
+  window.NSM = { game, room, net, ui, scene, sound, avatarKit, catalog, enterStudy, openLobby, ensureRoom, rooms };
 })();

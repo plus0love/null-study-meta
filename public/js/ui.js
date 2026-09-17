@@ -20,6 +20,9 @@
  *    다른 스터디 목록, 만들기 모달, 코드로 참가) → 스터디. 잠긴 스터디는 비밀번호 모달(askStudyPassword).
  *    좌상단 배지 = 스터디 이름(+🔒) → 클릭하면 스터디 정보 팝오버(코드·링크 복사, 주간 목표 바, 그룹 스트릭, 멤버 목록, 방장 설정·내보내기·삭제).
  *    랭킹 카드 "이 스터디 / 전체" 토글. 알림 벨: 입장·목표·펫 풀림 (notify()).
+ *  - 12단계 야외: setRoom(room) 으로 미니맵을 맵 크기에 맞춰 다시 그린다 (야외는 잔디·트랙·물 색). setOutdoor(on) → 🌳 배지 · 🛠 숨김.
+ *    지갑 탈것 탭(탈것 4 · 데칼 3 · 경적 3, 색 선택) + 하단 내 최고 기록 · 설정 → 내 탈것(활성·데칼·경적 select) · 야외 프로필 공개 체크.
+ *    랩 HUD(setLap: 진행 중 경과·체크포인트·개인 최고) · 전광판 모달(openBoard) · 프로필 모달(showProfile).
  */
 (function () {
   'use strict';
@@ -27,14 +30,15 @@
   const $ = (id) => document.getElementById(id);
   const STATUS_LABEL = { study: '공부 중', rest: '휴식 중', coffee: '☕ 휴식 중' };
   const STATUS_ICON = { study: 'i-book', rest: 'i-leaf', coffee: 'i-coffee' };
-  const HINT_LABEL = { sit: '앉기', stand: '일어나기', pet: '쓰다듬기', coffee: '커피 마시기', music: '음악 듣기', lie: '눕기', massage: '안마의자에 앉기' };
+  const HINT_LABEL = { sit: '앉기', stand: '일어나기', pet: '쓰다듬기', coffee: '커피 마시기', music: '음악 듣기', lie: '눕기', massage: '안마의자에 앉기', board: '기록 보기', shop: '탈것 상점' };
+  const VEHICLE_LABEL = { rickshaw: '🛒 낡은 인력거', bicycle: '🚲 자전거', kickboard: '🛴 킥보드', kart: '🏎 기본 카트', sport: '🏎 스포츠 카트' };
   // 9단계: 편집 거부 사유 → 안내
   const EDIT_ERR = {
     blocked: '여기엔 놓을 수 없어요', overlap: '다른 가구와 겹쳐요', wall_only: '벽 타일에만 놓을 수 있어요', needs_base: '놓을 수 있는 자리가 아니에요 (소파·책장·커피머신 위 등)',
     out_of_bounds: '맵 밖이에요', invalid_rotation: '회전할 수 없어요', player_in_way: '누가 서 있어요', locked: '다른 사람이 잡고 있어요', forbidden: '놓은 사람만 옮길 수 있어요',
     occupied: '누가 앉아 있어요', already_placed: '이미 놓은 아이템이에요', no_item: '없는 아이템이에요', not_found: '이미 없어진 가구예요', not_placeable: '방에 놓는 가구가 아니에요',
   };
-  const COIN_REASON = { study: '공부 10분마다', focus: '집중 완주 보너스', weekly_goal: '그룹 목표 보너스' }; // 원장 reason → 표시. purchase:<id> 는 "구매 · <id>"
+  const COIN_REASON = { study: '공부 10분마다', focus: '집중 완주 보너스', weekly_goal: '그룹 목표 보너스', lap: '트랙 첫 완주' }; // 원장 reason → 표시. purchase:<id> 는 "구매 · <id>"
   const TODO_KEY = 'nsm.todos'; // 3단계까지의 localStorage 할 일 — 첫 접속 때 서버로 옮기고 지운다
   const GOAL_MINUTES = Array.from({ length: 16 }, (_, i) => (i + 1) * 30); // 30분 ~ 8시간
   const LS_NIGHT = 'nsm.alwaysNight';
@@ -45,7 +49,7 @@
   const ZOOMS = [1.5, 2, 2.5];
   const POMO = { focus: { min: 20, max: 90, def: 25 }, break: { min: 5, max: 20, def: 5 } };
   const LS_RECENT = 'nsm.music.recent';
-  const MINIMAP_SCALE = 7; // 타일당 px (46x34 → 322x238)
+  const MINIMAP_W = 322; // 미니맵 폭(px) — 타일당 px 는 맵 폭에 맞춰 정한다 (46타일 → 7, 80타일 → 4)
   const PET_COLORS = { dog: '#c48c52', hamster: '#d9a066', chick: '#f4d35e', turtle: '#6f8567', rabbit: '#efe6d6', cat: '#e0964f', maltese: '#ffffff', poodle_black: '#524b58', shiba: '#e0964f', parrot: '#5f9e5c', slime: '#7fd0b8', fish: '#f2a04a' };
   const PET_SLOT_LABEL = { head: '머리', neck: '목', back: '등' };
   const SKILL_ICON = { skill_come: '📣', skill_sleep: '💤', skill_high_five: '🖐' };
@@ -91,8 +95,13 @@
   }
 
   class UI {
-    constructor({ room, serverNow, avatarKit, catalog = { tabs: [], categories: [], items: [] }, furn = { img: null, frames: {} }, pets = { meta: null, img: null }, petdeco = { img: null, frames: {}, slots: {} } }) {
+    constructor({ room, serverNow, avatarKit, catalog = { tabs: [], categories: [], items: [] }, furn = { img: null, frames: {} }, pets = { meta: null, img: null }, petdeco = { img: null, frames: {}, slots: {} }, vehicles = { img: null, frames: {}, meta: {} }, tiles = null }) {
       this.room = room;
+      this.tilesMeta = tiles; // tiles.json (미니맵 색 판정용)
+      this.vehicles = vehicles; // 12단계: { img, frames, meta } (DOM 아이콘)
+      this.lap = null; // 12단계: 내 랩 진행 { startedAt, next, total }
+      this.lapBest = null; // ms
+      this.outdoor = false;
       this.serverNow = serverNow || (() => Date.now());
       this.avatarKit = avatarKit;
       this.catalog = catalog; // 9단계: 상점 카탈로그
@@ -153,6 +162,10 @@
       this.onPetRelease = async () => ({ ok: false });
       this.onPetRecall = async () => ({ ok: false });
       this.onPetDeco = async () => ({ ok: false });
+      // 12단계
+      this.onVehicleConfig = async () => ({ ok: false });
+      this.onStatsPublic = () => {};
+      this.onBoard = async () => ({ ok: false });
       // 11단계
       this.onStudyInfo = async () => ({ ok: false });
       this.onStudyUpdate = async () => ({ ok: false });
@@ -182,9 +195,140 @@
       this.bindEdit();
       this.bindStudy();
       this.bindLobby();
+      this.bindOutdoor();
       this.buildMinimapBase();
       this.renderTodos();
-      setInterval(() => this.tickPomodoro(), 250);
+      setInterval(() => { this.tickPomodoro(); this.tickLap(); }, 250);
+    }
+
+    // ── 야외 (12단계): 배지 · 탈것 설정 · 프로필 · 전광판 · 랩 HUD ─────────
+    bindOutdoor() {
+      for (const id of ['veh-active', 'veh-decal', 'veh-horn']) {
+        $(id).addEventListener('keydown', (e) => e.stopPropagation());
+        $(id).addEventListener('change', async () => {
+          const key = { 'veh-active': 'active', 'veh-decal': 'decal', 'veh-horn': 'horn' }[id];
+          const v = $(id).value;
+          const r = await this.onVehicleConfig({ [key]: v ? Number(v) : null });
+          if (r && r.ok) { this.toast(key === 'active' ? (v ? '탈것을 골랐어요 · 야외에서 V' : '탈것을 두고 다녀요') : '탈것 설정을 저장했어요'); await this.refreshWallet(); }
+        });
+      }
+      $('opt-stats-public').addEventListener('change', () => this.onStatsPublic($('opt-stats-public').checked));
+      $('board-close').addEventListener('click', () => { $('board-modal').hidden = true; });
+      $('board-modal').addEventListener('click', (e) => { if (e.target === $('board-modal')) $('board-modal').hidden = true; });
+      $('profile-close').addEventListener('click', () => { $('profile-modal').hidden = true; });
+      $('profile-modal').addEventListener('click', (e) => { if (e.target === $('profile-modal')) $('profile-modal').hidden = true; });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { $('board-modal').hidden = true; $('profile-modal').hidden = true; } });
+    }
+
+    /** 맵이 바뀌면 미니맵을 다시 만든다 (studyroom ↔ outdoor) */
+    setRoom(room) {
+      this.room = room;
+      this.buildMinimapBase();
+      this.setOutdoor(Boolean(room && room.outdoor));
+    }
+
+    setOutdoor(on) {
+      this.outdoor = Boolean(on);
+      document.body.classList.toggle('outdoor', this.outdoor);
+      $('place-badge').hidden = !this.outdoor;
+      $('vehicle-hint').hidden = !this.outdoor;
+      if (!this.outdoor) this.setLap(null);
+    }
+
+    /** 서버 lap:progress → HUD. null 이면 숨김 */
+    setLap(p) {
+      if (!p || p.event === 'reset') this.lap = null;
+      else if (p.event === 'lap') { this.lap = { startedAt: p.startedAt, next: 0, total: p.total }; if (this.lapBest === null || p.ms < this.lapBest) this.lapBest = p.ms; }
+      else this.lap = { startedAt: p.startedAt, next: p.next, total: p.total };
+      this.tickLap();
+    }
+
+    setLapBest(ms) {
+      this.lapBest = ms === null || ms === undefined ? null : Number(ms);
+      this.tickLap();
+    }
+
+    tickLap() {
+      const hud = $('lap-hud');
+      if (!hud) return;
+      if (!this.lap || !this.lap.startedAt) { hud.hidden = true; return; }
+      hud.hidden = false;
+      const elapsed = Math.max(0, this.serverNow() - this.lap.startedAt);
+      $('lap-text').textContent = `랩 진행 중 ${(elapsed / 1000).toFixed(1)}s · 체크포인트 ${this.lap.next}/${this.lap.total}`;
+      $('lap-best').textContent = this.lapBest !== null ? `개인 최고 ${(this.lapBest / 1000).toFixed(1)}s` : '첫 랩!';
+    }
+
+    /** 설정 → 내 탈것: 활성 탈것·데칼·경적 (지갑 인벤토리 기준) */
+    renderVehicleSettings() {
+      const inv = (this.wallet && this.wallet.inventory) || [];
+      const items = new Map(this.catalogItems().map((i) => [i.id, i]));
+      const cfg = (this.wallet && this.wallet.vehicleConfig) || { active: null, decal: null, horn: null };
+      const fill = (sel, category, none, key) => {
+        if (!sel) return 0;
+        sel.innerHTML = '';
+        sel.appendChild(el('option', { value: '', text: none }));
+        let n = 0;
+        for (const row of inv) {
+          const it = items.get(row.itemId);
+          if (!it || it.category !== category) continue;
+          const v = it.variants && it.variants.find((x) => x.id === row.meta.variant);
+          sel.appendChild(el('option', { value: String(row.id), text: `${it.name}${v ? ` (${v.label})` : ''}` }));
+          n++;
+        }
+        sel.value = cfg[key] !== null && cfg[key] !== undefined ? String(cfg[key]) : '';
+        if (sel.value !== String(cfg[key] ?? '')) sel.value = '';
+        return n;
+      };
+      const n = fill($('veh-active'), 'vehicle', '탈것 없음', 'active');
+      fill($('veh-decal'), 'vehicleDecal', '데칼 없음', 'decal');
+      fill($('veh-horn'), 'vehicleHorn', '경적 없음', 'horn');
+      const best = this.wallet && this.wallet.trackBest;
+      if ($('veh-hint')) $('veh-hint').textContent = n ? `${best ? `내 최고 기록 ${(best.ms / 1000).toFixed(1)}s (${VEHICLE_LABEL[best.vehicle] || best.vehicle})` : '아직 트랙 기록이 없어요'} · 야외 트랙 출발선을 지나 한 바퀴!` : '지갑 → 탈것에서 사면 여기서 고를 수 있어요';
+      if (this.wallet && this.wallet.statsPublic !== undefined) $('opt-stats-public').checked = Boolean(this.wallet.statsPublic);
+    }
+
+    setStatsPublic(on) {
+      $('opt-stats-public').checked = Boolean(on);
+    }
+
+    /** 야외 프로필 모달 (profile ack) */
+    showProfile(d) {
+      if (!d || !d.ok) return;
+      $('profile-nick').textContent = d.nickname;
+      $('profile-study').textContent = d.studyName ? `📚 ${d.studyName}` : '스터디 없음';
+      $('profile-week').textContent = d.weekSeconds === null || d.weekSeconds === undefined ? '이번 주 공부 시간: 비공개' : `이번 주 공부 ${fmtDuration(d.weekSeconds)}`;
+      $('profile-vehicle').textContent = d.vehicle ? `${VEHICLE_LABEL[d.vehicle.type] || d.vehicle.type} 탑승 중` : '';
+      $('profile-modal').hidden = false;
+    }
+
+    /** 전광판 모달 (track:board ack) */
+    async openBoard() {
+      $('board-modal').hidden = false;
+      const r = await this.onBoard().catch(() => null);
+      if (r && r.ok) this.renderBoard(r);
+    }
+
+    isBoardOpen() {
+      return !$('board-modal').hidden;
+    }
+
+    renderBoard(r) {
+      const fill = (ul, list) => {
+        ul.innerHTML = '';
+        if (!list.length) return ul.appendChild(el('li', { class: 'empty', text: '아직 기록이 없어요' }));
+        list.forEach((row, i) => ul.appendChild(el('li', { class: row.nickname === this.selfNickname ? 'me' : '' }, [
+          el('span', { class: 'rank-no', text: String(i + 1) }),
+          el('span', { class: 'name', text: row.nickname }),
+          el('span', { class: 'study', text: row.studyName || '' }),
+          el('span', { class: 'time', text: `${VEHICLE_LABEL[row.vehicle] || row.vehicle} ${(row.ms / 1000).toFixed(1)}s` }),
+        ])));
+        return null;
+      };
+      fill($('board-today'), r.today || []);
+      fill($('board-all'), r.all || []);
+      $('board-track').textContent = r.track ? `한 바퀴 약 ${r.track.lengthTiles}타일 · 체크포인트 ${r.track.checkpoints}개` : '';
+      $('board-mine').textContent = r.myBest ? `내 최고 기록 ${(r.myBest.ms / 1000).toFixed(1)}s (${VEHICLE_LABEL[r.myBest.vehicle] || r.myBest.vehicle}) · 하루 첫 완주 +1 🪙` : '탈것을 타고 출발선을 지나 한 바퀴 돌면 기록돼요 · 하루 첫 완주 +1 🪙';
+      if (r.myBest) this.setLapBest(r.myBest.ms);
     }
 
     // ── 상단 HUD / 팝오버 ─────────────────────────────────────────────
@@ -805,8 +949,29 @@
       return c;
     }
 
-    /** 카탈로그 아이템 → 카드 아이콘 (가구/펫/꾸미기/행동) */
+    /** 탈것 아틀라스 프레임을 캔버스에 (nearest, 정수 배율) */
+    drawVehicle(canvas, key) {
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const f = this.vehicles && this.vehicles.frames && this.vehicles.frames[key];
+      if (!f || !this.vehicles.img) return false;
+      const fr = f.frame;
+      const k = Math.max(1, Math.floor(Math.min(canvas.width / fr.w, canvas.height / fr.h)));
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(this.vehicles.img, fr.x, fr.y, fr.w, fr.h, Math.floor((canvas.width - fr.w * k) / 2), Math.floor((canvas.height - fr.h * k) / 2), fr.w * k, fr.h * k);
+      return true;
+    }
+
+    vehicleKey(item, variant, dir = 'se') {
+      if (item.category === 'vehicle') return `${item.vehicle}|${window.Vehicles.colorOf(item.vehicle, variant)}|${dir}`;
+      if (item.category === 'vehicleDecal') return `decal/${item.decal}`;
+      return null;
+    }
+
+    /** 카탈로그 아이템 → 카드 아이콘 (가구/펫/꾸미기/행동/탈것) */
     itemIcon(item, variant, size = 64) {
+      if (item.category === 'vehicle' || item.category === 'vehicleDecal') { const c = el('canvas', { width: String(size), height: String(size), class: 'furn-icon' }); this.drawVehicle(c, this.vehicleKey(item, variant)); return c; }
+      if (item.category === 'vehicleHorn') return this.emojiCanvas('📣', size);
       if (item.species) return this.petIconCanvas(item.species, size);
       if (item.category === 'petDeco') { const c = el('canvas', { width: String(size), height: String(size), class: 'furn-icon' }); this.drawDeco(c, this.decoKey(item, variant)); return c; }
       if (item.category === 'petSkill') return this.emojiCanvas(SKILL_ICON[item.id] || '🐾', size);
@@ -816,6 +981,15 @@
     stopPreviewAnim() {
       if (this.previewTimer) clearInterval(this.previewTimer);
       this.previewTimer = null;
+    }
+
+    /** 탈것 미리보기: 8방향을 돌아가며 */
+    startVehiclePreview(canvas, item, variant) {
+      this.stopPreviewAnim();
+      const dirs = ['s', 'sw', 'w', 'nw', 'n', 'ne', 'e', 'se'];
+      let i = 0;
+      this.drawVehicle(canvas, this.vehicleKey(item, variant, dirs[0]));
+      this.previewTimer = setInterval(() => { i++; this.drawVehicle(canvas, this.vehicleKey(item, variant, dirs[i % 8])); }, 350);
     }
 
     /** 펫 미리보기: 4방향 걷기 애니메이션 순환 */
@@ -881,10 +1055,16 @@
       if (item.species) bits.splice(0, bits.length, item.category === 'pet' ? '개인 펫 · 따라다님' : '공용 펫 · 방에 풀기', `🪙 ${item.price}`);
       if (item.category === 'petDeco') bits.splice(0, bits.length, `꾸미기 · ${PET_SLOT_LABEL[item.slot] || item.slot} 슬롯`, `🪙 ${item.price}`);
       if (item.category === 'petSkill') bits.splice(0, bits.length, '행동 업그레이드 · 펫별 1회', `🪙 ${item.price}`);
+      if (item.category === 'vehicle') bits.splice(0, bits.length, `탈것 · 최고 속도 걷기의 ${(window.Vehicles.TYPES[item.vehicle].maxSpeed / window.Vehicles.WALK).toFixed(1)}배 · 8방향`, `🪙 ${item.price}`);
+      if (item.category === 'vehicleDecal') bits.splice(0, bits.length, '데칼 · 탈것 몸체에', `🪙 ${item.price}`);
+      if (item.category === 'vehicleHorn') bits.splice(0, bits.length, '경적 · 야외에서 H', `🪙 ${item.price}`);
       $('preview-meta').textContent = bits.join(' · ');
       const cv = $('preview-canvas');
       this.stopPreviewAnim();
-      if (item.species) this.startPetPreview(cv, item.species);
+      if (item.category === 'vehicle') this.startVehiclePreview(cv, item, variant);
+      else if (item.category === 'vehicleDecal') this.drawVehicle(cv, this.vehicleKey(item, variant));
+      else if (item.category === 'vehicleHorn') { const c = cv.getContext('2d'); c.clearRect(0, 0, cv.width, cv.height); c.font = '96px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('📣', cv.width / 2, cv.height / 2); }
+      else if (item.species) this.startPetPreview(cv, item.species);
       else if (item.category === 'petDeco') this.drawDeco(cv, this.decoKey(item, variant));
       else if (item.category === 'petSkill') { const c = cv.getContext('2d'); c.clearRect(0, 0, cv.width, cv.height); c.font = '96px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(SKILL_ICON[item.id] || '🐾', cv.width / 2, cv.height / 2); }
       else this.drawFrame(cv, this.spriteKey(item.id, variant) || this.iconKey(item.id, variant));
@@ -909,7 +1089,8 @@
       return !$('wallet-modal').hidden;
     }
 
-    async openWallet() {
+    async openWallet(tab) {
+      if (tab) this.walletTab = tab;
       $('wallet-modal').hidden = false;
       this.renderWalletTabs();
       this.renderWalletItems();
@@ -941,6 +1122,7 @@
         this.renderLedger();
         this.renderDeskSlots();
         this.renderPetSettings();
+        this.renderVehicleSettings();
         $('opt-layout-lock').checked = Boolean(r.layoutLock);
         if (this.editMode) this.renderPalette();
       } catch (_) { /* 오프라인 */ } finally { this.walletBusy--; }
@@ -980,6 +1162,12 @@
       cats.innerHTML = '';
       hint.textContent = '';
       const items = this.catalogItems().filter((it) => it.tab === this.walletTab);
+      const bestEl = $('wallet-best');
+      if (bestEl) {
+        const best = this.wallet && this.wallet.trackBest;
+        bestEl.hidden = this.walletTab !== 'mount';
+        bestEl.textContent = best ? `🏁 내 최고 기록 ${(best.ms / 1000).toFixed(1)}s (${VEHICLE_LABEL[best.vehicle] || best.vehicle}) · 하루 첫 완주 +1 🪙` : '🏁 아직 트랙 기록이 없어요 · 야외 트랙을 탈것으로 한 바퀴 돌면 기록돼요 (하루 첫 완주 +1 🪙)';
+      }
       if (!items.length) {
         cats.hidden = true;
         box.appendChild(el('span', { text: '준비 중이에요. 코인을 모아 두세요 🪙' }));
@@ -1005,13 +1193,22 @@
         const status = it.category === 'pet' ? (mine.some((i) => i.active) ? '따라다니는 중' : count ? `보유 ${count}` : '')
           : it.category === 'sharedPet' ? (mine.some((i) => i.released) ? '방에 있음' : count ? `보유 ${count}` : '')
           : it.category === 'petSkill' ? (count ? `${count}마리에게` : '')
+          : it.category === 'vehicle' ? (mine.some((i) => i.vehicleActive) ? '활성 (V 소환)' : count ? `보유 ${count}` : '')
+          : it.category === 'vehicleDecal' ? (mine.some((i) => i.decalActive) ? '장착 중' : count ? `보유 ${count}` : '')
+          : it.category === 'vehicleHorn' ? (mine.some((i) => i.hornActive) ? '사용 중' : count ? `보유 ${count}` : '')
           : count ? `보유 ${count}` : '';
+        const activeNow = /활성|장착 중|사용 중/.test(status);
         const card = el('div', { class: `wallet-item ${count ? 'owned' : ''}`, 'data-item': it.id }, [
           icon,
           el('span', { class: 'name', text: it.name }),
           el('span', { class: 'price', text: `🪙 ${it.price}` }),
-          el('span', { class: 'count muted', text: status }),
+          el('span', { class: `count muted ${activeNow ? 'active' : ''}`, text: status }),
         ]);
+        // 12단계: 보유한 탈것/데칼/경적은 카드에서 바로 활성화
+        if ((it.category === 'vehicle' || it.category === 'vehicleDecal' || it.category === 'vehicleHorn') && count && !activeNow) {
+          const key = { vehicle: 'active', vehicleDecal: 'decal', vehicleHorn: 'horn' }[it.category];
+          card.appendChild(el('button', { class: 'btn small ghost', type: 'button', text: it.category === 'vehicle' ? '활성으로' : '장착', onclick: async () => { const r = await this.onVehicleConfig({ [key]: mine[0].id }); if (r && r.ok) { this.toast(it.category === 'vehicle' ? '야외에서 V 로 소환해요' : '장착했어요'); await this.refreshWallet(); } } }));
+        }
         if (it.category === 'petSkill') {
           // 대상 펫 선택: 강아지 · 공용 펫 · 내 개인 펫
           const sel = el('select', { class: 'skill-target', title: '어느 펫에게' });
@@ -1627,28 +1824,40 @@
     }
 
     // ── 미니맵 ───────────────────────────────────────────────────────
+    get minimapScale() {
+      return Math.max(3, Math.floor(MINIMAP_W / this.room.width));
+    }
+
     buildMinimapBase() {
       const room = this.room;
-      const S = MINIMAP_SCALE;
+      const S = this.minimapScale;
       const base = document.createElement('canvas');
       base.width = room.width * S;
       base.height = room.height * S;
       const ctx = base.getContext('2d');
+      const objects = (this.tilesObjects ||= this.buildTileIndex());
       for (let y = 0; y < room.height; y++) {
         for (let x = 0; x < room.width; x++) {
           const floor = room.layers.floor[y][x];
           const furn = room.layers.furniture[y][x];
           let c = '#0f0c14';
-          if (floor !== -1) c = y >= 26 ? '#2a2630' : '#3a2c26';
-          if (room.collision[y][x]) c = floor !== -1 && y >= 26 ? '#1e1b24' : '#241b1e';
-          if (furn !== -1 && !room.collision[y][x]) c = '#4a3a30';
-          if (furn !== -1 && room.collision[y][x]) c = '#5a4638';
+          if (room.outdoor) {
+            // 12단계 야외: 바닥 종류별 색 (잔디·언덕·흙길·돌길·광장·물·데크·하늘)
+            const name = objects[floor] || '';
+            c = /^grass/.test(name) ? '#4f6b45' : /^hill/.test(name) ? '#45603d' : /^(dirt|start)/.test(name) ? '#8c7458' : /^stone/.test(name) ? '#7d766c' : /^plaza/.test(name) ? '#8f8471' : /^(water|shore)/.test(name) ? '#4f7ea6' : /^deck/.test(name) ? '#7a5c44' : /^(paver|kerb)/.test(name) ? '#5a5560' : name === 'facade' ? '#3a3741' : name === 'sky' ? '#1b2442' : '#4f6b45';
+            if (furn !== -1 && room.collision[y][x]) c = /^(tree|hedge|plant)/.test(objects[furn] || '') ? '#2f4a2d' : '#5a4638';
+          } else {
+            if (floor !== -1) c = y >= 26 ? '#2a2630' : '#3a2c26';
+            if (room.collision[y][x]) c = floor !== -1 && y >= 26 ? '#1e1b24' : '#241b1e';
+            if (furn !== -1 && !room.collision[y][x]) c = '#4a3a30';
+            if (furn !== -1 && room.collision[y][x]) c = '#5a4638';
+          }
           ctx.fillStyle = c;
           ctx.fillRect(x * S, y * S, S, S);
         }
       }
       ctx.fillStyle = 'rgba(255,184,92,0.55)';
-      for (const s of room.seats) ctx.fillRect(s.x * S + 2, s.y * S + 2, S - 4, S - 4);
+      for (const s of room.seats) ctx.fillRect(s.x * S + 1, s.y * S + 1, Math.max(1, S - 2), Math.max(1, S - 2));
       this.minimapBase = base;
       const mm = $('minimap');
       mm.width = base.width;
@@ -1656,11 +1865,25 @@
       this.drawMinimap({});
     }
 
+    /** 타일 인덱스 → 오브젝트 이름 (미니맵 색용, tiles.json 은 씬이 받은 것을 window.NSM 없이도 쓰도록 fetch 결과를 room 에 기대지 않는다) */
+    buildTileIndex() {
+      const out = [];
+      const meta = this.tilesMeta;
+      if (!meta || !meta.objects) return out;
+      for (const [name, o] of Object.entries(meta.objects)) for (const row of o.tiles) for (const idx of row) out[idx] = name;
+      return out;
+    }
+
+    setTilesMeta(meta) {
+      this.tilesMeta = meta;
+      this.tilesObjects = null;
+    }
+
     /** positions: id → { x, y } (월드 px). 10Hz 정도로 호출. */
     drawMinimap(positions) {
       const mm = $('minimap');
       const ctx = mm.getContext('2d');
-      const S = MINIMAP_SCALE / this.room.tileSize;
+      const S = this.minimapScale / this.room.tileSize;
       ctx.drawImage(this.minimapBase, 0, 0);
       for (const [id, p] of Object.entries(positions)) {
         const me = id === this.selfId;

@@ -50,7 +50,7 @@ test('카탈로그: 가구 23종 (책상 소품 12 · 공용 11), 가격·변형
   assert.equal(ITEMS.filter((i) => i.category === 'desk').length, 12);
   assert.equal(ITEMS.filter((i) => i.category === 'shared').length, 11);
   assert.deepEqual(CATEGORIES.filter((c) => c.tab === 'furniture').map((c) => c.id), ['desk', 'shared']);
-  assert.equal(shop.get('mug').price, 3);
+  assert.equal(shop.get('mug').price, 2); // 12단계 30% 인하: 정가 3 → 2 (최소 2)
   assert.equal(shop.get('mug').variants.length, 5);
   assert.equal(shop.get('poster').variants.length, 5);
   assert.equal(shop.get('cushion').variants.length, 6);
@@ -186,7 +186,7 @@ test('월드: 구매(색 선택) → 인벤토리 meta.variant, 없는 색은 no
   const lamp = await world.purchase(a, 'desk_lamp');
   assert.equal(lamp.inventory.meta.variant, 'brass', '안 고르면 첫 번째 변형');
   const bed = await world.purchase(a, 'bed', 'rose');
-  assert.equal(bed.balance, 100 - 3 - 8 - 40);
+  assert.equal(bed.balance, 100 - 2 - 6 - 28); // 인하가: 머그컵 2 · 탁상 램프 6 · 침대 28
   // 장착
   assert.deepEqual(await world.equipDesk(a, 'x'), { ok: false, error: 'invalid' });
   assert.deepEqual(await world.equipDesk(a, [m.inventory.id, m.inventory.id, null]), { ok: false, error: 'duplicate' });

@@ -215,8 +215,8 @@ function buildStudyRoom() {
   b.place('cabinet_small', 28, 23);
   b.place('trash_bin', 30, 24);
   b.place('entrance_wide', 18, 25);
-  b.setSolid(22, 25, 23, 26, false); // 유리문 가운데는 통과 가능 (바깥은 장식, 추후 실외 연결)
-  b.doors.push({ id: 'entrance', x: 22, y: 25, to: null }, { id: 'entrance', x: 23, y: 25, to: null });
+  b.setSolid(22, 25, 23, 26, false); // 유리문 가운데는 통과 가능
+  b.doors.push({ id: 'entrance', x: 22, y: 25, to: 'outdoor' }, { id: 'entrance', x: 23, y: 25, to: 'outdoor' }); // 12단계: 밟으면 공용 야외로
   b.light(18.5, 25.3, 2.8, 0xffc46a, 0.55);
   b.light(27.5, 25.3, 2.8, 0xffc46a, 0.55);
   b.place('doormat_big', 20, 27);

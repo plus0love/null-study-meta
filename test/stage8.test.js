@@ -8,7 +8,7 @@
  *  - 구매: 카탈로그 없음 → no_item, 잔액 부족 → insufficient (원장·인벤토리 기록 없음), 성공 시 차감·원장·인벤토리.
  *  - 저장소: adjustCoins 원자성(음수 불가), coinLedger 최근순, coinStats 이번 주 획득만.
  *  - 소켓 E2E: profile.coins, coins 이벤트(본인 balance / 남은 없음), wallet, shop:buy, stats.weekCoins, playerPomodoro 동기화.
- *  - 브라우저: 잔액 배지 · 지갑 모달(탭 4개, 가구 외 "준비 중" · 거래 내역) · 머리 위 🍅 남은 시간 · 코인 소리 설정.
+ *  - 브라우저: 잔액 배지 · 지갑 모달(탭 4개 · 거래 내역) · 머리 위 🍅 남은 시간 · 코인 소리 설정.
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -101,7 +101,7 @@ test('shop: 탭 4개 고정, 기본 카탈로그는 가구 23종 + 펫/꾸미기
   assert.deepEqual(TABS.map((t) => t.id), ['furniture', 'pet', 'petDeco', 'mount']);
   const def = createShop();
   assert.equal(def.items.filter((i) => i.tab === 'furniture').length, 23);
-  assert.ok(def.items.every((i) => i.tab !== 'mount'), '탈것 탭은 아직 준비 중');
+  assert.equal(def.items.filter((i) => i.tab === 'mount').length, 11, '12단계: 탈것 5(인력거 포함) · 데칼 3 · 경적 3');
   assert.equal(def.get('chair_basic'), null);
   const shop = createShop([...ITEMS, { id: 'bad', tab: 'nope', name: 'x', price: 1 }, { id: 'neg', tab: 'pet', name: 'x', price: -1 }, { id: 'frac', tab: 'pet', name: 'x', price: 1.5 }]);
   assert.deepEqual(shop.items.map((i) => i.id), ['chair_basic', 'free_sticker']);
@@ -528,7 +528,7 @@ const hasChrome = Boolean(CHROME);
 let puppeteer = null;
 try { puppeteer = require('puppeteer-core'); } catch (_) { /* devDependency 없음 */ }
 
-test('브라우저: 잔액 배지 · 코인 획득 연출 · 지갑 모달(탭 준비 중 · 거래 내역) · 머리 위 🍅 남은 시간 · 랭킹 코인 탭 · 코인 소리 설정', { skip: !hasChrome || !puppeteer ? 'Chrome/puppeteer-core 없음' : false, timeout: 120000 }, async (t) => {
+test('브라우저: 잔액 배지 · 코인 획득 연출 · 지갑 모달(탭 · 거래 내역) · 머리 위 🍅 남은 시간 · 랭킹 코인 탭 · 코인 소리 설정', { skip: !hasChrome || !puppeteer ? 'Chrome/puppeteer-core 없음' : false, timeout: 120000 }, async (t) => {
   const srv = await boot({ world: { pomodoro: { focusMs: 25 * MIN, breakMs: 5 * MIN }, study: { autoTick: false }, npc: { autoStart: false } } });
   t.after(() => srv.close());
   const browser = await puppeteer.launch({
@@ -558,7 +558,7 @@ test('브라우저: 잔액 배지 · 코인 획득 연출 · 지갑 모달(탭 �
   await srv.world.award('코인테스트', me.id, 5, 'focus');
   await page.waitForFunction(() => document.querySelector('#coin-badge span').textContent === '7', { timeout: 5000 });
 
-  // 지갑 모달: 탭 4개, 가구 탭은 카드(9단계) · 나머지 탭 "준비 중", 거래 내역 2건(최근순)
+  // 지갑 모달: 탭 4개, 가구 탭은 카드(9단계) · 탈것 탭도 카드(12단계), 거래 내역 2건(최근순)
   await page.click('#btn-wallet');
   await page.waitForSelector('#wallet-modal:not([hidden])', { timeout: 3000 });
   await page.waitForFunction(() => document.querySelectorAll('#wallet-ledger li').length === 2, { timeout: 5000 });
@@ -570,7 +570,7 @@ test('브라우저: 잔액 배지 · 코인 획득 연출 · 지갑 모달(탭 �
   assert.deepEqual(await page.$$eval('#wallet-tabs button', (els) => els.map((b) => b.textContent)), ['가구', '펫', '펫 꾸미기', '탈것']);
   assert.match(await page.$eval('#wallet-items', (el) => el.textContent), /머그컵/);
   await page.click('#wallet-tabs button[data-tab="mount"]');
-  assert.match(await page.$eval('#wallet-items', (el) => el.textContent), /준비 중/);
+  assert.match(await page.$eval('#wallet-items', (el) => el.textContent), /자전거.*스포츠 카트/, '12단계: 탈것 탭에 카드');
   assert.equal(await page.$eval('#wallet-tabs button.active', (el) => el.dataset.tab), 'mount');
   const ledger = await page.$$eval('#wallet-ledger li', (els) => els.map((li) => li.textContent));
   assert.match(ledger[0], /\+5/);

@@ -23,6 +23,7 @@ const express = require('express');
 
 const { createStore } = require('./store');
 const { getStudyRoom } = require('./rooms/studyroom');
+const { getOutdoor } = require('./rooms/outdoor');
 const { attachSocket } = require('./socket');
 const { createGate } = require('./gate');
 const { CATALOG_PATH, assetFiles: avatarAssetFiles } = require('./game/avatar');
@@ -32,7 +33,7 @@ const { createShop } = require('./game/shop');
 function assetVersion() {
   const dir = path.join(__dirname, '..', 'public', 'assets');
   const h = crypto.createHash('sha1');
-  for (const f of ['tiles.json', 'tiles.png', 'dog.json', 'dog.png', 'furniture.json', 'furniture.png', 'pets.json', 'pets.png', 'petdeco.json', 'petdeco.png']) h.update(fs.readFileSync(path.join(dir, f)));
+  for (const f of ['tiles.json', 'tiles.png', 'dog.json', 'dog.png', 'furniture.json', 'furniture.png', 'pets.json', 'pets.png', 'petdeco.json', 'petdeco.png', 'vehicles.json', 'vehicles.png']) h.update(fs.readFileSync(path.join(dir, f)));
   for (const f of [CATALOG_PATH, ...avatarAssetFiles()]) h.update(fs.readFileSync(f));
   return h.digest('hex').slice(0, 10);
 }
@@ -105,10 +106,20 @@ function createApp(ctx) {
     res.json({ tabs: shop.tabs, categories: shop.categories, items: shop.items });
   });
 
-  // 방 데이터 (레이어별 타일 배열 + 충돌/의자/문/조명)
+  // 12단계: 탈것 물리·검증도 서버 모듈을 그대로 브라우저에 (window.Vehicles) — 클라이언트 물리와 서버 검증이 같은 상수를 쓴다
+  app.get('/js/vehicles.js', (_req, res) => {
+    res.set('Cache-Control', 'no-cache');
+    res.type('application/javascript').sendFile(path.join(__dirname, 'game', 'vehicles.js'));
+  });
+
+  // 방 데이터 (레이어별 타일 배열 + 충돌/의자/문/조명). 12단계: /api/rooms/outdoor 는 공용 야외 (track 포함)
   app.get('/api/rooms/studyroom', (_req, res) => {
     res.set('Cache-Control', 'no-cache');
     res.json({ ...getStudyRoom(), assetVersion: ASSET_VERSION });
+  });
+  app.get('/api/rooms/outdoor', (_req, res) => {
+    res.set('Cache-Control', 'no-cache');
+    res.json({ ...getOutdoor(), assetVersion: ASSET_VERSION });
   });
 
   // 에셋을 다시 빌드해도 옛 아틀라스가 캐시에 남지 않도록 (1단계: 캐시 없이 ETag 로만 검증)

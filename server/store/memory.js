@@ -17,6 +17,7 @@
  *    createAccess / findAccess / touchAccess / clearAccess(studyId, nickname?) (잠긴 스터디 기기 토큰 study_access — 해시만 저장)
  *    weeklyGoalReached / recordWeeklyGoal / claimRewards (그룹 목표 보너스, 오프라인 멤버는 다음 접속 때)
  *    attendanceDates (그룹 스트릭) · migrateLegacy (study_id 없는 가구·펫 행을 첫 스터디로)
+ *  12단계 야외: users.vehicleConfig / statsPublic · addTrackRecord / trackTop({ scope: 'today'|'all' }) / trackBest / hasLapToday (track_records)
  */
 const { DEFAULT_TZ, dateKey, weekStart, streakOf, totalsOf } = require('./stats');
 
@@ -34,12 +35,13 @@ function createMemoryStore() {
   const goals = new Map(); // `${nickname}|${date}` → { nickname, date, goalText, targetMinutes }
   const ledger = []; // { id, nickname, delta, reason, createdAt } — 모든 코인 증감
   const inventory = []; // { id, nickname, itemId, acquiredAt, meta }
+  const trackRecords = []; // { id, nickname, studyId, vehicle, ms, createdAt } — 12단계 트랙 랩 기록
   let seq = 1;
 
   const ensureUser = (nickname, now = Date.now()) => {
     let u = users.get(nickname);
     if (!u) {
-      u = { nickname, avatar: null, dogName: null, coins: 0, coinCarrySeconds: 0, deskItems: [null, null, null], layoutLock: false, petConfig: null, createdAt: now, updatedAt: now };
+      u = { nickname, avatar: null, dogName: null, coins: 0, coinCarrySeconds: 0, deskItems: [null, null, null], layoutLock: false, petConfig: null, vehicleConfig: null, statsPublic: false, createdAt: now, updatedAt: now };
       users.set(nickname, u);
     }
     return u;
@@ -59,6 +61,8 @@ function createMemoryStore() {
       if (data.deskItems !== undefined) u.deskItems = [...data.deskItems];
       if (data.layoutLock !== undefined) u.layoutLock = Boolean(data.layoutLock);
       if (data.petConfig !== undefined) u.petConfig = data.petConfig ? JSON.parse(JSON.stringify(data.petConfig)) : null;
+      if (data.vehicleConfig !== undefined) u.vehicleConfig = data.vehicleConfig ? JSON.parse(JSON.stringify(data.vehicleConfig)) : null;
+      if (data.statsPublic !== undefined) u.statsPublic = Boolean(data.statsPublic);
       u.updatedAt = Date.now();
       return { ...u };
     },
@@ -399,6 +403,36 @@ function createMemoryStore() {
       let p = 0;
       for (const r of roomPets) if (r.studyId === null || r.studyId === undefined) { r.studyId = studyId; p++; }
       return { layout: n, pets: p };
+    },
+
+    // ── 트랙 기록 (12단계) ────────────────────────────────────────────
+    async addTrackRecord({ nickname, studyId = null, vehicle, ms }, now = Date.now()) {
+      ensureUser(nickname, now);
+      const r = { id: seq++, nickname, studyId: studyId ?? null, vehicle: String(vehicle), ms: Math.max(0, Math.round(Number(ms) || 0)), createdAt: now };
+      trackRecords.push(r);
+      return { ...r };
+    },
+    /** 상위 기록 (닉네임마다 최고 1건, ms 오름차순). scope 'today' 면 오늘(tz) 것만 */
+    async trackTop({ scope = 'all', tz = DEFAULT_TZ, now = Date.now(), limit = 5 } = {}) {
+      const today = dateKey(now, tz);
+      const best = new Map();
+      for (const r of trackRecords) {
+        if (scope === 'today' && dateKey(r.createdAt, tz) !== today) continue;
+        const b = best.get(r.nickname);
+        if (!b || r.ms < b.ms || (r.ms === b.ms && r.createdAt < b.createdAt)) best.set(r.nickname, r);
+      }
+      return [...best.values()].sort((a, b) => a.ms - b.ms || a.createdAt - b.createdAt).slice(0, limit).map((r) => ({ ...r }));
+    },
+    /** 내 역대 최고 { ms, vehicle, createdAt } | null */
+    async trackBest(nickname) {
+      let b = null;
+      for (const r of trackRecords) if (r.nickname === nickname && (!b || r.ms < b.ms)) b = r;
+      return b ? { ms: b.ms, vehicle: b.vehicle, createdAt: b.createdAt } : null;
+    },
+    /** 오늘(tz) 이미 완주한 적이 있는지 (하루 첫 완주 보상 판정) */
+    async hasLapToday(nickname, { tz = DEFAULT_TZ, now = Date.now() } = {}) {
+      const today = dateKey(now, tz);
+      return trackRecords.some((r) => r.nickname === nickname && dateKey(r.createdAt, tz) === today);
     },
 
     // ── 기록 초기화 (7단계) ───────────────────────────────────────────

@@ -1,4 +1,4 @@
-/* global Phaser, Daylight, Layout, FurnitureLayer */
+/* global Phaser, Daylight, Layout, FurnitureLayer, VehicleView, Vehicles */
 /**
  * 방 씬: 서버에서 받은 방 데이터(레이어별 타일 배열)를 타일맵으로 그리고,
  * 내 아바타(입력·충돌·20Hz 전송·서버 보정)와 다른 접속자 아바타(스냅샷 선형 보간)를 그린다.
@@ -25,6 +25,12 @@
  *        책상 소품(player.deskItems): 앉으면 좌석 앞 책상 슬롯(Layout.deskSlots)에 표시. 침대(seat.kind 'bed')에 앉으면 눕기(회전 프레임 + 이불 오버레이 + 💤),
  *        안마의자('massage')는 앉은 동안 흔들린다.
  * 11단계: 그룹 주간 목표 달성 → celebrate(ms): 창밖(room.windows)에 불꽃놀이 (하늘 위 · 창틀 뒤, 0.35초마다 무작위 창에 터짐) + flashLights.
+ * 12단계: 맵 전환 — 같은 씬을 scene.restart({ room, ... }) 로 다시 만든다 (hooks 는 유지, 아바타 텍스처는 전역이라 재사용).
+ *  - 문: 발 위치가 to 가 있는 문 타일이면 hooks.onDoor() (문 타일을 벗어나야 다시 켜진다 — doorArmed).
+ *  - 야외(room.outdoor): 하늘 띠 + 별 · 시간대 어둠/노을 틴트 · 물·분수 순환 애니(cycleTiles) · 전광판 글자(refreshBoard) · 머리 위 소속 스터디 이름 ·
+ *    아바타 클릭 → hooks.onProfile(id) · V 소환/해제(hooks.onMount) · H 경적(hooks.onHorn) · 탑승 중 물리(Vehicles.step: 방향키 8방향 가속, 관성·마찰,
+ *    진행 방향은 차종별 회전 속도로 부드럽게, 반대 방향은 브레이크 후 출발, 충돌 튕김) →
+ *    move 에 vehicle { type, angle, speed }. 남의 탈것은 playerMoved 의 vehicle(각도·속도)로 8방향 프레임을 맞춘다 (VehicleView).
  */
 (function () {
   'use strict';
@@ -45,6 +51,8 @@
   const NOTE_MS = 1400; // 스피커 ♪ 간격
   const SIGN_MAX_W = 96; // 팻말 최대 폭(px) — 넘치면 말줄임
   const DAYLIGHT_TICK = 1000; // ms — 시간대 가중치 재계산 주기
+  const CYCLE_MS = 400; // 물·분수 타일 순환 주기
+  const BOARD_ROWS = 5;
 
   // ── 아바타 (내 것/원격 공용 표시 요소) ────────────────────────────────
   class Avatar {
@@ -95,11 +103,52 @@
       this.deskItems = Array.isArray(p.deskItems) ? p.deskItems : [null, null, null];
       this.deskSprites = [];
       this.noteTimer = null;
+      // 12단계: 탈것 + 야외 머리 위 소속 스터디 이름 + 클릭 프로필
+      this.vehicle = new VehicleView(scene, scene.vehiclesMeta);
+      this.studyName = p.studyName || null;
+      this.studyText = null;
+      if (scene.room.outdoor && this.studyName) {
+        this.studyText = scene.add.text(0, 0, this.studyName, { fontFamily: FONTS.sans, fontSize: '8px', color: '#cfe8f5', stroke: '#14111a', strokeThickness: 2, resolution: ZOOM }).setOrigin(0.5, 1).setDepth(DEPTH.label);
+      }
+      if (scene.room.outdoor) {
+        this.sprite.setInteractive({ useHandCursor: true });
+        this.sprite.on('pointerdown', (pointer) => scene.onAvatarClick(this, pointer));
+      }
       this.setPosition(p.x, p.y);
       this.setFacing(this.facing);
       this.setSeated(this.seated, scene.seatById(p.seatId));
       this.setPomodoro(p.pomodoro || null);
       this.setEditing(Boolean(p.editing));
+      this.setVehicle(p.vehicle || null);
+    }
+
+    // ── 12단계: 탈것 ────────────────────────────────────────────────
+    get riding() {
+      return this.vehicle.active;
+    }
+
+    /** 서버가 확정한 탈것 { type, color, decal, angle, speed } | null */
+    setVehicle(v) {
+      this.vehicle.set(v);
+      if (this.riding) {
+        this.walking = false;
+        this.sprite.anims.stop();
+        this.facing = this.vehicle.facing();
+        this.sprite.setFrame(this.scene.idleFrame(this.facing));
+      } else this.sprite.setFrame(this.scene.idleFrame(this.facing));
+      this.setPosition(this.x, this.y);
+    }
+
+    /** 각도·속도 (내 물리 / 남의 playerMoved) → 8방향 프레임 + 아바타 4방향 정지 프레임 */
+    setVehicleMotion(angle, speed) {
+      if (!this.riding) return;
+      this.vehicle.setMotion(angle, speed);
+      const f = this.vehicle.facing();
+      if (f !== this.facing) {
+        this.facing = f;
+        this.sprite.setFrame(this.scene.idleFrame(f));
+      }
+      this.setPosition(this.x, this.y);
     }
 
     // ── 9단계: 편집 표시 · 책상 소품 · 눕기 · 안마 ────────────────────
@@ -341,26 +390,36 @@
         if (this.sign) this.sign.setPosition(Math.round(cx), r.y + r.h + 19);
         return;
       }
-      this.sprite.setPosition(rx + Math.round(this.wobble || 0), ry).setDepth(DEPTH.avatar + y / this.scene.mapH);
-      this.shadow.setPosition(rx, ry - 2);
+      const depth = DEPTH.avatar + y / this.scene.mapH;
+      if (this.riding) {
+        const seat = this.vehicle.place(rx, ry, depth);
+        this.sprite.setPosition(seat.x, seat.y).setDepth(depth + 0.00002);
+        this.shadow.setPosition(rx, ry - 1).setScale(1.35, 1.25);
+      } else {
+        this.sprite.setPosition(rx + Math.round(this.wobble || 0), ry).setDepth(depth);
+        this.shadow.setPosition(rx, ry - 2).setScale(1, 1);
+      }
       this.name.setPosition(rx, ry + 3);
+      if (this.studyText) this.studyText.setPosition(rx, ry - 82);
       if (this.sign) this.sign.setPosition(rx, ry + 19);
       this.statusBubble.setPosition(rx + 16, ry - 66);
       this.pomoText.setPosition(rx + 16 - this.statusBubble.bubbleW / 2 - 2, ry - 66);
-      if (this.chatBubble) this.chatBubble.setPosition(rx, ry - 78 - this.chatBubble.bubbleH / 2);
-      if (this.emojiText) this.emojiText.setPosition(rx, ry - 74 - (this.emojiText.rise || 0));
+      const lift = this.studyText ? 10 : 0; // 스터디 이름이 있으면 말풍선·이모지는 그 위로
+      if (this.chatBubble) this.chatBubble.setPosition(rx, ry - 78 - lift - this.chatBubble.bubbleH / 2);
+      if (this.emojiText) this.emojiText.setPosition(rx, ry - 74 - lift - (this.emojiText.rise || 0));
       if (this.coinText) this.coinText.setPosition(rx - 14, ry - 70 - (this.coinText.rise || 0));
       if (this.editMark) this.editMark.setPosition(rx - 16, ry - 70);
     }
 
     setFacing(f) {
+      if (this.riding) return; // 탑승 중엔 탈것 각도가 방향을 정한다
       this.facing = f;
       if (this.walking) this.sprite.anims.play(this.scene.walkKey(f, this.id), true);
       else this.sprite.setFrame(this.scene.idleFrame(this.seated ? 'down' : f));
     }
 
     setWalking(on) {
-      if (this.seated) on = false;
+      if (this.seated || this.riding) on = false;
       if (on) {
         this.walking = true;
         this.sprite.anims.play(this.scene.walkKey(this.facing, this.id), true); // 같은 애니메이션이면 무시
@@ -453,6 +512,8 @@
       this.setWobble(false);
       if (this.editMark) this.editMark.destroy();
       if (this.sign) this.sign.destroy();
+      if (this.studyText) this.studyText.destroy();
+      this.vehicle.destroy();
       this.sprite.destroy();
       this.shadow.destroy();
       this.name.destroy();
@@ -682,13 +743,27 @@
       this.avatarKit = data.avatarKit; // AvatarKit (catalog + 레이어 PNG)
       this.playerMeta = { frameWidth: this.avatarKit.frame.width, frameHeight: this.avatarKit.frame.height, framesPerRow: this.avatarKit.frame.framesPerRow, rows: this.avatarKit.frame.rows };
       this.petsMeta = data.pets; // 10단계: 펫 스프라이트시트 메타 (종별 인덱스·앵커)
+      this.vehiclesMeta = data.vehicles || { seat: {}, decal: {} }; // 12단계: 탈것 아틀라스 메타 (앉는 위치·데칼 앵커)
       this.catalog = data.catalog || { items: [] }; // 9단계: 상점 카탈로그 (가구 스프라이트 메타)
       this.onReady = data.onReady || (() => {});
-      this.hooks = {
+      // 맵 전환(restart)에도 main.js 가 채운 hooks 는 유지한다
+      this.hooks = this.hooks || {
         onMove() {}, onSit() {}, onStand() {}, onPet() {}, onUse() {}, onInteract() {}, onEmojiKey() {}, onChatKey() {}, onPositions() {}, serverNow: () => Date.now(),
         // 9단계 편집: 서버 판정 결과(Promise<{ ok, error? }>)를 돌려준다. onEditState 는 UI 안내용
         onPlace: async () => ({ ok: false }), onGrab: async () => ({ ok: false }), onRelease() {}, onMove2: async () => ({ ok: false }), onRemove: async () => ({ ok: false }), onEditState() {},
+        // 12단계
+        onDoor() {}, onMount() {}, onHorn() {}, onProfile() {}, onVehicleMove() {}, onCreak() {},
       };
+      this.doorArmed = false; // 문 타일을 벗어나면 켜진다 (도착 직후 되돌아가지 않도록)
+      this.transferring = false; // 문 통과 중 (서버 응답 대기)
+      this.boardTexts = null; // 전광판 글자
+      this.boardData = null;
+      this.cycleAcc = 0;
+      this.cycleTargets = [];
+      this.fireworks = null;
+      this.celebrateUntil = 0;
+      this.pendingReleases = null;
+      this.ready = false; // create() 가 끝나면 true (맵 전환 중 들어오는 이벤트는 무시)
       this.furniture = null;
       this.extraLights = []; // 가구 조명 (스탠드 조명)
       this.editMode = false;
@@ -720,10 +795,12 @@
 
     preload() {
       const v = this.room.assetVersion ? `?v=${this.room.assetVersion}` : '';
-      this.load.image('tiles', `/assets/tiles.png${v}`);
-      this.load.spritesheet('pets', `/assets/pets.png${v}`, { frameWidth: this.petsMeta.frameWidth, frameHeight: this.petsMeta.frameHeight });
-      this.load.atlas('petdeco', `/assets/petdeco.png${v}`, `/assets/petdeco.json${v}`);
-      this.load.atlas('furn', `/assets/furniture.png${v}`, `/assets/furniture.json${v}`);
+      // 맵 전환(restart) 때는 이미 올라온 텍스처를 다시 받지 않는다
+      if (!this.textures.exists('tiles')) this.load.image('tiles', `/assets/tiles.png${v}`);
+      if (!this.textures.exists('pets')) this.load.spritesheet('pets', `/assets/pets.png${v}`, { frameWidth: this.petsMeta.frameWidth, frameHeight: this.petsMeta.frameHeight });
+      if (!this.textures.exists('petdeco')) this.load.atlas('petdeco', `/assets/petdeco.png${v}`, `/assets/petdeco.json${v}`);
+      if (!this.textures.exists('furn')) this.load.atlas('furn', `/assets/furniture.png${v}`, `/assets/furniture.json${v}`);
+      if (!this.textures.exists('vehicles')) this.load.atlas('vehicles', `/assets/vehicles.png${v}`, `/assets/vehicles.json${v}`);
     }
 
     create() {
@@ -745,7 +822,9 @@
       this.bindEditInput();
       this.syncVignette();
       this.setupWindowTwinkle();
-      this.applyDaylight(this.currentWeights());
+      this.setupTileCycles();
+      if (room.outdoor) this.buildOutdoorFx();
+      this.applyDaylight(this.currentWeights(), true);
 
       // 카메라 2배 줌 → 타일은 정수 배로 또렷하고, 텍스트는 고해상도로 그려진다. 캔버스는 사이드바를 뺀 영역에 꽉 찬다(RESIZE).
       const cam = this.cameras.main;
@@ -753,12 +832,15 @@
       cam.setBounds(0, 0, this.mapW, this.mapH);
       cam.setRoundPixels(true);
       cam.centerOn(room.spawn.x, room.spawn.y);
-      cam.setBackgroundColor('#14111a');
-      this.scale.on('resize', () => this.syncVignette());
+      cam.setBackgroundColor(room.outdoor ? '#101626' : '#14111a');
+      if (!this.resizeBound) { this.resizeBound = true; this.scale.on('resize', () => this.syncVignette()); }
 
       this.cursors = this.input.keyboard.createCursorKeys();
       this.wasd = this.input.keyboard.addKeys({ up: 'W', down: 'S', left: 'A', right: 'D' });
       this.input.keyboard.on('keydown-E', () => this.toggleSeat());
+      this.input.keyboard.on('keydown-V', () => { if (this.me && this.room.outdoor && !this.transferring) this.hooks.onMount(); });
+      this.ready = true;
+      this.input.keyboard.on('keydown-H', () => { if (this.me && this.me.riding) this.hooks.onHorn(); });
       this.input.keyboard.on('keydown-ENTER', () => this.hooks.onChatKey());
       ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX'].forEach((k, i) => this.input.keyboard.on(`keydown-${k}`, () => this.hooks.onEmojiKey(i)));
       this.onReady(this);
@@ -776,6 +858,7 @@
 
     // ── 세션 (입장/재입장 ack 적용) ──────────────────────────────────
     applySession(ack) {
+      if (!this.ready) return;
       this.config = { ...this.config, ...ack.config };
       this.clearSession();
       this.seatOwners = { ...(ack.seats || {}) };
@@ -785,6 +868,8 @@
       this.nearNpc = null;
       this.nearItem = null;
       this.hooks.onInteract(null);
+      this.doorArmed = false;
+      this.transferring = false;
       this.furniture.setEntries(ack.layout || []); // 아바타보다 먼저 (누운 사람은 침대 사각형이 필요)
       this.me = new Avatar(this, ack.self);
       for (const p of ack.players) this.addRemote(p);
@@ -808,6 +893,7 @@
     }
 
     addRemote(p) {
+      if (!this.ready) return;
       if (this.remotes.has(p.id)) this.removeRemote(p.id);
       const avatar = new Avatar(this, p);
       avatar.sprite.setAlpha(p.connected === false ? 0.5 : 1);
@@ -834,9 +920,89 @@
     onRemoteMoved(d) {
       const r = this.remotes.get(d.id);
       if (!r) return;
-      r.buffer.push({ x: d.x, y: d.y, facing: d.facing, moving: d.moving, t: performance.now() });
+      r.buffer.push({ x: d.x, y: d.y, facing: d.facing, moving: d.moving, vehicle: d.vehicle || null, t: performance.now() });
       if (r.buffer.length > 30) r.buffer.splice(0, r.buffer.length - 30);
       r.lastMoving = Boolean(d.moving);
+    }
+
+    // ── 12단계: 탈것 · 경적 · 랩 · 프로필 · 전광판 ──────────────────
+    onVehicle(d) {
+      const a = this.avatarOf(d.id);
+      if (a) a.setVehicle(d.vehicle || null);
+      if (a === this.me) this.lastSent = null;
+    }
+
+    onHorn(d) {
+      const a = this.avatarOf(d.id);
+      if (a) a.showEmoji('📣', 700);
+    }
+
+    /** 누군가 완주: 머리 위 🏁 */
+    onLap(d) {
+      const a = this.avatarOf(d.id);
+      if (a) a.showEmoji('🏁', 2500);
+    }
+
+    onAvatarClick(avatar, pointer) {
+      if (this.editMode || !this.room.outdoor || (pointer && pointer.rightButtonDown())) return;
+      this.hooks.onProfile(avatar.id);
+    }
+
+    /** 전광판 글자: { today: [...], all: [...] } (닉네임 · 초). 야외가 아니면 무시 */
+    refreshBoard(data) {
+      this.boardData = data || this.boardData;
+      if (!this.boardTexts || !this.boardData) return;
+      const fmt = (r) => `${r.vehicle === 'rickshaw' ? '🛒' : ''}${r.nickname.length > 5 ? `${r.nickname.slice(0, 5)}…` : r.nickname} ${(r.ms / 1000).toFixed(1)}`;
+      const fill = (list, rows) => rows.map((t, i) => t.setText(list[i] ? `${i + 1}. ${fmt(list[i])}` : `${i + 1}. -`));
+      fill(this.boardData.today || [], this.boardTexts.today);
+      fill(this.boardData.all || [], this.boardTexts.all);
+    }
+
+    buildBoard() {
+      const prop = (this.room.props || []).find((p) => p.name === 'scoreboard');
+      if (!prop) return;
+      const T = this.T;
+      const x0 = prop.x * T;
+      const y0 = prop.y * T;
+      const style = { fontFamily: FONTS.sans, fontSize: '8px', color: '#ffd08a', resolution: ZOOM };
+      const head = { ...style, fontStyle: 'bold', color: '#ffb85c' };
+      const mk = (x, y, text, st) => this.add.text(x, y, text, st).setOrigin(0, 0).setDepth(5);
+      mk(x0 + 8, y0 + 16, 'TODAY', head);
+      mk(x0 + 84, y0 + 16, 'ALL TIME', head);
+      const today = [];
+      const all = [];
+      for (let i = 0; i < BOARD_ROWS; i++) {
+        today.push(mk(x0 + 8, y0 + 27 + i * 10, `${i + 1}. -`, style));
+        all.push(mk(x0 + 84, y0 + 27 + i * 10, `${i + 1}. -`, style));
+      }
+      this.boardTexts = { today, all };
+      this.refreshBoard(null);
+    }
+
+    /** 야외 연출: 노을 틴트 레이어 + 전광판 */
+    buildOutdoorFx() {
+      this.sunsetTint = this.add.rectangle(0, 0, this.mapW, this.mapH, 0xf0a45c, 1).setOrigin(0, 0).setDepth(DEPTH.darkness - 0.5).setAlpha(0).setBlendMode(Phaser.BlendModes.MULTIPLY);
+      this.buildBoard();
+    }
+
+    /** 물·분수 타일: cycleTiles(인덱스 → 다음) 를 일정 속도로 돌린다 (floor + furniture 레이어) */
+    setupTileCycles() {
+      const next = this.tilesMeta.cycleTiles || {};
+      this.cycleTargets = [];
+      for (const name of ['floor', 'furniture']) {
+        const layer = this.layers[name];
+        if (!layer) continue;
+        layer.forEachTile((tile) => { if (next[tile.index] !== undefined) this.cycleTargets.push(tile); });
+      }
+      this.cycleNext = next;
+    }
+
+    tickCycles(delta) {
+      if (!this.cycleTargets.length) return;
+      this.cycleAcc += delta;
+      if (this.cycleAcc < CYCLE_MS) return;
+      this.cycleAcc = 0;
+      for (const t of this.cycleTargets) t.index = this.cycleNext[t.index];
     }
 
     onCorrect(d) {
@@ -1138,6 +1304,7 @@
 
     // ── NPC ─────────────────────────────────────────────────────────
     upsertNpc(snap) {
+      if (!this.ready) return;
       let n = this.npcs.get(snap.id);
       if (!n) {
         n = new Npc(this, snap);
@@ -1283,8 +1450,13 @@
       const me = this.me;
       if (!me || me.seated) return;
       const snap = { x: round2(me.x), y: round2(me.y), facing: me.facing, moving };
+      if (me.riding) {
+        const v = me.vehicle.vehicle;
+        snap.vehicle = { type: v.type, angle: Math.round(v.angle * 1000) / 1000, speed: Math.round(v.speed) };
+      }
       const last = this.lastSent;
-      if (!last || last.x !== snap.x || last.y !== snap.y || last.facing !== snap.facing || last.moving !== snap.moving) {
+      const vChanged = Boolean(snap.vehicle) !== Boolean(last && last.vehicle) || (snap.vehicle && (snap.vehicle.angle !== last.vehicle.angle || snap.vehicle.speed !== last.vehicle.speed));
+      if (!last || last.x !== snap.x || last.y !== snap.y || last.facing !== snap.facing || last.moving !== snap.moving || vChanged) {
         this.lastSent = snap;
         this.hooks.onMove(snap);
       }
@@ -1313,6 +1485,7 @@
       }
       this.updateRemotes();
       for (const n of this.npcs.values()) n.update(delta);
+      this.tickCycles(delta);
       this.pomoAcc += delta;
       if (this.pomoAcc >= POMO_TICK) {
         this.pomoAcc = 0;
@@ -1336,10 +1509,11 @@
 
     updateLocal(dt, delta) {
       const me = this.me;
+      if (me.riding) return this.updateVehicle(dt, delta);
       const kb = this.input.keyboard;
       let dx = 0;
       let dy = 0;
-      if (kb.enabled && !me.seated) {
+      if (kb.enabled && !me.seated && !this.transferring) {
         if (this.cursors.left.isDown || this.wasd.left.isDown) dx -= 1;
         if (this.cursors.right.isDown || this.wasd.right.isDown) dx += 1;
         if (this.cursors.up.isDown || this.wasd.up.isDown) dy -= 1;
@@ -1372,12 +1546,65 @@
       }
       me.setPosition(x, y);
       me.setWalking(moving);
+      this.checkDoor();
 
       // 20Hz 전송 (움직였거나 방향/정지 상태가 바뀐 경우만)
       this.sendAcc += delta;
       if (this.sendAcc >= SEND_INTERVAL) {
         this.sendAcc = 0;
         if (!this.sitPending) this.flushMove(moving);
+      }
+    }
+
+    /** 12단계: 발 위치가 to 가 있는 문 타일이면 문을 통과한다 (문을 벗어나야 다시 켜진다) */
+    checkDoor() {
+      const me = this.me;
+      const T = this.T;
+      const tx = Math.floor(me.x / T);
+      const ty = Math.floor((me.y - 1) / T);
+      const door = (this.room.doors || []).find((d) => d.to && d.x === tx && d.y === ty);
+      if (!door) { this.doorArmed = true; return; }
+      if (!this.doorArmed || this.transferring || me.seated) return;
+      this.transferring = true;
+      me.setWalking(false);
+      this.flushMove(false);
+      Promise.resolve(this.hooks.onDoor(door)).then((r) => { if (!r || !r.ok) { this.transferring = false; this.doorArmed = false; } });
+    }
+
+    /** 12단계: 탑승 중 물리 — 방향키(8방향)로 가속, 키를 떼면 관성·마찰, 반대 방향은 브레이크 (Vehicles.step, 서버와 같은 상수). 충돌은 튕김 */
+    updateVehicle(dt, delta) {
+      const me = this.me;
+      const kb = this.input.keyboard;
+      const v = me.vehicle.vehicle;
+      const input = { up: false, down: false, left: false, right: false };
+      if (kb.enabled && !this.transferring) {
+        input.left = this.cursors.left.isDown || this.wasd.left.isDown;
+        input.right = this.cursors.right.isDown || this.wasd.right.isDown;
+        input.up = this.cursors.up.isDown || this.wasd.up.isDown;
+        input.down = this.cursors.down.isDown || this.wasd.down.isDown;
+      }
+      const next = Vehicles.step(v.type, { x: me.x, y: me.y, angle: v.angle, speed: v.speed }, input, Math.min(dt, 0.05), (x, y) => this.canStand(x, y));
+      let { x, y } = next;
+      if (this.correction) {
+        const c = this.correction;
+        const k = Math.min(1, dt * CORRECT_RATE);
+        x += (c.x - x) * k;
+        y += (c.y - y) * k;
+        if (Math.hypot(c.x - x, c.y - y) < 0.5) { x = c.x; y = c.y; this.correction = null; }
+      }
+      me.setPosition(x, y);
+      me.setVehicleMotion(next.angle, next.speed);
+      if (next.hit && next.speed > 20) this.cameras.main.shake(80, 0.002);
+      // 낡은 인력거: 달릴 때 삐걱 (덜컹거림은 VehicleView 가 그린다)
+      if (Vehicles.TYPES[v.type].wobble && next.speed > 10) {
+        this.creakAcc = (this.creakAcc || 0) + delta;
+        if (this.creakAcc >= 650) { this.creakAcc = 0; this.hooks.onCreak(); }
+      }
+      this.checkDoor();
+      this.sendAcc += delta;
+      if (this.sendAcc >= SEND_INTERVAL) {
+        this.sendAcc = 0;
+        this.flushMove(next.speed > 1);
       }
     }
 
@@ -1409,7 +1636,9 @@
         }
         const movedNow = Math.hypot(x - a.x, y - a.y) > 0.05;
         a.setPosition(x, y);
-        if (facing !== a.facing) a.setFacing(facing);
+        const vs = (s1 && s1.vehicle) || s0.vehicle;
+        if (a.riding && vs) a.setVehicleMotion(vs.angle, vs.speed);
+        else if (facing !== a.facing) a.setFacing(facing);
         // 다음 스냅샷이 아직 없어도 마지막 패킷이 '이동 중' 이면 짧게 걷기 유지 (지연 흔들림 방지)
         const stale = performance.now() - buf[buf.length - 1].t > 250;
         a.setWalking(movedNow || (r.lastMoving && !stale));
@@ -1447,7 +1676,7 @@
         const stars = this.add.graphics().setDepth(DEPTH.stars);
         let seed = 17 + i * 31;
         const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
-        for (let k = 0; k < 26; k++) {
+        for (let k = 0; k < Math.max(26, Math.round(w.w / 24)); k++) {
           const sx = w.x + 4 + rnd() * (w.w - 8);
           const sy = w.y + 4 + rnd() * (w.h * 0.45);
           stars.fillStyle(rnd() < 0.3 ? 0xdfe6f5 : 0xb9c4dd, 0.6 + rnd() * 0.4);
@@ -1544,8 +1773,9 @@
       if (!force && prev && Math.abs(prev.day - w.day) < 0.004 && Math.abs(prev.sunset - w.sunset) < 0.004 && Math.abs(prev.night - w.night) < 0.004) return;
       this.weights = w;
       this.paintSky(w);
-      const amb = Daylight.ambient(w);
+      const amb = this.room.outdoor ? Daylight.outdoorAmbient(w) : Daylight.ambient(w);
       this.ambient = amb;
+      if (this.sunsetTint) this.sunsetTint.setAlpha(amb.sunsetTint || 0);
       if (this.layers.windowDay) this.layers.windowDay.setAlpha(amb.dayLayer);
       if (this.darkness) this.renderDarkness(amb.darkness);
       this.glowScale = amb.glow;
@@ -1823,7 +2053,7 @@
     renderDarkness(alpha) {
       const rt = this.darkness;
       rt.clear();
-      rt.fill(0x0d0912, alpha);
+      rt.fill(this.room.outdoor ? 0x0b1226 : 0x0d0912, alpha);
       for (const { z, g } of this.zoneStamps) rt.erase(g, z.x - 12, z.y - 12);
       for (const l of [...(this.room.lights || []), ...this.extraLights]) {
         this.lightStamp.setScale((l.r * 2.8) / 256).setAlpha(Math.min(1, l.intensity + 0.45));

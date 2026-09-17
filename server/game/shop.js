@@ -1,6 +1,9 @@
 'use strict';
 /**
- * 상점 카탈로그 (9단계: 가구 23종 · 10단계: 펫 13 · 펫 꾸미기 8 · 펫 행동 3). 탈것 탭은 "준비 중".
+ * 상점 카탈로그 (9단계: 가구 23종 · 10단계: 펫 13 · 펫 꾸미기 8 · 펫 행동 3 · 12단계: 탈것 4 · 데칼 3 · 경적 3).
+ *  - category 'vehicle'     : 탈것 — 야외에서 V 로 소환/해제. vehicle = 종류(vehicles.js TYPES), variants 는 색 6종 (구매 때 선택).
+ *  - category 'vehicleDecal': 데칼 — 탑승 중인 탈것 몸체에 겹쳐 그린다 (설정 → 내 탈것). decal = 'flame' | 'star' | 'stripe'
+ *  - category 'vehicleHorn' : 경적 — H 키 소리 (fx.js 합성). horn = 'beep' | 'bell' | 'melody'
  *  - category 'pet'      : 개인 펫 — 주인을 따라다닌다 (한 번에 1마리 활성, users.pet_config). species = 스프라이트 종.
  *  - category 'sharedPet': 공용 펫 — 지갑에서 "방에 풀기" → 방에 살며 자율 행동 (room_pets, 최대 3마리).
  *  - category 'petSkill' : 펫 행동 업그레이드 — 구매 때 target(펫)을 고르고 펫별 1회. skill = 'come' | 'sleep_beside' | 'high_five'
@@ -34,6 +37,9 @@ const CATEGORIES = [
   { id: 'sharedPet', tab: 'pet', label: '공용 펫', hint: '방에 풀면 강아지처럼 자율로 살아요 (최대 3마리) · 푼 사람이 이름 짓고 회수할 수 있어요' },
   { id: 'petSkill', tab: 'pet', label: '행동 업그레이드', hint: '펫별 1회 · 구매할 때 어느 펫에 줄지 골라요' },
   { id: 'petDeco', tab: 'petDeco', label: '꾸미기', hint: '강아지·공용 펫·내 펫 슬롯 3개(머리/목/등)에 장착 · 설정에서 골라요' },
+  { id: 'vehicle', tab: 'mount', label: '탈것', hint: '야외에서 V 로 소환/해제 · 설정 → 내 탈것에서 활성 선택 · 색은 구매할 때 골라요' },
+  { id: 'vehicleDecal', tab: 'mount', label: '데칼', hint: '탈것 몸체에 붙는 무늬 (자전거는 몸체가 얇아 안 보여요) · 설정 → 내 탈것' },
+  { id: 'vehicleHorn', tab: 'mount', label: '경적', hint: '야외에서 탑승 중 H 키 · 설정 → 내 탈것에서 골라요' },
 ];
 const PET_SLOTS = ['head', 'neck', 'back'];
 
@@ -85,8 +91,13 @@ const CLOCK_STYLES = [
   { id: 'cat', label: '고양이', color: '#2e2b33' },
 ];
 
-const desk = (id, name, price, extra = {}) => ({ id, tab: 'furniture', category: 'desk', name, price, sprite: { w: 1, h: 1, passable: true }, ...extra });
-const shared = (id, name, price, sprite, extra = {}) => ({ id, tab: 'furniture', category: 'shared', name, price, sprite: { passable: false, ...sprite }, ...extra });
+// 12단계: 상점 전체 가격 30% 인하 — 아래 헬퍼의 price 는 정가(list price), 실제 가격은 sale(): 반올림 · 최소 2코인 (1코인 아이템은 그대로). 상대 순서 유지. 환불 없음.
+const SALE_RATE = 0.7;
+const SALE_MIN = 2;
+const sale = (list) => (list <= 1 ? list : Math.max(SALE_MIN, Math.round(list * SALE_RATE)));
+
+const desk = (id, name, price, extra = {}) => ({ id, tab: 'furniture', category: 'desk', name, price: sale(price), listPrice: price, sprite: { w: 1, h: 1, passable: true }, ...extra });
+const shared = (id, name, price, sprite, extra = {}) => ({ id, tab: 'furniture', category: 'shared', name, price: sale(price), listPrice: price, sprite: { passable: false, ...sprite }, ...extra });
 
 const ITEMS = [
   // ── 개인 책상 소품 ──────────────────────────────────────────────────
@@ -116,10 +127,10 @@ const ITEMS = [
   shared('bed', '1인용 침대', 40, { w: 1, h: 2, seat: { dx: 0, dy: 1, facing: 'down', kind: 'bed' }, rotations: [0, 1], top: true }, { variants: BED_COLORS, desc: '앞에서 E → 눕기 (자동 휴식). 이불 3색' }),
 ];
 
-const pet = (id, name, price, species, desc, extra = {}) => ({ id, tab: 'pet', category: 'pet', name, price, species, desc, ...extra });
-const sharedPet = (id, name, price, species, desc) => ({ id, tab: 'pet', category: 'sharedPet', name, price, species, desc });
-const skill = (id, name, price, skillId, desc) => ({ id, tab: 'pet', category: 'petSkill', name, price, skill: skillId, desc });
-const deco = (id, name, price, slot, extra = {}) => ({ id, tab: 'petDeco', category: 'petDeco', name, price, slot, ...extra });
+const pet = (id, name, price, species, desc, extra = {}) => ({ id, tab: 'pet', category: 'pet', name, price: sale(price), listPrice: price, species, desc, ...extra });
+const sharedPet = (id, name, price, species, desc) => ({ id, tab: 'pet', category: 'sharedPet', name, price: sale(price), listPrice: price, species, desc });
+const skill = (id, name, price, skillId, desc) => ({ id, tab: 'pet', category: 'petSkill', name, price: sale(price), listPrice: price, skill: skillId, desc });
+const deco = (id, name, price, slot, extra = {}) => ({ id, tab: 'petDeco', category: 'petDeco', name, price: sale(price), listPrice: price, slot, ...extra });
 
 const PET_ITEMS = [
   // ── 개인 펫 ──
@@ -152,6 +163,26 @@ const PET_ITEMS = [
   deco('deco_wings', '날개', 15, 'back', { anim: { frames: 2, fps: 4 }, desc: '작은 흰 날개가 펄럭여요' }),
 ];
 ITEMS.push(...PET_ITEMS);
+
+// ── 12단계 탈것 (오리지널 디자인, tools/vehicles.py) ──
+const { TYPES: VEHICLE_TYPES, COLORS: VEHICLE_COLORS } = require('./vehicles');
+const vehicle = (id, type, desc, extra = {}) => ({ id, tab: 'mount', category: 'vehicle', name: VEHICLE_TYPES[type].name, price: sale(VEHICLE_TYPES[type].price), listPrice: VEHICLE_TYPES[type].price, vehicle: type, variants: VEHICLE_COLORS, desc, ...extra });
+const vdecal = (id, name, decal, desc) => ({ id, tab: 'mount', category: 'vehicleDecal', name, price: sale(10), listPrice: 10, decal, desc });
+const vhorn = (id, name, horn, desc) => ({ id, tab: 'mount', category: 'vehicleHorn', name, price: sale(5), listPrice: 5, horn, desc });
+const VEHICLE_ITEMS = [
+  vehicle('vehicle_rickshaw', 'rickshaw', '그래도 내 거야.', { variants: undefined }), // 1코인 · 색 없음 · 걷기보다 느림
+  vehicle('vehicle_bicycle', 'bicycle', '걷기의 2배. 가볍게 한 바퀴'),
+  vehicle('vehicle_kickboard', 'kickboard', '걷기의 2.2배. 회전이 빨라요'),
+  vehicle('vehicle_kart', 'kart', '걷기의 3배. 트랙의 기본'),
+  vehicle('vehicle_sport', 'sport', '걷기의 3.5배. 가속이 가장 빨라요'),
+  vdecal('decal_flame', '불꽃 데칼', 'flame', '몸체에 불꽃'),
+  vdecal('decal_star', '별 데칼', 'star', '몸체에 별'),
+  vdecal('decal_stripe', '줄무늬 데칼', 'stripe', '레이싱 스트라이프'),
+  vhorn('horn_beep', '경적 · 빵빵', 'beep', '클래식한 두 번'),
+  vhorn('horn_bell', '경적 · 따르릉', 'bell', '자전거 벨'),
+  vhorn('horn_melody', '경적 · 멜로디', 'melody', '짧은 멜로디'),
+];
+ITEMS.push(...VEHICLE_ITEMS);
 
 /** 꾸미기 아틀라스 키의 아이템 부분 ('deco/<id>' 에서 deco_ 접두사를 뗀다) */
 function decoKey(item, variant) {
@@ -194,4 +225,4 @@ function createShop(items = ITEMS) {
   };
 }
 
-module.exports = { createShop, TABS, CATEGORIES, ITEMS, PET_ITEMS, PET_SLOTS, pickVariant, frameKey, iconKey, decoKey };
+module.exports = { createShop, TABS, CATEGORIES, ITEMS, PET_ITEMS, VEHICLE_ITEMS, PET_SLOTS, SALE_RATE, SALE_MIN, sale, pickVariant, frameKey, iconKey, decoKey };

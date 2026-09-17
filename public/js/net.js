@@ -5,6 +5,8 @@
  * 추가 이벤트: 'offline'(끊김), 'online'(재연결 직후), 'session'(입장/재입장 ack 적용), 'sessionLost'(토큰 만료로 새 입장 필요)
  * 11단계: 로비(siteAuth · lobbyList · studyCreate · studyLookup) · join 에 study(코드)·studyPassword·studyAccess
  *   · 잠긴 스터디는 비밀번호 대신 서버가 준 기기 접근 토큰(studyAccess)을 스터디별로 localStorage 에 두고 다음 입장 때 낸다 · 마지막 스터디 기억
+ * 12단계: door(스터디 ↔ 야외, ack 는 입장 ack 와 같은 세션 형태 → 'session' 으로 흘린다) · 탈것(mount/dismount/vehicleConfig/horn) · 전광판 · 프로필.
+ *   this.room = 지금 있는 맵 id ('studyroom' | 'outdoor').
  */
 (function () {
   'use strict';
@@ -20,6 +22,7 @@
     'layout:update', 'playerDesk', 'playerEdit',
     'npc:remove',
     'studyGoal', 'study:update', 'kicked', 'study:deleted',
+    'playerVehicle', 'playerHorn', 'lap:progress', 'lap', 'track:board',
   ];
 
   class Net {
@@ -29,6 +32,7 @@
       this.session = null; // 마지막 join ack
       this.credentials = null; // { nickname, avatar(파츠 객체), password?(사이트), study(코드), studyAccess? }
       this.study = null; // 지금 들어가 있는 스터디 (join ack 의 study)
+      this.room = null; // 12단계: 지금 있는 맵 id
       this.offset = 0; // serverTime - Date.now()
       this.corrections = 0; // 디버그/테스트용 카운터
       this.wasConnected = false;
@@ -143,6 +147,7 @@
       this.credentials = { nickname: ack.self.nickname, avatar: ack.self.avatar, password, study: code, studyAccess: ack.studyAccess || access || '' };
       this.session = ack;
       this.study = ack.study || null;
+      this.room = ack.room || 'studyroom';
       this.offset = ack.serverTime - Date.now();
       Net.save({ token: ack.token, nickname: ack.self.nickname, avatar: ack.self.avatar, password: password || null, lastStudy: code || null });
       if (saved.token && !ack.resumed) this.emitLocal('sessionLost', ack);
@@ -261,6 +266,26 @@
     layoutRemove(id) { return this.ask('layout:remove', { id }); }
     /** "내가 놓은 것만 이동·회수" 설정 */
     layoutLock(on) { return this.ask('layout:lock', { on: Boolean(on) }); }
+    // ── 야외 (12단계) ──
+    /** 문 통과: 성공하면 새 맵의 세션 ack 를 'session' 으로 흘린다 (main.js 가 씬을 바꾼다) */
+    async door() {
+      const ack = await this.ask('door', {});
+      if (ack && ack.ok) {
+        this.session = ack;
+        this.study = ack.study || null;
+        this.room = ack.room || 'studyroom';
+        this.offset = ack.serverTime - Date.now();
+        this.emitLocal('session', ack);
+      }
+      return ack;
+    }
+    mount() { return this.ask('vehicle:mount', {}); }
+    dismount() { return this.ask('vehicle:dismount', {}); }
+    vehicleConfig(cfg) { return this.ask('vehicle:config', cfg || {}); }
+    horn() { return this.ask('horn', {}); }
+    trackBoard() { return this.ask('track:board', {}); }
+    profile(id) { return this.ask('profile', { id }); }
+    setStatsPublic(on) { return this.ask('profile:visibility', { public: Boolean(on) }); }
     /** 내 기록 초기화: 서버가 세션 토큰 + 닉네임을 확인한다 */
     resetProfile(nickname) { return this.ask('profile:reset', { nickname, token: Net.saved().token }); }
 
@@ -274,6 +299,7 @@
       this.credentials = null;
       this.session = null;
       this.study = null;
+      this.room = null;
       if (this.socket && !keepSocket) {
         this.socket.disconnect();
         this.socket = null;

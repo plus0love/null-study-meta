@@ -22,7 +22,8 @@ function createSupabaseStore({ url, key }) {
   const ensureUser = async (nickname) => {
     check(await client.from('users').upsert({ nickname }, { onConflict: 'nickname', ignoreDuplicates: true }));
   };
-  const userRow = (r) => (r ? { nickname: r.nickname, avatar: r.avatar, dogName: r.dog_name, coins: Number(r.coins) || 0, coinCarrySeconds: Number(r.coin_carry_seconds) || 0, deskItems: Array.isArray(r.desk_items) ? r.desk_items : [null, null, null], layoutLock: Boolean(r.layout_lock), petConfig: r.pet_config || null, createdAt: ms(r.created_at), updatedAt: ms(r.updated_at) } : null);
+  const userRow = (r) => (r ? { nickname: r.nickname, avatar: r.avatar, dogName: r.dog_name, coins: Number(r.coins) || 0, coinCarrySeconds: Number(r.coin_carry_seconds) || 0, deskItems: Array.isArray(r.desk_items) ? r.desk_items : [null, null, null], layoutLock: Boolean(r.layout_lock), petConfig: r.pet_config || null, vehicleConfig: r.vehicle_config || null, statsPublic: Boolean(r.stats_public), createdAt: ms(r.created_at), updatedAt: ms(r.updated_at) } : null);
+  const trackRow = (r) => ({ id: r.id, nickname: r.nickname, studyId: r.study_id ?? null, vehicle: r.vehicle, ms: Number(r.ms), createdAt: ms(r.created_at) });
   const studyRow = (r) => (r ? { id: r.id, code: r.code, name: r.name, passwordHash: r.password_hash || null, ownerNickname: r.owner_nickname || null, maxPlayers: Number(r.max_players) || 8, weeklyGoalMinutes: Number(r.weekly_goal_minutes) || 1200, editPolicy: r.edit_policy || 'anyone', passwordChangedAt: ms(r.password_changed_at), createdAt: ms(r.created_at), lastActiveAt: ms(r.last_active_at) } : null);
   const memberRow = (r) => ({ studyId: r.study_id, nickname: r.nickname, joinedAt: ms(r.joined_at), lastSeenAt: ms(r.last_seen_at) });
   const accessRow = (r) => ({ id: r.id, studyId: r.study_id, tokenHash: r.token_hash, nickname: r.nickname, createdAt: ms(r.created_at), lastUsedAt: ms(r.last_used_at) });
@@ -48,6 +49,8 @@ function createSupabaseStore({ url, key }) {
       if (data.deskItems !== undefined) patch.desk_items = data.deskItems;
       if (data.layoutLock !== undefined) patch.layout_lock = Boolean(data.layoutLock);
       if (data.petConfig !== undefined) patch.pet_config = data.petConfig;
+      if (data.vehicleConfig !== undefined) patch.vehicle_config = data.vehicleConfig;
+      if (data.statsPublic !== undefined) patch.stats_public = Boolean(data.statsPublic);
       return userRow(check(await client.from('users').upsert(patch, { onConflict: 'nickname' }).select().single()));
     },
     async getUser(nickname) {
@@ -317,6 +320,25 @@ function createSupabaseStore({ url, key }) {
       const l = check(await client.from('room_layout').update({ study_id: studyId }).is('study_id', null).select('id')) || [];
       const p = check(await client.from('room_pets').update({ study_id: studyId }).is('study_id', null).select('id')) || [];
       return { layout: l.length, pets: p.length };
+    },
+
+    // ── 트랙 기록 (12단계) ────────────────────────────────────────────
+    async addTrackRecord({ nickname, studyId = null, vehicle, ms: lapMs }, now = Date.now()) {
+      await ensureUser(nickname);
+      return trackRow(check(await client.from('track_records').insert({ nickname, study_id: studyId, vehicle: String(vehicle), ms: Math.max(0, Math.round(Number(lapMs) || 0)), created_at: iso(now) }).select().single()));
+    },
+    /** track_top(): 닉네임마다 최고 1건, ms 오름차순 (오늘/역대는 SQL 에서 tz 기준) */
+    async trackTop({ scope = 'all', tz = DEFAULT_TZ, limit = 5 } = {}) {
+      const rows = check(await client.rpc('track_top_sorted', { tz, today_only: scope === 'today', lim: limit })) || [];
+      return rows.map(trackRow);
+    },
+    async trackBest(nickname) {
+      const rows = check(await client.from('track_records').select('*').eq('nickname', nickname).order('ms', { ascending: true }).limit(1)) || [];
+      return rows[0] ? { ms: Number(rows[0].ms), vehicle: rows[0].vehicle, createdAt: ms(rows[0].created_at) } : null;
+    },
+    async hasLapToday(nickname, { tz = DEFAULT_TZ } = {}) {
+      const rows = check(await client.rpc('track_top', { tz, today_only: true, lim: 1000, only_nickname: nickname })) || [];
+      return rows.length > 0;
     },
 
     // ── 기록 초기화 (7단계) ───────────────────────────────────────────
