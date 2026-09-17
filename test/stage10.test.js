@@ -56,7 +56,7 @@ test('카탈로그: 개인 펫 10 · 공용 펫 3 · 꾸미기 8(슬롯/색) · 
   assert.equal(by('petSkill').length, 3);
   assert.equal(by('petDeco').length, 8);
   assert.deepEqual(by('pet').map((i) => i.species), ['hamster', 'chick', 'turtle', 'rabbit', 'cat', 'maltese', 'poodle_black', 'shiba', 'parrot', 'slime']);
-  assert.deepEqual(by('sharedPet').map((i) => [i.species, i.price]), [['cat', 35], ['turtle', 25], ['fish', 28]] // 12단계 30% 인하가);
+  assert.deepEqual(by('sharedPet').map((i) => [i.species, i.price]), [['cat', 35], ['turtle', 25], ['fish', 28]]); // 12단계 30% 인하가
   assert.deepEqual(by('petSkill').map((i) => [i.skill, i.price]), [['come', 7], ['sleep_beside', 7], ['high_five', 6]]);
   assert.deepEqual(by('petDeco').map((i) => [i.id, i.slot, i.variants ? i.variants.length : 0]), [
     ['deco_ribbon', 'head', 4], ['deco_collar', 'neck', 4], ['deco_scarf', 'neck', 4], ['deco_straw_hat', 'head', 0], ['deco_beanie', 'head', 0], ['deco_glasses', 'head', 0], ['deco_crown', 'head', 0], ['deco_wings', 'back', 0]]);

@@ -57,7 +57,7 @@ test('카탈로그: 가구 23종 (책상 소품 12 · 공용 11), 가격·변형
   assert.equal(shop.get('wall_clock').variants.length, 3);
   assert.equal(shop.get('bed').variants.length, 3);
   assert.equal(shop.get('desk_lamp').variants.length, 3);
-  assert.equal(shop.get('massage_chair').price, 45);
+  assert.equal(shop.get('massage_chair').price, 31); // 인하가 (정가 45)
   assert.deepEqual(shop.get('bed').sprite.rotations, [0, 1]);
   assert.deepEqual(shop.get('rug_small').sprite.rotations, [0, 1]);
   assert.equal(shop.get('rug_small').sprite.layer, 'floor');
