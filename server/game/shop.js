@@ -1,6 +1,10 @@
 'use strict';
 /**
- * 상점 카탈로그 (9단계: 가구 23종). 탭 4개 중 '가구' 만 아이템이 있고 나머지는 "준비 중".
+ * 상점 카탈로그 (9단계: 가구 23종 · 10단계: 펫 13 · 펫 꾸미기 8 · 펫 행동 3). 탈것 탭은 "준비 중".
+ *  - category 'pet'      : 개인 펫 — 주인을 따라다닌다 (한 번에 1마리 활성, users.pet_config). species = 스프라이트 종.
+ *  - category 'sharedPet': 공용 펫 — 지갑에서 "방에 풀기" → 방에 살며 자율 행동 (room_pets, 최대 3마리).
+ *  - category 'petSkill' : 펫 행동 업그레이드 — 구매 때 target(펫)을 고르고 펫별 1회. skill = 'come' | 'sleep_beside' | 'high_five'
+ *  - category 'petDeco'  : 꾸미기 — 모든 펫의 슬롯(head/neck/back, 안경은 face 위치의 head 슬롯)에 장착. variants 는 색.
  *
  * 아이템 형식: { id, tab, category, name, price, variants?, sprite, anim?, fx?, desc? }
  *  - category 'desk'  : 개인 책상 소품 — 내가 앉은 자리 앞 책상 위에 표시 (슬롯 3개, users.desk_items). 스프라이트 1x1.
@@ -24,8 +28,23 @@ const TABS = [
 ];
 const TAB_IDS = new Set(TABS.map((t) => t.id));
 const CATEGORIES = [
-  { id: 'desk', label: '책상 소품', hint: '내가 앉은 자리 책상 위에 보여요 · 설정 → 내 책상에서 슬롯 3개 장착' },
-  { id: 'shared', label: '공용 가구', hint: '🛠 편집 모드로 방 안 원하는 곳에 놓아요 · 모두에게 보여요' },
+  { id: 'desk', tab: 'furniture', label: '책상 소품', hint: '내가 앉은 자리 책상 위에 보여요 · 설정 → 내 책상에서 슬롯 3개 장착' },
+  { id: 'shared', tab: 'furniture', label: '공용 가구', hint: '🛠 편집 모드로 방 안 원하는 곳에 놓아요 · 모두에게 보여요' },
+  { id: 'pet', tab: 'pet', label: '개인 펫', hint: '주인을 따라다녀요 · 설정 → 내 펫에서 활성 펫·이름·꾸미기 선택 (한 번에 1마리)' },
+  { id: 'sharedPet', tab: 'pet', label: '공용 펫', hint: '방에 풀면 강아지처럼 자율로 살아요 (최대 3마리) · 푼 사람이 이름 짓고 회수할 수 있어요' },
+  { id: 'petSkill', tab: 'pet', label: '행동 업그레이드', hint: '펫별 1회 · 구매할 때 어느 펫에 줄지 골라요' },
+  { id: 'petDeco', tab: 'petDeco', label: '꾸미기', hint: '강아지·공용 펫·내 펫 슬롯 3개(머리/목/등)에 장착 · 설정에서 골라요' },
+];
+const PET_SLOTS = ['head', 'neck', 'back'];
+
+const RIBBON_COLORS = [
+  { id: 'red', label: '빨강', color: '#d9655f' }, { id: 'pink', label: '분홍', color: '#e59ab2' }, { id: 'blue', label: '파랑', color: '#6d8fc4' }, { id: 'yellow', label: '노랑', color: '#e5c56a' },
+];
+const COLLAR_COLORS = [
+  { id: 'red', label: '빨강', color: '#c94f4f' }, { id: 'blue', label: '파랑', color: '#4f6f9f' }, { id: 'green', label: '초록', color: '#5f8565' }, { id: 'purple', label: '보라', color: '#8d6a9c' },
+];
+const SCARF_COLORS = [
+  { id: 'red', label: '빨강', color: '#d9655f' }, { id: 'navy', label: '네이비', color: '#4f5f88' }, { id: 'mustard', label: '머스터드', color: '#d8b04f' }, { id: 'sage', label: '세이지', color: '#8fa585' },
 ];
 
 const MUG_COLORS = [
@@ -97,6 +116,49 @@ const ITEMS = [
   shared('bed', '1인용 침대', 40, { w: 1, h: 2, seat: { dx: 0, dy: 1, facing: 'down', kind: 'bed' }, rotations: [0, 1], top: true }, { variants: BED_COLORS, desc: '앞에서 E → 눕기 (자동 휴식). 이불 3색' }),
 ];
 
+const pet = (id, name, price, species, desc, extra = {}) => ({ id, tab: 'pet', category: 'pet', name, price, species, desc, ...extra });
+const sharedPet = (id, name, price, species, desc) => ({ id, tab: 'pet', category: 'sharedPet', name, price, species, desc });
+const skill = (id, name, price, skillId, desc) => ({ id, tab: 'pet', category: 'petSkill', name, price, skill: skillId, desc });
+const deco = (id, name, price, slot, extra = {}) => ({ id, tab: 'petDeco', category: 'petDeco', name, price, slot, ...extra });
+
+const PET_ITEMS = [
+  // ── 개인 펫 ──
+  pet('pet_hamster', '햄스터', 25, 'hamster', '볼주머니 가득. 종종종 따라와요'),
+  pet('pet_chick', '병아리', 25, 'chick', '삐약삐약 뒤를 쫓아요'),
+  pet('pet_turtle', '거북이', 28, 'turtle', '느리게 따라와요 (못 따라오면 순간이동)'),
+  pet('pet_rabbit', '토끼', 35, 'rabbit', '귀가 길고 재빨라요'),
+  pet('pet_cat', '고양이', 40, 'cat', '도도하게 따라와요'),
+  pet('pet_maltese', '흰 말티즈', 40, 'maltese', '뽀얀 강아지'),
+  pet('pet_poodle_black', '검정 푸들', 40, 'poodle_black', '까만 곱슬 강아지'),
+  pet('pet_shiba', '시바', 40, 'shiba', '동글동글 말린 꼬리'),
+  pet('pet_parrot', '앵무새', 45, 'parrot', '어깨 위에 앉아 다녀요'),
+  pet('pet_slime', '슬라임', 50, 'slime', '통통 튀며 따라와요'),
+  // ── 공용 펫 ──
+  sharedPet('shared_cat', '고양이 (공용)', 50, 'cat', '방에 살아요. 책장 선반·소파 위에서 자기 좋아함'),
+  sharedPet('shared_turtle', '거북이 (공용)', 35, 'turtle', '라운지 러그를 아주 느리게 돌아다녀요'),
+  sharedPet('shared_fish', '어항 물고기', 40, 'fish', '라운지 테이블 위 어항에서 헤엄쳐요'),
+  // ── 행동 업그레이드 (펫별 1회) ──
+  skill('skill_come', '이름 부르면 달려옴', 10, 'come', '채팅에 펫 이름을 치면 달려와요'),
+  skill('skill_sleep', '옆에서 같이 자기', 10, 'sleep_beside', '주인이 앉아 공부 중이면 발밑에서 자요 (개인 펫)'),
+  skill('skill_high_five', '하이파이브', 8, 'high_five', 'E 로 쓰다듬으면 🖐 반응이 추가돼요'),
+  // ── 꾸미기 ──
+  deco('deco_ribbon', '리본', 5, 'head', { variants: RIBBON_COLORS, desc: '머리에 리본. 색 4종' }),
+  deco('deco_collar', '목걸이', 6, 'neck', { variants: COLLAR_COLORS, desc: '목에 반짝 목걸이. 색 4종' }),
+  deco('deco_scarf', '스카프', 8, 'neck', { variants: SCARF_COLORS, desc: '포근한 스카프. 색 4종' }),
+  deco('deco_straw_hat', '밀짚모자', 10, 'head', { desc: '여름 느낌' }),
+  deco('deco_beanie', '비니', 10, 'head', { desc: '머스터드 비니' }),
+  deco('deco_glasses', '안경', 10, 'head', { desc: '똑똑해 보여요' }),
+  deco('deco_crown', '왕관', 15, 'head', { desc: '오늘의 왕' }),
+  deco('deco_wings', '날개', 15, 'back', { anim: { frames: 2, fps: 4 }, desc: '작은 흰 날개가 펄럭여요' }),
+];
+ITEMS.push(...PET_ITEMS);
+
+/** 꾸미기 아틀라스 키의 아이템 부분 ('deco/<id>' 에서 deco_ 접두사를 뗀다) */
+function decoKey(item, variant) {
+  const base = item.id.replace(/^deco_/, '');
+  return variant ? `${base}/${variant}` : base;
+}
+
 function validItem(it) {
   return Boolean(it && typeof it.id === 'string' && it.id && TAB_IDS.has(it.tab) && typeof it.name === 'string' && Number.isInteger(it.price) && it.price >= 0);
 }
@@ -132,4 +194,4 @@ function createShop(items = ITEMS) {
   };
 }
 
-module.exports = { createShop, TABS, CATEGORIES, ITEMS, pickVariant, frameKey, iconKey };
+module.exports = { createShop, TABS, CATEGORIES, ITEMS, PET_ITEMS, PET_SLOTS, pickVariant, frameKey, iconKey, decoKey };

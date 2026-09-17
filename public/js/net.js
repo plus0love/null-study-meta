@@ -15,6 +15,7 @@
     'playerGoal', 'leaderboard:refresh', 'attendance', 'goalReached',
     'coins', 'playerPomodoro',
     'layout:update', 'playerDesk', 'playerEdit',
+    'npc:remove',
   ];
 
   class Net {
@@ -178,7 +179,12 @@
     /** 지갑 (8단계): 잔액 · 최근 거래 · 인벤토리 · 카탈로그 */
     wallet() { return this.ask('wallet', {}); }
     /** 구매: 서버가 잔액 확인·차감·원장·인벤토리까지 처리한다 (variant: 색/종류) */
-    buy(itemId, variant) { return this.ask('shop:buy', variant ? { itemId, variant } : { itemId }); }
+    buy(itemId, variant, target) { return this.ask('shop:buy', { itemId, ...(variant ? { variant } : {}), ...(target !== undefined && target !== null ? { target } : {}) }); }
+    // ── 펫 (10단계) ──
+    petConfig(cfg) { return this.ask('pet:config', cfg || {}); }
+    petRelease(inventoryId, name) { return this.ask('pet:release', { inventoryId, name }); }
+    petRecall(id) { return this.ask('pet:recall', { id }); }
+    petDeco(id, slots) { return this.ask('pet:deco', { id, slots }); }
     // ── 가구 (9단계) ──
     /** 책상 슬롯 3개 장착: [inventoryId | null] */
     equipDesk(slots) { return this.ask('desk:equip', { slots }); }

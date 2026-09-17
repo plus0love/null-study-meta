@@ -45,10 +45,11 @@ function makeWorld(opts = {}) {
 
 // ── 카탈로그 · 아틀라스 ───────────────────────────────────────────────
 test('카탈로그: 가구 23종 (책상 소품 12 · 공용 11), 가격·변형·스프라이트 메타', () => {
-  assert.equal(ITEMS.length, 23);
+  const FURN = ITEMS.filter((i) => i.tab === 'furniture');
+  assert.equal(FURN.length, 23);
   assert.equal(ITEMS.filter((i) => i.category === 'desk').length, 12);
   assert.equal(ITEMS.filter((i) => i.category === 'shared').length, 11);
-  assert.deepEqual(CATEGORIES.map((c) => c.id), ['desk', 'shared']);
+  assert.deepEqual(CATEGORIES.filter((c) => c.tab === 'furniture').map((c) => c.id), ['desk', 'shared']);
   assert.equal(shop.get('mug').price, 3);
   assert.equal(shop.get('mug').variants.length, 5);
   assert.equal(shop.get('poster').variants.length, 5);
@@ -65,7 +66,7 @@ test('카탈로그: 가구 23종 (책상 소품 12 · 공용 11), 가격·변형
   assert.equal(shop.get('bed').sprite.seat.kind, 'bed');
   assert.equal(shop.get('massage_chair').sprite.seat.kind, 'massage');
   assert.equal(shop.get('beanbag').sprite.seat.kind, 'beanbag');
-  for (const it of ITEMS) {
+  for (const it of FURN) {
     assert.equal(it.tab, 'furniture');
     assert.ok(Number.isInteger(it.price) && it.price > 0, it.id);
     if (it.category === 'desk') assert.deepEqual([it.sprite.w, it.sprite.h, it.sprite.passable], [1, 1, true], it.id);
@@ -79,7 +80,7 @@ test('카탈로그: 가구 23종 (책상 소품 12 · 공용 11), 가격·변형
 
 test('아틀라스: 모든 아이템의 아이콘(32x32)·방 스프라이트·변형·회전·애니·이불 프레임이 있다', () => {
   const has = (k) => Boolean(atlas.frames[k]);
-  for (const it of ITEMS) {
+  for (const it of ITEMS.filter((i) => i.tab === 'furniture')) {
     assert.ok(has(iconKey(it.id)), `icon/${it.id}`);
     assert.deepEqual([atlas.frames[iconKey(it.id)].frame.w, atlas.frames[iconKey(it.id)].frame.h], [32, 32], it.id);
     const variants = it.variants ? it.variants.map((v) => v.id) : [null];
@@ -197,8 +198,8 @@ test('월드: 구매(색 선택) → 인벤토리 meta.variant, 없는 색은 no
   assert.equal(events.desk.length, 1);
   const w = await world.wallet(a);
   assert.deepEqual(w.inventory.map((i) => [i.itemId, i.slot, i.placed]), [['mug', 0, false], ['desk_lamp', 2, false], ['bed', null, false]]);
-  assert.deepEqual(w.categories.map((c) => c.id), ['desk', 'shared']);
-  assert.equal(w.items.length, 23);
+  assert.deepEqual(w.categories.filter((c) => c.tab === 'furniture').map((c) => c.id), ['desk', 'shared']);
+  assert.equal(w.items.filter((i) => i.tab === 'furniture').length, 23);
   // 재입장하면 저장된 슬롯이 복원된다 (users.desk_items)
   world.remove(a.id);
   const a2 = world.join({ nickname: '민수', socketId: 'sa2' }).player;

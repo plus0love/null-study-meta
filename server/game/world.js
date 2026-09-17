@@ -12,8 +12,11 @@
  *  - 9단계: 가구. 공용 가구 배치(layout: room_layout, 규칙은 layout.js)·편집 모드·가구 잠금(먼저 잡은 사람 우선)·
  *    권한(놓은 사람의 "내가 놓은 것만" 설정)·충돌 맵 반영(this.room.collision 을 다시 만든다)·동적 좌석(빈백/안마의자/침대 = f:<id>).
  *    침대·안마의자에 앉으면 자동 휴식(공부로 못 바꿈, 세션 안 쌓임). 책상 소품은 users.desk_items 슬롯 3개 → player.deskItems.
+ *  - 10단계: 펫. 개인 펫(FollowerNpc 'p:<playerId>', users.pet_config: 활성 펫·이름·꾸미기·스킬) · 공용 펫(SharedPetNpc/FishNpc 's:<roomPetId>',
+ *    room_pets, 최대 3마리, 푼 사람만 이름/회수) · 기존 강아지의 꾸미기/스킬은 room_pets 의 item_id 'dog' 행. 쓰다듬기는 종별 반응 이모지.
+ *    스킬은 펫별 1회 구매(shop:buy target): 'come'(채팅에 이름 → comeTo) · 'sleep_beside' · 'high_five'.
  * 이벤트: 'playerLeft' (유예 시간이 지나 정리될 때), 'pomodoro' (snap, reason, player — 개인 타이머 상태 변화),
- *         'npcUpdate' (NPC 스냅샷, 10Hz), 'npcPet' ({ npc, by, nickname }), 'npcName' ({ npc, name }),
+ *         'npcUpdate' (NPC 스냅샷, 10Hz), 'npcPet' ({ npc, by, playerId, name, reaction, highFive }), 'npcName' ({ npc, name }), 'npcRemoved' ({ id }),
  *         'sessionSaved' { nickname, playerId, seconds }, 'attendance' { nickname, playerId, streak, weekDays, inserted },
  *         'goalReached' { nickname, playerId, todaySeconds, targetMinutes },
  *         'coins' { nickname, playerId, delta, reason, balance } (코인 증감이 저장된 뒤)
@@ -27,14 +30,14 @@ const { normalizeNickname, uniqueNickname } = require('./nickname');
 const { SPEED, FEET_W, FEET_H, applyMove, maxBudget, canStand } = require('./movement');
 const { sanitizeChat, createRateLimiter, MAX_LEN: CHAT_MAX } = require('./chat');
 const { Pomodoro } = require('./pomodoro');
-const { DogNpc } = require('./npc');
+const { DogNpc, SharedPetNpc, FishNpc, FollowerNpc, SPECIES: PET_SPECIES } = require('./npc');
 const { StudyTracker } = require('./study');
 const { createMemoryStore } = require('../store/memory');
 const { DEFAULT_TZ, dateKey, isValidTz } = require('../store/stats');
 const { FACING_DELTA, interactableById } = require('../rooms/build');
 const { normalizeAvatar } = require('./avatar');
 const { settleStudy, focusBonusFor } = require('./coins');
-const { createShop, pickVariant } = require('./shop');
+const { createShop, pickVariant, PET_SLOTS } = require('./shop');
 const { validatePlacement, buildCollision, seatOf, cellsOf } = require('./layout');
 
 const GRACE_MS = 30 * 1000; // 연결 끊김 후 플레이어를 유지하는 시간
@@ -52,6 +55,8 @@ const TODO_MAX = 60;
 const LOCK_MS = 30 * 1000; // 편집 잠금: 잡은 뒤 이만큼 손대지 않으면 풀린다
 const DESK_SLOTS = 3;
 const RESTING_SEATS = new Set(['bed', 'massage']); // 앉으면 자동 휴식 (공부로 못 바꿈)
+const MAX_SHARED_PETS = 3;
+const PET_NAME_MAX = 8;
 
 function seatCenter(room, seat) {
   return { x: (seat.x + 0.5) * room.tileSize, y: (seat.y + 1) * room.tileSize };
@@ -87,13 +92,33 @@ class World extends EventEmitter {
     this.locks = new Map(); // layoutId → { by: playerId, at } (편집 잠금)
 
     // 강아지 NPC: 접속 중인 플레이어 위치를 보고 행동한다. npc.autoStart === false 면 테스트가 직접 tick() 한다.
-    this.dog = new DogNpc(this.room, { ...npc, now });
-    this.dog.players = () => [...this.players.values()].filter((p) => p.connected);
-    this.dog.on('update', (snap) => this.emit('npcUpdate', snap));
-    this.dog.on('pet', ({ by, id }) => this.emit('npcPet', { npc: this.dog.id, by, playerId: id, name: this.dog.name }));
-    this.dog.on('name', (name) => this.emit('npcName', { npc: this.dog.id, name }));
-    this.npcs = [this.dog];
-    if (npc.autoStart !== false) this.dog.start();
+    this.npcOpts = { ...npc, now };
+    this.npcs = [];
+    this.roomPets = new Map(); // roomPetId → { row, npc } (10단계 공용 펫)
+    this.dogRow = null; // 강아지 꾸미기/스킬 설정 행 (room_pets item_id 'dog')
+    this.dog = new DogNpc(this.room, this.npcOpts);
+    this.addNpc(this.dog);
+  }
+
+  // ── NPC 공통 배선 (10단계) ──────────────────────────────────────────
+  addNpc(n) {
+    n.players = () => [...this.players.values()].filter((p) => p.connected);
+    n.on('update', (snap) => this.emit('npcUpdate', snap));
+    n.on('pet', ({ by, id, reaction, highFive }) => this.emit('npcPet', { npc: n.id, by, playerId: id, name: n.name, reaction, highFive }));
+    n.on('name', (name) => this.emit('npcName', { npc: n.id, name }));
+    this.npcs.push(n);
+    if (this.npcOpts.autoStart !== false) n.start();
+    this.emit('npcUpdate', n.snapshot());
+    return n;
+  }
+
+  removeNpc(id) {
+    const i = this.npcs.findIndex((n) => n.id === id);
+    if (i < 0) return null;
+    const [n] = this.npcs.splice(i, 1);
+    n.dispose();
+    this.emit('npcRemoved', { id });
+    return n;
   }
 
   /** 저장소에서 초기 상태 로드 (강아지 이름, 저장된 합계). 서버 시작 시 한 번 */
@@ -103,6 +128,7 @@ class World extends EventEmitter {
       if (name) this.dog.setName(name);
       await this.study.refreshTotals();
       await this.loadLayout();
+      await this.loadPets();
     } catch (err) {
       this.log.warn(`[world] 저장소 초기 로드 실패: ${err.message}`);
     }
@@ -260,6 +286,7 @@ class World extends EventEmitter {
     const pomo = this.pomodoros.get(id);
     if (pomo) { pomo.dispose(); this.pomodoros.delete(id); }
     this.releaseLocks(player);
+    this.removeNpc(`p:${player.id}`); // 개인 펫은 주인과 함께 사라진다
     player.removed = true;
     this.study.sync(player); // 앉은 채 나가면 세션 저장
     this.emit('playerLeft', player, reason);
@@ -508,8 +535,15 @@ class World extends EventEmitter {
     ]);
     const placed = new Set([...this.layout.values()].map((e) => e.inventoryId));
     const equipped = new Map((player.deskItems || []).map((d, i) => [d && d.inventoryId, i]).filter(([k]) => k !== null && k !== undefined));
-    const inv = inventory.map((i) => ({ ...i, placed: placed.has(i.id), slot: equipped.has(i.id) ? equipped.get(i.id) : null }));
-    return { ok: true, coins, carrySeconds, ledger, inventory: inv, tabs: this.shop.tabs, categories: this.shop.categories, items: this.shop.items, layoutLock: Boolean(player.layoutLock) };
+    const released = new Map([...this.roomPets.values()].map(({ row }) => [row.inventoryId, row.id]));
+    const cfg = this.petConfigOf(player);
+    const decoUsed = new Map(); // 꾸미기 inventoryId → 어디에 달렸는지
+    const mark = (cos, where) => { for (const slot of PET_SLOTS) if (cos && cos[slot] && cos[slot].inventoryId) decoUsed.set(cos[slot].inventoryId, where); };
+    mark(this.dog.cosmetics, 'dog');
+    for (const { row, npc } of this.roomPets.values()) mark(npc.cosmetics, `s:${row.id}`);
+    for (const [pid, pc] of Object.entries(cfg.pets)) mark(pc.cosmetics, `pet:${pid}`);
+    const inv = inventory.map((i) => ({ ...i, placed: placed.has(i.id), slot: equipped.has(i.id) ? equipped.get(i.id) : null, active: cfg.active === i.id, released: released.get(i.id) ?? null, equippedOn: decoUsed.get(i.id) || null }));
+    return { ok: true, coins, carrySeconds, ledger, inventory: inv, tabs: this.shop.tabs, categories: this.shop.categories, items: this.shop.items, layoutLock: Boolean(player.layoutLock), pets: this.petSummary(player) };
   }
 
   // ── 가구: 책상 소품 · 공용 가구 배치 · 편집 잠금 (9단계) ────────────────
@@ -519,6 +553,8 @@ class World extends EventEmitter {
     player.layoutLock = Boolean(u && u.layoutLock);
     const ids = (u && Array.isArray(u.deskItems) ? u.deskItems : []).slice(0, DESK_SLOTS);
     player.deskItems = await this.resolveDesk(player.nickname, ids);
+    player.petConfig = (u && u.petConfig) || null; // 10단계
+    await this.syncFollower(player);
   }
 
   /** inventory id 배열 → [{ inventoryId, itemId, variant } | null] (없어졌거나 책상 소품이 아니면 null) */
@@ -723,14 +759,21 @@ class World extends EventEmitter {
    * 구매: 카탈로그 확인 → 잔액 확인·차감(저장소가 원자적으로) → 원장 기록 → 인벤토리 저장.
    * @returns {{ ok: true, balance, item, inventory } | { ok: false, error: 'no_item' | 'insufficient', balance? }}
    */
-  async purchase(player, itemId, variant) {
+  async purchase(player, itemId, variant, target) {
     const item = this.shop.get(itemId);
     if (!item) return { ok: false, error: 'no_item' };
     const v = pickVariant(item, variant);
     if (!v.ok) return { ok: false, error: v.error };
+    let skill = null;
+    if (item.category === 'petSkill') {
+      if (target === undefined || target === null || target === '') return { ok: false, error: 'no_target' };
+      skill = await this.skillTarget(player, item, target);
+      if (!skill.ok) return skill;
+    }
     const r = await this.store.adjustCoins(player.nickname, -item.price, `purchase:${item.id}`, this.now());
     if (!r.ok) return { ok: false, error: r.error, balance: r.balance };
-    const inv = await this.store.addInventory(player.nickname, item.id, { name: item.name, price: item.price, tab: item.tab, category: item.category, variant: v.variant, ...item.meta }, this.now());
+    const inv = await this.store.addInventory(player.nickname, item.id, { name: item.name, price: item.price, tab: item.tab, category: item.category, variant: v.variant, ...(skill ? { target: String(target) } : {}), ...item.meta }, this.now());
+    if (skill) await skill.apply();
     this.emit('coins', { nickname: player.nickname, playerId: player.id, delta: -item.price, reason: `purchase:${item.id}`, balance: r.balance });
     return { ok: true, balance: r.balance, item, inventory: inv };
   }
@@ -823,6 +866,259 @@ class World extends EventEmitter {
     return res;
   }
 
+  // ── 펫 (10단계) ──────────────────────────────────────────────────
+  /** 서버 시작: 공용 펫과 강아지 설정 행 로드 */
+  async loadPets() {
+    const rows = await this.store.roomPets(this.roomId);
+    for (const row of rows) {
+      if (row.itemId === 'dog') {
+        this.dogRow = row;
+        this.dog.setCosmetics(row.cosmetics);
+        for (const sk of row.skills || []) this.dog.addSkill(sk);
+      } else if (this.shop.get(row.itemId)) this.spawnSharedPet(row);
+    }
+  }
+
+  spawnSharedPet(row) {
+    const item = this.shop.get(row.itemId);
+    const species = item.species;
+    const info = PET_SPECIES[species] || {};
+    const id = `s:${row.id}`;
+    const base = { id, species, name: row.name, cosmetics: row.cosmetics, skills: row.skills || [], now: this.now, random: this.npcOpts.random, tickMs: this.npcOpts.tickMs };
+    const npc = species === 'fish' ? new FishNpc(this.room, base) : new SharedPetNpc(this.room, { ...base, home: info.home, spots: info.spots || [], speeds: info.sharedSpeed });
+    npc.roomPetId = row.id;
+    npc.releasedBy = row.releasedBy;
+    this.roomPets.set(row.id, { row, npc });
+    this.addNpc(npc);
+    return npc;
+  }
+
+  sharedPetCount() {
+    return this.roomPets.size;
+  }
+
+  /** 개인 펫 설정 형태 보정 */
+  petConfigOf(player) {
+    const c = player.petConfig && typeof player.petConfig === 'object' ? player.petConfig : {};
+    return { active: c.active ?? null, pets: c.pets && typeof c.pets === 'object' ? c.pets : {} };
+  }
+
+  /** 꾸미기 슬롯 { head, neck, back }: 값은 내 인벤토리의 petDeco inventoryId | null → { inventoryId, itemId, variant } | null */
+  async resolveCosmetics(nickname, slots) {
+    const out = { head: null, neck: null, back: null };
+    if (!slots || typeof slots !== 'object') return { ok: true, cosmetics: out };
+    const ids = PET_SLOTS.map((k) => slots[k]).filter((v) => v !== null && v !== undefined);
+    const inv = ids.length ? await this.store.listInventory(nickname) : [];
+    for (const slot of PET_SLOTS) {
+      const id = slots[slot];
+      if (id === null || id === undefined) continue;
+      const row = inv.find((r) => r.id === Number(id));
+      const item = row && this.shop.get(row.itemId);
+      if (!item || item.category !== 'petDeco') return { ok: false, error: 'no_item' };
+      if (item.slot !== slot) return { ok: false, error: 'wrong_slot' };
+      out[slot] = { inventoryId: row.id, itemId: item.id, variant: row.meta.variant || null };
+    }
+    return { ok: true, cosmetics: out };
+  }
+
+  followerOf(player) {
+    return this.npcs.find((n) => n.id === `p:${player.id}`) || null;
+  }
+
+  /** 활성 개인 펫에 맞춰 FollowerNpc 를 만들거나 지운다 (입장·설정 변경 때) */
+  async syncFollower(player) {
+    const cfg = this.petConfigOf(player);
+    const cur = this.followerOf(player);
+    let row = null;
+    if (cfg.active !== null) {
+      row = await this.store.getInventoryItem(player.nickname, cfg.active);
+      const item = row && this.shop.get(row.itemId);
+      if (!item || item.category !== 'pet') row = null;
+    }
+    if (!row) {
+      if (cur) this.removeNpc(cur.id);
+      return null;
+    }
+    const item = this.shop.get(row.itemId);
+    const pc = cfg.pets[row.id] || {};
+    if (cur && cur.inventoryId === row.id) {
+      // 같은 펫: 이름·꾸미기·스킬만 갱신
+      if (pc.name && pc.name !== cur.name) { cur.name = pc.name; cur.dirty = true; }
+      cur.setCosmetics(pc.cosmetics || {});
+      for (const sk of pc.skills || []) cur.addSkill(sk);
+      return cur;
+    }
+    if (cur) this.removeNpc(cur.id);
+    const npc = new FollowerNpc(this.room, player, { id: `p:${player.id}`, species: item.species, name: pc.name || item.name, cosmetics: pc.cosmetics || {}, skills: pc.skills || [], now: this.now, random: this.npcOpts.random, tickMs: this.npcOpts.tickMs });
+    npc.inventoryId = row.id;
+    this.addNpc(npc);
+    return npc;
+  }
+
+  /**
+   * 내 펫 설정: { active?: inventoryId|null, petId?: inventoryId, name?, cosmetics?: { head, neck, back } }
+   * petId(기본: active) 의 이름·꾸미기를 바꾼다. active 를 바꾸면 따라다니는 펫이 바뀐다.
+   * @returns {{ ok: true, petConfig, pet } | { ok: false, error: 'no_item' | 'not_pet' | 'invalid_name' | 'wrong_slot' }}
+   */
+  async setPetConfig(player, { active, petId, name, cosmetics } = {}) {
+    const cfg = this.petConfigOf(player);
+    if (active !== undefined) {
+      if (active === null) cfg.active = null;
+      else {
+        const row = await this.store.getInventoryItem(player.nickname, active);
+        const item = row && this.shop.get(row.itemId);
+        if (!row) return { ok: false, error: 'no_item' };
+        if (item.category !== 'pet') return { ok: false, error: 'not_pet' };
+        cfg.active = row.id;
+      }
+    }
+    const target = petId !== undefined && petId !== null ? Number(petId) : cfg.active;
+    if (target !== null && (name !== undefined || cosmetics !== undefined)) {
+      const row = await this.store.getInventoryItem(player.nickname, target);
+      const item = row && this.shop.get(row.itemId);
+      if (!item || item.category !== 'pet') return { ok: false, error: 'no_item' };
+      const pc = cfg.pets[row.id] || { name: item.name, cosmetics: {}, skills: [] };
+      if (name !== undefined) {
+        const n = normalizeNickname(name);
+        if (!n.ok || [...n.name].length > PET_NAME_MAX) return { ok: false, error: 'invalid_name' };
+        pc.name = n.name;
+      }
+      if (cosmetics !== undefined) {
+        const r = await this.resolveCosmetics(player.nickname, cosmetics);
+        if (!r.ok) return r;
+        pc.cosmetics = r.cosmetics;
+      }
+      cfg.pets[row.id] = pc;
+    }
+    player.petConfig = cfg;
+    await this.store.upsertUser(player.nickname, { petConfig: cfg });
+    const npc = await this.syncFollower(player);
+    return { ok: true, petConfig: cfg, pet: npc ? npc.snapshot() : null };
+  }
+
+  npcOwnerCheck(player, npc) {
+    if (npc.id === 'dog') return true; // 강아지는 누구나
+    if (npc.roomPetId !== undefined) return npc.releasedBy === player.nickname;
+    if (npc.ownerId !== undefined && npc.ownerId !== null) return npc.ownerId === player.id;
+    return false;
+  }
+
+  /** NPC 이름 변경: 강아지(누구나, users.dog_name) · 공용 펫(푼 사람) · 개인 펫(주인) */
+  async setNpcName(player, npcId, raw) {
+    const npc = this.npcById(npcId);
+    if (!npc) return { ok: false, error: 'no_npc' };
+    if (npc.id === 'dog') return this.setDogName(player, raw);
+    if (!this.npcOwnerCheck(player, npc)) return { ok: false, error: 'forbidden' };
+    const res = npc.setName(raw);
+    if (!res.ok) return res;
+    if (npc.roomPetId !== undefined) await this.store.updateRoomPet(this.roomId, npc.roomPetId, { name: res.name });
+    else {
+      const cfg = this.petConfigOf(player);
+      cfg.pets[npc.inventoryId] = { ...(cfg.pets[npc.inventoryId] || { cosmetics: {}, skills: [] }), name: res.name };
+      player.petConfig = cfg;
+      await this.store.upsertUser(player.nickname, { petConfig: cfg });
+    }
+    return res;
+  }
+
+  /** 강아지 설정 행 (없으면 만든다) */
+  async ensureDogRow() {
+    if (!this.dogRow) this.dogRow = await this.store.addRoomPet(this.roomId, { itemId: 'dog', name: this.dog.name, releasedBy: null }, this.now());
+    return this.dogRow;
+  }
+
+  /** 꾸미기 장착: 강아지(누구나) · 공용 펫(푼 사람) · 개인 펫(주인). slots 값은 내 인벤토리 inventoryId */
+  async setPetDeco(player, npcId, slots) {
+    const npc = this.npcById(npcId);
+    if (!npc) return { ok: false, error: 'no_npc' };
+    if (!this.npcOwnerCheck(player, npc)) return { ok: false, error: 'forbidden' };
+    if (npc.ownerId) return this.setPetConfig(player, { petId: npc.inventoryId, cosmetics: slots });
+    const r = await this.resolveCosmetics(player.nickname, slots);
+    if (!r.ok) return r;
+    npc.setCosmetics(r.cosmetics);
+    if (npc.id === 'dog') {
+      await this.ensureDogRow();
+      this.dogRow = (await this.store.updateRoomPet(this.roomId, this.dogRow.id, { cosmetics: r.cosmetics })) || this.dogRow;
+    } else {
+      const rp = this.roomPets.get(npc.roomPetId);
+      if (rp) rp.row = (await this.store.updateRoomPet(this.roomId, npc.roomPetId, { cosmetics: r.cosmetics })) || rp.row;
+    }
+    return { ok: true, cosmetics: npc.publicCosmetics() };
+  }
+
+  /** 공용 펫 방에 풀기 (지갑에서). @returns {{ ok, pet } | { ok:false, error: no_item | not_shared_pet | already_released | room_full | invalid_name }} */
+  async releasePet(player, { inventoryId, name } = {}) {
+    const row = await this.store.getInventoryItem(player.nickname, inventoryId);
+    const item = row && this.shop.get(row.itemId);
+    if (!row) return { ok: false, error: 'no_item' };
+    if (item.category !== 'sharedPet') return { ok: false, error: 'not_shared_pet' };
+    if ([...this.roomPets.values()].some((p) => p.row.inventoryId === row.id)) return { ok: false, error: 'already_released' };
+    if (this.sharedPetCount() >= MAX_SHARED_PETS) return { ok: false, error: 'room_full' };
+    let petName = item.name.replace(/\s*\(.*\)$/, '');
+    if (name !== undefined && name !== null && name !== '') {
+      const n = normalizeNickname(name);
+      if (!n.ok || [...n.name].length > PET_NAME_MAX) return { ok: false, error: 'invalid_name' };
+      petName = n.name;
+    }
+    const saved = await this.store.addRoomPet(this.roomId, { itemId: item.id, inventoryId: row.id, name: petName, releasedBy: player.nickname }, this.now());
+    const npc = this.spawnSharedPet(saved);
+    return { ok: true, pet: npc.snapshot(), roomPetId: saved.id };
+  }
+
+  /** 공용 펫 회수 (푼 사람만) */
+  async recallPet(player, id) {
+    const rp = this.roomPets.get(Number(id));
+    if (!rp) return { ok: false, error: 'not_found' };
+    if (rp.row.releasedBy !== player.nickname) return { ok: false, error: 'forbidden' };
+    await this.store.removeRoomPet(this.roomId, rp.row.id);
+    this.roomPets.delete(rp.row.id);
+    this.removeNpc(rp.npc.id);
+    return { ok: true, id: rp.row.id };
+  }
+
+  /** 스킬 구매 대상 검증: 'dog' | 's:<roomPetId>' | inventoryId(내 개인 펫). @returns {{ ok, apply(): Promise }} */
+  async skillTarget(player, item, target) {
+    if (target === 'dog') {
+      if (this.dog.skills.has(item.skill)) return { ok: false, error: 'already_has' };
+      return { ok: true, apply: async () => { await this.ensureDogRow(); const skills = [...new Set([...(this.dogRow.skills || []), item.skill])]; this.dogRow = (await this.store.updateRoomPet(this.roomId, this.dogRow.id, { skills })) || this.dogRow; this.dog.addSkill(item.skill); } };
+    }
+    if (typeof target === 'string' && target.startsWith('s:')) {
+      const rp = this.roomPets.get(Number(target.slice(2)));
+      if (!rp) return { ok: false, error: 'no_target' };
+      if (rp.npc.skills.has(item.skill)) return { ok: false, error: 'already_has' };
+      return { ok: true, apply: async () => { const skills = [...new Set([...(rp.row.skills || []), item.skill])]; rp.row = (await this.store.updateRoomPet(this.roomId, rp.row.id, { skills })) || rp.row; rp.npc.addSkill(item.skill); } };
+    }
+    const row = await this.store.getInventoryItem(player.nickname, target);
+    const pi = row && this.shop.get(row.itemId);
+    if (!pi || pi.category !== 'pet') return { ok: false, error: 'no_target' };
+    const cfg = this.petConfigOf(player);
+    const pc = cfg.pets[row.id] || { name: pi.name, cosmetics: {}, skills: [] };
+    if ((pc.skills || []).includes(item.skill)) return { ok: false, error: 'already_has' };
+    return { ok: true, apply: async () => { pc.skills = [...new Set([...(pc.skills || []), item.skill])]; cfg.pets[row.id] = pc; player.petConfig = cfg; await this.store.upsertUser(player.nickname, { petConfig: cfg }); await this.syncFollower(player); } };
+  }
+
+  /** 채팅에 펫 이름이 들어 있으면 'come' 스킬이 있는 펫이 달려온다 (개인 펫은 주인이 부를 때만) */
+  onChat(player, text) {
+    const called = [];
+    for (const n of this.npcs) {
+      if (!n.skills.has('come') || !n.name || !text.includes(n.name)) continue;
+      if (n.ownerId && n.ownerId !== player.id) continue;
+      if (n.comeTo(player)) called.push(n.id);
+    }
+    return called;
+  }
+
+  /** 지갑용 펫 정보: 강아지 · 공용 펫 목록 · 내 설정 */
+  petSummary(player) {
+    const npcInfo = (n, extra = {}) => ({ id: n.id, species: n.species, name: n.name, cosmetics: n.cosmetics, skills: [...n.skills], ...extra });
+    return {
+      dog: npcInfo(this.dog),
+      shared: [...this.roomPets.values()].map(({ row, npc }) => npcInfo(npc, { roomPetId: row.id, itemId: row.itemId, releasedBy: row.releasedBy, mine: row.releasedBy === player.nickname })),
+      config: this.petConfigOf(player),
+      maxShared: MAX_SHARED_PETS,
+    };
+  }
+
   /** 플레이어 위치가 유효한지 (테스트/디버그용) */
   canStand(x, y) {
     return canStand(this.room, x, y);
@@ -840,4 +1136,4 @@ class World extends EventEmitter {
   }
 }
 
-module.exports = { World, GRACE_MS, SIT_RANGE_PX, EMOJIS, STATUSES, MANUAL_STATUSES, LISTENING_MAX, GOAL_TEXT_MAX, GOAL_MIN, GOAL_MAX, GOAL_STEP, TODO_MAX, LOCK_MS, DESK_SLOTS, RESTING_SEATS, seatCenter };
+module.exports = { World, GRACE_MS, SIT_RANGE_PX, EMOJIS, STATUSES, MANUAL_STATUSES, LISTENING_MAX, GOAL_TEXT_MAX, GOAL_MIN, GOAL_MAX, GOAL_STEP, TODO_MAX, LOCK_MS, DESK_SLOTS, RESTING_SEATS, MAX_SHARED_PETS, PET_NAME_MAX, seatCenter };

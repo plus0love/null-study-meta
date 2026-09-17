@@ -29,8 +29,14 @@
  *                                              모두에게 playerGoal { id, goal: null } + leaderboard:refresh
  *   time:ping { t0 }                         → ack { t0, serverTime }
  *   leave                                    → 즉시 정리 (유예 없음)
- *   npc:pet   { id }                         → ack { ok, error? }, 모두에게 npc:pet { id, by, nickname } + 시스템 chat
- *   npc:name  { id, name }                   → ack { ok, name?, error? }, 모두에게 npc:name { id, name } (users.dog_name 에 저장)
+ *   npc:pet   { id }                         → ack { ok, reaction, highFive, error? }, 모두에게 npc:pet { id, by, playerId, reaction, highFive } + 시스템 chat
+ *   npc:name  { id, name }                   → ack { ok, name?, error? }, 모두에게 npc:name { id, name } (강아지: 누구나·users.dog_name / 공용 펫: 푼 사람 / 개인 펫: 주인)
+ *   ── 10단계 펫 ──
+ *   shop:buy { itemId:'skill_*', target }    → 행동 업그레이드는 target('dog' | 's:<roomPetId>' | 내 개인 펫 inventoryId) 필수, 펫별 1회 (already_has)
+ *   pet:config { active?, petId?, name?, cosmetics? } → ack { ok, petConfig, pet } — 활성 펫 바꾸면 따라다니는 펫이 생기고/사라진다 (npc:update / npc:remove)
+ *   pet:release { inventoryId, name? }       → ack { ok, pet, roomPetId } | error not_shared_pet | already_released | room_full(3마리) | invalid_name
+ *   pet:recall { id }                        → ack { ok } | forbidden(푼 사람만).  pet:deco { id(npc), slots: { head, neck, back } } → ack { ok, cosmetics }
+ *   서버 → npc:update 스냅샷에 species · cosmetics · ownerId(개인 펫) · shoulder(앵무새) · bounce(슬라임). npc:remove { id } (펫 회수·주인 퇴장)
  *   stats                                    → ack { ok, store, tz, date, rows: [{ nickname, todaySeconds, weekSeconds, streak, weekDays, live, online }] }
  *   goal:set  { text, targetMinutes }        → ack { ok, goal, reached } , 모두에게 playerGoal { id, goal }
  *   todo:list / todo:add { text } / todo:toggle { id, done } / todo:delete { id } → ack (본인 닉네임의 할 일, 이월 carried 포함)
@@ -70,10 +76,11 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, gate = createGa
     if (delta > 0) io.emit('leaderboard:refresh', { nickname: p ? p.nickname : null, seconds: 0 });
   });
   world.on('npcUpdate', (snap) => io.emit('npc:update', snap));
-  world.on('npcPet', ({ npc, by, playerId, name }) => {
-    io.emit('npc:pet', { id: npc, by, playerId });
-    io.emit('chat', { system: true, text: `${by}님이 강아지를 쓰다듬었어요`, ts: world.now() });
+  world.on('npcPet', ({ npc, by, playerId, name, reaction, highFive }) => {
+    io.emit('npc:pet', { id: npc, by, playerId, reaction, highFive });
+    io.emit('chat', { system: true, text: `${by}님이 ${name}을(를) 쓰다듬었어요${highFive ? ' 🖐' : ''}`, ts: world.now() });
   });
+  world.on('npcRemoved', ({ id }) => io.emit('npc:remove', { id }));
   world.on('npcName', ({ npc, name }) => io.emit('npc:name', { id: npc, name }));
   world.on('sessionSaved', ({ nickname, seconds }) => io.emit('leaderboard:refresh', { nickname, seconds }));
   world.on('layout', (e) => io.emit('layout:update', e));
@@ -194,6 +201,7 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, gate = createGa
       if (!res.ok) return ack({ ok: false, error: res.error });
       ack({ ok: true });
       io.emit('chat', { id: player.id, nickname: player.nickname, text: res.text, ts: res.ts });
+      world.onChat(player, String((payload && payload.text) || '')); // 10단계: 이름을 부르면 달려오는 펫
     }));
 
     socket.on('emoji', requirePlayer((payload, ack) => {
@@ -212,11 +220,6 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, gate = createGa
       ack(npc.pet(player));
     }));
 
-    socket.on('npc:name', requirePlayer((payload, ack) => {
-      const npc = world.npcById(payload && payload.id);
-      if (!npc) return ack({ ok: false, error: 'no_npc' });
-      ack(world.setDogName(player, payload && payload.name));
-    }));
 
     // ── 공부 기록: 랭킹 · 오늘 목표 · 할 일 (영구 저장소) ────────────────
     const safe = (fn) => async (payload, ack) => {
@@ -228,6 +231,12 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, gate = createGa
       }
     };
     socket.on('stats', requirePlayer(safe(() => world.stats())));
+    socket.on('npc:name', requirePlayer(safe((payload) => world.setNpcName(player, payload && payload.id, payload && payload.name))));
+    // ── 펫 (10단계) ─────────────────────────────────────────────────
+    socket.on('pet:config', requirePlayer(safe((payload) => world.setPetConfig(player, payload || {}))));
+    socket.on('pet:release', requirePlayer(safe((payload) => world.releasePet(player, payload || {}))));
+    socket.on('pet:recall', requirePlayer(safe((payload) => world.recallPet(player, payload && payload.id))));
+    socket.on('pet:deco', requirePlayer(safe((payload) => world.setPetDeco(player, payload && payload.id, payload && payload.slots))));
     socket.on('goal:set', requirePlayer(safe(async (payload) => {
       const res = await world.setGoal(player, payload || {});
       if (res.ok) io.emit('playerGoal', { id: player.id, goal: res.goal });
@@ -235,7 +244,7 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, gate = createGa
     })));
     socket.on('todo:list', requirePlayer(safe(async () => ({ ok: true, todos: await world.listTodos(player) }))));
     socket.on('wallet', requirePlayer(safe(() => world.wallet(player))));
-    socket.on('shop:buy', requirePlayer(safe((payload) => world.purchase(player, payload && payload.itemId, payload && payload.variant))));
+    socket.on('shop:buy', requirePlayer(safe((payload) => world.purchase(player, payload && payload.itemId, payload && payload.variant, payload && payload.target))));
     // ── 가구 (9단계) ────────────────────────────────────────────────
     socket.on('desk:equip', requirePlayer(safe((payload) => world.equipDesk(player, payload && payload.slots))));
     socket.on('edit:mode', requirePlayer((payload, ack) => ack(world.setEditing(player, payload && payload.on))));

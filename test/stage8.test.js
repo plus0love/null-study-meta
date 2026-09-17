@@ -97,11 +97,11 @@ test('Pomodoro: 자동 전환 때 phaseEnd(끝난 단계), 정지 때는 없음'
   p.dispose();
 });
 
-test('shop: 탭 4개 고정, 기본 카탈로그는 9단계 가구 23종(가구 탭만), 잘못된 아이템은 걸러짐', () => {
+test('shop: 탭 4개 고정, 기본 카탈로그는 가구 23종 + 펫/꾸미기/행동, 잘못된 아이템은 걸러짐', () => {
   assert.deepEqual(TABS.map((t) => t.id), ['furniture', 'pet', 'petDeco', 'mount']);
   const def = createShop();
-  assert.equal(def.items.length, 23);
-  assert.ok(def.items.every((i) => i.tab === 'furniture'), '펫·탈것 탭은 아직 준비 중');
+  assert.equal(def.items.filter((i) => i.tab === 'furniture').length, 23);
+  assert.ok(def.items.every((i) => i.tab !== 'mount'), '탈것 탭은 아직 준비 중');
   assert.equal(def.get('chair_basic'), null);
   const shop = createShop([...ITEMS, { id: 'bad', tab: 'nope', name: 'x', price: 1 }, { id: 'neg', tab: 'pet', name: 'x', price: -1 }, { id: 'frac', tab: 'pet', name: 'x', price: 1.5 }]);
   assert.deepEqual(shop.items.map((i) => i.id), ['chair_basic', 'free_sticker']);

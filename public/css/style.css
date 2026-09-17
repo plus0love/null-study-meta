@@ -742,3 +742,17 @@ input::placeholder { color: var(--cream-faint); }
 .edit-placed li.empty { justify-content: center; color: var(--cream-faint); background: transparent; }
 .edit-placed .furn-icon { width: 24px; height: 24px; cursor: default; }
 #btn-edit.active { background: var(--amber-dim); border-color: var(--line-strong); }
+
+/* ── 10단계: 펫 설정 · 펫 카드 ─────────────────────────────────────── */
+.pet-deco { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.deco-slot { display: flex; align-items: center; gap: 6px; }
+.deco-slot .slot-icon { width: 24px; height: 24px; cursor: default; }
+.deco-slot select, #mypet-active { flex: 1; min-width: 0; font: 12px var(--font); color: var(--cream); background: var(--panel-2); border: 1px solid var(--line); border-radius: 7px; padding: 4px 6px; }
+#mypet-active { width: 100%; }
+#mypet-hint { margin: 4px 0 0; }
+.shared-pets li { gap: 6px; padding: 4px 6px; font-size: 12px; flex-wrap: wrap; }
+.shared-pets li input { flex: 1; min-width: 60px; font: 12px var(--font); padding: 3px 6px; }
+.shared-pets li .pet-deco { width: 100%; margin-top: 2px; }
+.shared-pets li.empty { justify-content: center; color: var(--cream-faint); background: transparent; }
+.shared-pets .furn-icon { width: 28px; height: 28px; cursor: default; }
+.wallet-item .skill-target { width: 100%; font: 11px var(--font); color: var(--cream); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 3px 4px; }

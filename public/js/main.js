@@ -21,11 +21,14 @@
   let avatarKit;
   let catalog; // 9단계: 상점 카탈로그 (가구 스프라이트 메타)
   let furn; // 9단계: 가구 아틀라스 (DOM 아이콘용) { img, frames }
+  let pets; // 10단계: 펫 시트 메타 + 이미지 { meta, img }
+  let petdeco; // 10단계: 꾸미기 아틀라스 { img, frames, slots }
   let config = { passwordRequired: false };
   try {
     room = await fetch('/api/rooms/studyroom').then((r) => r.json());
     const v = room.assetVersion ? `?v=${room.assetVersion}` : '';
-    [tiles, dog, avatarKit, config, catalog, furn] = await Promise.all([
+    const loadImg = (src) => new Promise((resolve) => { const img = new Image(); img.onload = () => resolve(img); img.onerror = () => resolve(null); img.src = src; });
+    [tiles, dog, avatarKit, config, catalog, furn, pets, petdeco] = await Promise.all([
       fetch('/assets/tiles.json').then((r) => r.json()),
       fetch('/assets/dog.json').then((r) => r.json()),
       AvatarKit.load(room.assetVersion),
@@ -37,6 +40,8 @@
         img.onerror = () => resolve({ img: null, frames: json.frames });
         img.src = `/assets/furniture.png${v}`;
       })).catch(() => ({ img: null, frames: {} })),
+      fetch(`/assets/pets.json${v}`).then((r) => r.json()).then(async (meta) => ({ meta, img: await loadImg(`/assets/pets.png${v}`) })),
+      fetch(`/assets/petdeco.json${v}`).then((r) => r.json()).then(async (json) => ({ img: await loadImg(`/assets/petdeco.png${v}`), frames: json.frames, slots: json.meta.slots })).catch(() => ({ img: null, frames: {}, slots: {} })),
     ]);
   } catch (err) {
     fail(`방 데이터를 불러오지 못했습니다: ${err.message}`);
@@ -52,7 +57,7 @@
   } catch (_) { /* 폰트 없이 진행 */ }
 
   const net = new Net();
-  const ui = new UI({ room, serverNow: () => net.serverNow(), avatarKit, catalog, furn });
+  const ui = new UI({ room, serverNow: () => net.serverNow(), avatarKit, catalog, furn, pets, petdeco });
   const sound = new FX.Sound();
 
   const game = new Phaser.Game({
@@ -69,7 +74,7 @@
   });
   // 부팅 중에는 add() 가 인스턴스를 돌려주지 않으므로 직접 만들어 넘긴다
   const scene = new RoomScene();
-  await new Promise((onReady) => game.scene.add('room', scene, true, { room, tiles, avatarKit, dog, catalog, onReady }));
+  await new Promise((onReady) => game.scene.add('room', scene, true, { room, tiles, avatarKit, dog, pets: pets.meta, catalog, onReady }));
   ui.hideLoading();
 
   // ── 씬 → 네트워크/UI ───────────────────────────────────────────
@@ -155,7 +160,13 @@
     startLogin({ error: '' });
   };
   ui.onRename = () => ui.onLeave();
-  ui.onNpcName = (name) => net.setNpcName('dog', name).then((r) => { if (!r.ok) ui.notify(r.error || '이름을 바꾸지 못했어요.'); }).catch(() => {});
+  ui.onNpcName = (name, id = 'dog') => net.setNpcName(id, name).then((r) => { if (!r.ok) ui.notify(r.error === 'forbidden' ? '이름은 푼 사람만 바꿀 수 있어요.' : r.error || '이름을 바꾸지 못했어요.'); else ui.refreshWallet(); return r; }).catch(() => ({ ok: false }));
+  // ── 펫 (10단계) ──
+  ui.onPetConfig = (cfg) => net.petConfig(cfg).then((r) => { if (!r.ok) ui.notify({ invalid_name: '펫 이름은 8자 이내 문자·숫자예요.', wrong_slot: '그 슬롯에 맞는 꾸미기가 아니에요.' }[r.error] || '펫 설정을 저장하지 못했어요.'); return r; }).catch(() => ({ ok: false }));
+  ui.onPetRelease = (inventoryId, name) => net.petRelease(inventoryId, name).then((r) => { if (!r.ok) ui.notify({ room_full: '방에는 공용 펫을 3마리까지만 풀 수 있어요.', already_released: '이미 방에 있어요.', invalid_name: '펫 이름은 8자 이내예요.' }[r.error] || '풀지 못했어요.'); else ui.toast(`${r.pet.name} 을(를) 방에 풀었어요 🐾`); return r; }).catch(() => ({ ok: false }));
+  ui.onPetRecall = (id) => net.petRecall(id).then((r) => { if (!r.ok) ui.notify(r.error === 'forbidden' ? '푼 사람만 회수할 수 있어요.' : '회수하지 못했어요.'); return r; }).catch(() => ({ ok: false }));
+  ui.onPetDeco = (id, slots) => net.petDeco(id, slots).then((r) => { if (!r.ok) ui.notify(r.error === 'forbidden' ? '푼 사람만 꾸밀 수 있어요.' : '장착하지 못했어요.'); return r; }).catch(() => ({ ok: false }));
+  net.on('npc:remove', (d) => { scene.removeNpc(d.id); ui.onNpcRemoved(d.id); });
   ui.onListening = (title) => net.setListening(title).catch(() => {});
 
   // ── 공부 기록: 할 일(서버 저장) · 오늘 목표 · 랭킹 (5초 폴링 + leaderboard:refresh) ──
@@ -216,7 +227,7 @@
 
   // ── 코인 / 지갑 (8단계): 판정은 서버, 여기서는 결과만 보여준다 ──────────
   ui.onWallet = () => net.wallet();
-  ui.onBuy = (itemId, variant) => net.buy(itemId, variant).catch(() => ({ ok: false }));
+  ui.onBuy = (itemId, variant, target) => net.buy(itemId, variant, target).catch(() => ({ ok: false }));
   net.on('coins', (d) => {
     scene.onCoins(d); // 머리 위 "+N 🪙" (남의 것도)
     if (!scene.me || d.id !== scene.me.id) return;
@@ -313,7 +324,7 @@
     scene.onChat(d);
     ui.addChat({ nickname: d.nickname, text: d.text, ts: d.ts, self: scene.me && d.id === scene.me.id });
   });
-  net.on('npc:update', (d) => scene.upsertNpc(d));
+  net.on('npc:update', (d) => { scene.upsertNpc(d); ui.onNpcUpdate(d); });
   net.on('npc:pet', (d) => scene.onNpcPet(d));
   net.on('npc:name', (d) => { scene.onNpcName(d); ui.setNpcName(d.id, d.name); });
   net.on('pomodoro', (snap) => {

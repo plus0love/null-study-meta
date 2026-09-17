@@ -6,6 +6,8 @@
  *    9단계 가구 탭: 카테고리(책상 소품/공용 가구) → 카드(아이콘·이름·가격·보유 수·색 선택·구매). 아이콘 클릭 → 미리보기(방 스프라이트 크게)
  *  - 가구 편집 바(9단계, 하단): 🛠 버튼으로 켠다. 팔레트(내 인벤토리의 공용 가구, 안 놓은 것) + 방에 놓인 가구 목록(회수). 씬의 편집 상태를 안내 줄에 보여준다
  *  - 설정 → 내 책상: 슬롯 3개(select) 에 책상 소품 장착 · "내가 놓은 가구는 나만 이동·회수" 설정
+ *  - 10단계 펫: 지갑 펫 탭(개인 펫/공용 펫/행동 업그레이드 카드, 공용 펫은 "방에 풀기"·회수, 행동은 대상 펫 선택) · 펫 꾸미기 탭(색 선택) · 미리보기(걷기 애니메이션)
+ *    설정 → 강아지 꾸미기 슬롯(누구나) · 내 펫(활성 펫·이름·꾸미기 슬롯) · 공용 펫 목록(내가 푼 것은 이름 변경·회수). 미니맵에 펫은 종별 색 점
  *  - 사이드바: 미니맵 · 오늘의 목표 · 오늘의 할 일(서버 저장, 이월 배지) · 뽀모도로(개인 타이머, 원형 게이지) · 랭킹(오늘/이번 주) · 유튜브 · 채팅
  *    카드마다 접기/펼치기(제목 줄만 남음, localStorage nsm.card.<id>)
  *  - 토스트: 출석 스트릭 ("N일 연속 출석 🔥") 등 짧은 안내
@@ -40,6 +42,9 @@
   const POMO = { focus: { min: 20, max: 90, def: 25 }, break: { min: 5, max: 20, def: 5 } };
   const LS_RECENT = 'nsm.music.recent';
   const MINIMAP_SCALE = 7; // 타일당 px (46x34 → 322x238)
+  const PET_COLORS = { dog: '#c48c52', hamster: '#d9a066', chick: '#f4d35e', turtle: '#6f8567', rabbit: '#efe6d6', cat: '#e0964f', maltese: '#ffffff', poodle_black: '#524b58', shiba: '#e0964f', parrot: '#5f9e5c', slime: '#7fd0b8', fish: '#f2a04a' };
+  const PET_SLOT_LABEL = { head: '머리', neck: '목', back: '등' };
+  const SKILL_ICON = { skill_come: '📣', skill_sleep: '💤', skill_high_five: '🖐' };
   const YT_API = 'https://www.youtube.com/iframe_api';
 
   function el(tag, attrs = {}, children = []) {
@@ -77,13 +82,18 @@
   }
 
   class UI {
-    constructor({ room, serverNow, avatarKit, catalog = { tabs: [], categories: [], items: [] }, furn = { img: null, frames: {} } }) {
+    constructor({ room, serverNow, avatarKit, catalog = { tabs: [], categories: [], items: [] }, furn = { img: null, frames: {} }, pets = { meta: null, img: null }, petdeco = { img: null, frames: {}, slots: {} } }) {
       this.room = room;
       this.serverNow = serverNow || (() => Date.now());
       this.avatarKit = avatarKit;
       this.catalog = catalog; // 9단계: 상점 카탈로그
       this.furn = furn; // 9단계: 가구 아틀라스 { img, frames } (DOM 아이콘)
       this.walletCat = 'desk';
+      this.pets = pets; // 10단계: { meta, img }
+      this.petdeco = petdeco; // { img, frames, slots }
+      this.npcs = new Map(); // id → 마지막 npc:update 스냅샷 (공용 펫 목록·이름)
+      this.skillTarget = {}; // 스킬 카드에서 고른 대상
+      this.previewTimer = null;
       this.variantPick = {}; // itemId → 고른 variant
       this.deskItems = [null, null, null];
       this.editMode = false;
@@ -127,6 +137,11 @@
       this.onDeskEquip = async () => ({ ok: false });
       this.onLayoutLock = () => {};
       this.getLayout = () => [];
+      // 10단계
+      this.onPetConfig = async () => ({ ok: false });
+      this.onPetRelease = async () => ({ ok: false });
+      this.onPetRecall = async () => ({ ok: false });
+      this.onPetDeco = async () => ({ ok: false });
 
       this.todos = [];
       this.coins = 0;
@@ -186,6 +201,21 @@
         if (name) this.onNpcName(name);
       });
       $('npc-name').addEventListener('keydown', (e) => e.stopPropagation());
+      // 10단계: 내 펫 — 활성 펫 · 이름
+      $('mypet-active').addEventListener('change', async () => {
+        const v = $('mypet-active').value;
+        const r = await this.onPetConfig({ active: v ? Number(v) : null });
+        if (r && r.ok) { this.toast(v ? '펫이 따라와요 🐾' : '펫을 집에 두고 왔어요'); await this.refreshWallet(); }
+      });
+      $('mypet-name-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const name = $('mypet-name').value.trim();
+        const petId = Number($('mypet-active').value);
+        if (!name || !petId) return;
+        const r = await this.onPetConfig({ petId, name });
+        if (r && r.ok) { this.toast('펫 이름을 바꿨어요'); await this.refreshWallet(); }
+      });
+      $('mypet-name').addEventListener('keydown', (e) => e.stopPropagation());
       // 아바타 빌더 (입장 모달 · 설정 모달 공용). 방 안에서 바꾸면 즉시 서버로 (200ms 디바운스)
       this.builder = new AvatarBuilder(this.avatarKit, $('avatar-builder'));
       $('login-avatar-slot').appendChild(this.builder.root);
@@ -685,8 +715,86 @@
       modal.addEventListener('click', (e) => { if (e.target === modal) this.closeWallet(); });
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !modal.hidden) this.closeWallet(); });
       const pv = $('item-preview');
-      $('preview-close').addEventListener('click', () => { pv.hidden = true; });
-      pv.addEventListener('click', (e) => { if (e.target === pv) pv.hidden = true; });
+      const closePv = () => { pv.hidden = true; this.stopPreviewAnim(); };
+      $('preview-close').addEventListener('click', closePv);
+      pv.addEventListener('click', (e) => { if (e.target === pv) closePv(); });
+    }
+
+    // ── 펫 아이콘/미리보기 (10단계) ─────────────────────────────────
+    /** 펫 시트의 프레임을 캔버스에 (row: down/left/…, f: 0|1). 캔버스 안에 정수 배율로 맞춘다 */
+    drawPetFrame(canvas, species, row = 'down', f = 0) {
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const m = this.pets && this.pets.meta;
+      if (!m || !this.pets.img) return false;
+      const sp = m.species[species] || m.species.dog;
+      const idx = m.rows[row] * m.framesPerRow + sp.index * m.framesPerSpecies + f;
+      const sx = (idx % m.framesPerRow) * m.frameWidth;
+      const sy = Math.floor(idx / m.framesPerRow) * m.frameHeight;
+      const k = Math.max(1, Math.floor(Math.min(canvas.width / m.frameWidth, canvas.height / m.frameHeight)));
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(this.pets.img, sx, sy, m.frameWidth, m.frameHeight, Math.floor((canvas.width - m.frameWidth * k) / 2), Math.floor((canvas.height - m.frameHeight * k) / 2), m.frameWidth * k, m.frameHeight * k);
+      return true;
+    }
+
+    petIconCanvas(species, size = 48) {
+      const c = el('canvas', { width: String(size), height: String(size), class: 'furn-icon' });
+      this.drawPetFrame(c, species);
+      return c;
+    }
+
+    decoFrameOf(key) {
+      const f = this.petdeco && this.petdeco.frames && this.petdeco.frames[key];
+      return f ? f.frame : null;
+    }
+
+    /** 꾸미기 아이템 → 아틀라스 키의 앞부분 ('deco_ribbon' + 'red' → 'ribbon/red') */
+    decoKey(item, variant) {
+      const base = item.id.replace(/^deco_/, '');
+      return variant ? `${base}/${variant}` : base;
+    }
+
+    drawDeco(canvas, key, view = 'front') {
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const f = this.decoFrameOf(`deco/${key}/${view}/f0`);
+      if (!f || !this.petdeco.img) return false;
+      const k = Math.max(1, Math.floor(Math.min(canvas.width / f.w, canvas.height / f.h)));
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(this.petdeco.img, f.x, f.y, f.w, f.h, Math.floor((canvas.width - f.w * k) / 2), Math.floor((canvas.height - f.h * k) / 2), f.w * k, f.h * k);
+      return true;
+    }
+
+    emojiCanvas(text, size = 48) {
+      const c = el('canvas', { width: String(size), height: String(size), class: 'furn-icon' });
+      const ctx = c.getContext('2d');
+      ctx.font = `${Math.round(size * 0.55)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, size / 2, size / 2 + 2);
+      return c;
+    }
+
+    /** 카탈로그 아이템 → 카드 아이콘 (가구/펫/꾸미기/행동) */
+    itemIcon(item, variant, size = 64) {
+      if (item.species) return this.petIconCanvas(item.species, size);
+      if (item.category === 'petDeco') { const c = el('canvas', { width: String(size), height: String(size), class: 'furn-icon' }); this.drawDeco(c, this.decoKey(item, variant)); return c; }
+      if (item.category === 'petSkill') return this.emojiCanvas(SKILL_ICON[item.id] || '🐾', size);
+      return this.iconCanvas(item.id, variant, size);
+    }
+
+    stopPreviewAnim() {
+      if (this.previewTimer) clearInterval(this.previewTimer);
+      this.previewTimer = null;
+    }
+
+    /** 펫 미리보기: 4방향 걷기 애니메이션 순환 */
+    startPetPreview(canvas, species) {
+      this.stopPreviewAnim();
+      const dirs = ['down', 'left', 'up', 'right'];
+      let i = 0;
+      this.drawPetFrame(canvas, species, 'down', 0);
+      this.previewTimer = setInterval(() => { i++; this.drawPetFrame(canvas, species, dirs[Math.floor(i / 6) % 4], i % 2); }, 220);
     }
 
     // ── 가구 아이콘/스프라이트 (DOM 캔버스) ──────────────────────────
@@ -740,8 +848,16 @@
         if (sp.layer === 'floor') bits.push('다른 가구 아래에 깔림');
       }
       bits.push(`🪙 ${item.price}`);
+      if (item.species) bits.splice(0, bits.length, item.category === 'pet' ? '개인 펫 · 따라다님' : '공용 펫 · 방에 풀기', `🪙 ${item.price}`);
+      if (item.category === 'petDeco') bits.splice(0, bits.length, `꾸미기 · ${PET_SLOT_LABEL[item.slot] || item.slot} 슬롯`, `🪙 ${item.price}`);
+      if (item.category === 'petSkill') bits.splice(0, bits.length, '행동 업그레이드 · 펫별 1회', `🪙 ${item.price}`);
       $('preview-meta').textContent = bits.join(' · ');
-      this.drawFrame($('preview-canvas'), this.spriteKey(item.id, variant) || this.iconKey(item.id, variant));
+      const cv = $('preview-canvas');
+      this.stopPreviewAnim();
+      if (item.species) this.startPetPreview(cv, item.species);
+      else if (item.category === 'petDeco') this.drawDeco(cv, this.decoKey(item, variant));
+      else if (item.category === 'petSkill') { const c = cv.getContext('2d'); c.clearRect(0, 0, cv.width, cv.height); c.font = '96px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(SKILL_ICON[item.id] || '🐾', cv.width / 2, cv.height / 2); }
+      else this.drawFrame(cv, this.spriteKey(item.id, variant) || this.iconKey(item.id, variant));
       $('item-preview').hidden = false;
     }
 
@@ -793,6 +909,7 @@
         this.renderWalletItems();
         this.renderLedger();
         this.renderDeskSlots();
+        this.renderPetSettings();
         $('opt-layout-lock').checked = Boolean(r.layoutLock);
         if (this.editMode) this.renderPalette();
       } catch (_) { /* 오프라인 */ }
@@ -837,7 +954,7 @@
         box.appendChild(el('span', { text: '준비 중이에요. 코인을 모아 두세요 🪙' }));
         return;
       }
-      const categories = this.catalogCategories();
+      const categories = this.catalogCategories().filter((c) => (c.tab || 'furniture') === this.walletTab);
       cats.hidden = false;
       if (!categories.some((c) => c.id === this.walletCat)) this.walletCat = categories[0] ? categories[0].id : 'desk';
       for (const c of categories) {
@@ -848,17 +965,43 @@
       const inv = (this.wallet && this.wallet.inventory) || [];
       const grid = el('div', { class: 'grid' });
       for (const it of items.filter((i) => (i.category || 'shared') === this.walletCat)) {
-        const count = inv.filter((i) => i.itemId === it.id).length;
+        const mine = inv.filter((i) => i.itemId === it.id);
+        const count = mine.length;
         const variant = this.variantPick[it.id] || (it.variants && it.variants[0] ? it.variants[0].id : null);
-        const icon = this.iconCanvas(it.id, variant, 64);
+        const icon = this.itemIcon(it, variant, 64);
         icon.title = '미리보기';
         icon.addEventListener('click', () => this.openPreview(it, this.variantPick[it.id] || variant));
+        const status = it.category === 'pet' ? (mine.some((i) => i.active) ? '따라다니는 중' : count ? `보유 ${count}` : '')
+          : it.category === 'sharedPet' ? (mine.some((i) => i.released) ? '방에 있음' : count ? `보유 ${count}` : '')
+          : it.category === 'petSkill' ? (count ? `${count}마리에게` : '')
+          : count ? `보유 ${count}` : '';
         const card = el('div', { class: `wallet-item ${count ? 'owned' : ''}`, 'data-item': it.id }, [
           icon,
           el('span', { class: 'name', text: it.name }),
           el('span', { class: 'price', text: `🪙 ${it.price}` }),
-          el('span', { class: 'count muted', text: count ? `보유 ${count}` : '' }),
+          el('span', { class: 'count muted', text: status }),
         ]);
+        if (it.category === 'petSkill') {
+          // 대상 펫 선택: 강아지 · 공용 펫 · 내 개인 펫
+          const sel = el('select', { class: 'skill-target', title: '어느 펫에게' });
+          const pets = (this.wallet && this.wallet.pets) || { dog: null, shared: [], config: { pets: {} } };
+          sel.appendChild(el('option', { value: 'dog', text: `강아지 (${pets.dog ? pets.dog.name : '사랑'})` }));
+          for (const sp of pets.shared || []) sel.appendChild(el('option', { value: `s:${sp.roomPetId}`, text: `${sp.name} (공용)` }));
+          for (const row of inv.filter((i) => (i.meta && i.meta.category) === 'pet')) {
+            const pc = (pets.config && pets.config.pets && pets.config.pets[row.id]) || {};
+            sel.appendChild(el('option', { value: String(row.id), text: `${pc.name || row.meta.name} (내 펫)` }));
+          }
+          sel.value = this.skillTarget[it.id] || 'dog';
+          sel.addEventListener('change', () => { this.skillTarget[it.id] = sel.value; });
+          sel.addEventListener('keydown', (e) => e.stopPropagation());
+          card.appendChild(sel);
+        }
+        if (it.category === 'sharedPet' && count) {
+          const free = mine.find((i) => !i.released);
+          const rel = mine.find((i) => i.released);
+          if (free) card.appendChild(el('button', { class: 'btn small', type: 'button', text: '방에 풀기', onclick: () => this.releasePet(it, free) }));
+          if (rel) card.appendChild(el('button', { class: 'btn small ghost', type: 'button', text: '회수', onclick: async () => { const r = await this.onPetRecall(rel.released); if (r && r.ok) { this.toast('펫을 회수했어요'); await this.refreshWallet(); } } }));
+        }
         if (it.variants && it.variants.length) {
           const sw = el('div', { class: 'swatches' });
           for (const v of it.variants) {
@@ -868,16 +1011,26 @@
           }
           card.appendChild(sw);
         }
-        card.appendChild(el('button', { class: 'btn small', type: 'button', text: '구매', onclick: () => this.buy(it, variant) }));
+        card.appendChild(el('button', { class: 'btn small', type: 'button', text: '구매', onclick: () => this.buy(it, variant, it.category === 'petSkill' ? (this.skillTarget[it.id] || 'dog') : undefined) }));
         grid.appendChild(card);
       }
       box.appendChild(grid);
     }
 
-    async buy(item, variant) {
-      const r = await this.onBuy(item.id, variant);
+    /** 공용 펫 방에 풀기: 이름을 물어본다 */
+    async releasePet(item, row) {
+      const def = item.name.replace(/\s*\(.*\)$/, '');
+      const name = window.prompt('펫 이름 (8자)', def);
+      if (name === null) return;
+      const r = await this.onPetRelease(row.id, name.trim() || def);
+      if (r && r.ok) await this.refreshWallet();
+    }
+
+    async buy(item, variant, target) {
+      const r = await this.onBuy(item.id, variant, target);
       if (!r || !r.ok) {
-        this.toast(r && r.error === 'insufficient' ? `코인이 부족해요 (보유 ${r.balance ?? this.coins})` : '구매하지 못했어요.');
+        const msg = { insufficient: `코인이 부족해요 (보유 ${r && r.balance !== undefined ? r.balance : this.coins})`, already_has: '그 펫은 이미 그 행동을 알아요', no_target: '어느 펫에게 줄지 골라 주세요' }[r && r.error];
+        this.toast(msg || '구매하지 못했어요.');
         return;
       }
       const v = item.variants && item.variants.find((x) => x.id === variant);
@@ -935,6 +1088,113 @@
         this.toast('책상 소품을 장착했어요 🪴');
       }
       this.renderDeskSlots();
+    }
+
+    // ── 펫 설정 (10단계): 강아지 꾸미기 · 내 펫 · 공용 펫 목록 ─────────────
+    onNpcUpdate(d) {
+      const prev = this.npcs.get(d.id);
+      this.npcs.set(d.id, d);
+      if (!prev || prev.name !== d.name) this.renderSharedPets();
+    }
+
+    onNpcRemoved(id) {
+      this.npcs.delete(id);
+      this.renderSharedPets();
+    }
+
+    /** 꾸미기 슬롯 3개(select): 내 꾸미기 인벤토리 중 슬롯이 맞는 것. cosmetics 는 { head: { inventoryId } | null, ... } */
+    renderDecoSlots(box, cosmetics, onChange, { disabled = false } = {}) {
+      box.innerHTML = '';
+      const inv = ((this.wallet && this.wallet.inventory) || []).filter((i) => (i.meta && i.meta.category) === 'petDeco');
+      const items = new Map(this.catalogItems().map((i) => [i.id, i]));
+      const label = (row) => {
+        const it = items.get(row.itemId);
+        const v = it && it.variants && it.variants.find((x) => x.id === row.meta.variant);
+        return `${it ? it.name : row.itemId}${v ? ` (${v.label})` : ''}`;
+      };
+      for (const slot of ['head', 'neck', 'back']) {
+        const cur = cosmetics && cosmetics[slot];
+        const icon = el('canvas', { width: '24', height: '24', class: 'furn-icon slot-icon' });
+        if (cur) { const it = items.get(cur.itemId); if (it) this.drawDeco(icon, this.decoKey(it, cur.variant)); }
+        const sel = el('select', { 'data-slot': slot, title: PET_SLOT_LABEL[slot] });
+        sel.appendChild(el('option', { value: '', text: `${PET_SLOT_LABEL[slot]}: 없음` }));
+        for (const row of inv) {
+          const it = items.get(row.itemId);
+          if (!it || it.slot !== slot) continue;
+          sel.appendChild(el('option', { value: String(row.id), text: label(row) }));
+        }
+        sel.value = cur && cur.inventoryId ? String(cur.inventoryId) : '';
+        sel.disabled = disabled;
+        sel.addEventListener('change', () => {
+          const slots = {};
+          for (const s2 of box.querySelectorAll('select')) slots[s2.dataset.slot] = s2.value ? Number(s2.value) : null;
+          onChange(slots);
+        });
+        sel.addEventListener('keydown', (e) => e.stopPropagation());
+        box.appendChild(el('div', { class: 'deco-slot' }, [icon, sel]));
+      }
+    }
+
+    renderPetSettings() {
+      const pets = (this.wallet && this.wallet.pets) || null;
+      const inv = (this.wallet && this.wallet.inventory) || [];
+      const items = new Map(this.catalogItems().map((i) => [i.id, i]));
+      // 강아지 꾸미기 (누구나)
+      if ($('dog-deco')) this.renderDecoSlots($('dog-deco'), pets && pets.dog ? pets.dog.cosmetics : {}, async (slots) => { const r = await this.onPetDeco('dog', slots); if (r && r.ok) { this.toast('강아지를 꾸몄어요 🎀'); await this.refreshWallet(); } });
+      // 내 펫
+      const sel = $('mypet-active');
+      if (!sel) return;
+      sel.innerHTML = '';
+      sel.appendChild(el('option', { value: '', text: '활성 펫 없음' }));
+      const cfg = (pets && pets.config) || { active: null, pets: {} };
+      const myPets = inv.filter((i) => (i.meta && i.meta.category) === 'pet');
+      for (const row of myPets) {
+        const pc = cfg.pets[row.id] || {};
+        sel.appendChild(el('option', { value: String(row.id), text: `${pc.name || row.meta.name} (${row.meta.name})` }));
+      }
+      sel.value = cfg.active ? String(cfg.active) : '';
+      sel.addEventListener('keydown', (e) => e.stopPropagation());
+      const active = cfg.active ? myPets.find((r) => r.id === cfg.active) : null;
+      $('mypet-name-form').hidden = !active;
+      if (active) {
+        const pc = cfg.pets[active.id] || {};
+        if (document.activeElement !== $('mypet-name')) $('mypet-name').value = pc.name || active.meta.name;
+        this.renderDecoSlots($('mypet-deco'), pc.cosmetics || {}, async (slots) => { const r = await this.onPetConfig({ petId: active.id, cosmetics: slots }); if (r && r.ok) { this.toast('펫을 꾸몄어요 🎀'); await this.refreshWallet(); } });
+        const skills = (pc.skills || []).map((k) => ({ come: '📣 이름 부르면 달려옴', sleep_beside: '💤 옆에서 같이 자기', high_five: '🖐 하이파이브' }[k] || k));
+        $('mypet-hint').textContent = skills.length ? `배운 행동: ${skills.join(' · ')}` : '지갑 → 펫 → 행동 업그레이드에서 행동을 가르칠 수 있어요';
+      } else {
+        $('mypet-deco').innerHTML = '';
+        $('mypet-hint').textContent = myPets.length ? '위에서 따라다닐 펫을 고르세요' : '지갑 → 펫 → 개인 펫에서 사면 여기서 고를 수 있어요';
+      }
+      this.renderSharedPets();
+    }
+
+    renderSharedPets() {
+      const list = $('shared-pets');
+      if (!list) return;
+      list.innerHTML = '';
+      const pets = (this.wallet && this.wallet.pets) || { shared: [] };
+      const shared = [...this.npcs.values()].filter((n) => n.id.startsWith('s:'));
+      $('shared-pets-count').textContent = `${shared.length}/${pets.maxShared || 3}`;
+      if (!shared.length) list.appendChild(el('li', { class: 'empty', text: '방에 풀린 공용 펫이 없어요. 지갑 → 펫 → 공용 펫' }));
+      for (const n of shared) {
+        const info = (pets.shared || []).find((p) => p.id === n.id);
+        const mine = Boolean(info && info.mine);
+        const nameInput = el('input', { type: 'text', maxlength: '8', value: n.name, disabled: mine ? null : 'disabled' });
+        nameInput.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); this.onNpcName(nameInput.value.trim(), n.id); } });
+        const li = el('li', { 'data-id': n.id, class: mine ? 'me' : '' }, [
+          this.petIconCanvas(n.species, 28),
+          nameInput,
+          el('span', { class: 'muted', text: info ? `${info.releasedBy || '?'}` : '' }),
+          mine ? el('button', { class: 'btn small ghost', type: 'button', text: '회수', onclick: async () => { const r = await this.onPetRecall(info.roomPetId); if (r && r.ok) { this.toast('펫을 회수했어요'); await this.refreshWallet(); } } }) : null,
+        ]);
+        if (mine) {
+          const deco = el('div', { class: 'pet-deco' });
+          this.renderDecoSlots(deco, n.cosmeticsRaw || (info ? info.cosmetics : {}), async (slots) => { const r = await this.onPetDeco(n.id, slots); if (r && r.ok) { this.toast('펫을 꾸몄어요 🎀'); await this.refreshWallet(); } });
+          li.appendChild(deco);
+        }
+        list.appendChild(li);
+      }
     }
 
     // ── 가구 편집 모드 (9단계) ─────────────────────────────────────────
@@ -1375,7 +1635,7 @@
         const me = id === this.selfId;
         ctx.beginPath();
         ctx.arc(p.x * S, (p.y - 16) * S, me ? 4 : p.npc ? 2.5 : 3, 0, Math.PI * 2);
-        ctx.fillStyle = me ? '#ffb85c' : p.npc ? '#c48c52' : '#f1e6d2';
+        ctx.fillStyle = me ? '#ffb85c' : p.npc ? (PET_COLORS[p.species] || '#c48c52') : '#f1e6d2';
         ctx.fill();
         if (me) {
           ctx.strokeStyle = 'rgba(255,184,92,0.5)';

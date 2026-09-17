@@ -17,6 +17,15 @@
 > 9단계에서는 **가구 상점**이 열렸습니다. 코인으로 책상 소품 12종(내 자리 책상 위에 3개 장착)과 공용 가구 11종(🛠 편집 모드로 방 안 어디든 배치,
 > 모두가 봄)을 삽니다. 침대에 누우면 💤, 안마의자는 흔들리고, 스탠드 조명은 주변을 밝힙니다. 배치는 `room_layout` 에 저장돼 서버를 재시작해도 남습니다.
 
+> 10단계에서는 **펫 상점**이 열렸습니다. 주인을 따라다니는 개인 펫 10종(어깨 위 앵무새, 통통 튀는 슬라임, 느린 거북이…), 방에 풀어 놓는 공용 펫 3종(고양이·거북이·어항 물고기, 최대 3마리),
+> 강아지를 포함한 모든 펫에 다는 꾸미기 8종(리본·목걸이·스카프·밀짚모자·비니·안경·왕관·날개), 펫별 행동 업그레이드 3종(이름 부르면 달려옴 · 옆에서 같이 자기 · 하이파이브).
+
+![펫 12종](screenshots/s10_pets_row.png)
+
+| 방 안의 펫들 (강아지·공용 고양이/거북이/물고기·개인 펫·어깨 위 앵무새) | 꾸미기 장착 예시 |
+|---|---|
+| ![방 안 펫](screenshots/s10_room.png) | ![꾸미기](screenshots/s10_deco.png) |
+
 ![가구 아이콘 23종](screenshots/s9_icons.png)
 
 | 책상 소품 장착 (설정 → 내 책상) | 편집 모드 (팔레트 · 미리보기 · 🛠) | 침대에 눕기 |
@@ -69,7 +78,7 @@ null-study-meta/
 │   │   ├── coins.js          # 8단계: 코인 규칙 (세션 10분당 1, 집중 완주 보너스 5 · 20분 미만 없음) — 순수 함수
 │   │   ├── shop.js           # 8·9단계: 상점 카탈로그 (탭 4개, 가구 23종 — 스프라이트 메타·변형) — 구매 검증·프레임 키 규칙
 │   │   ├── layout.js         # 9단계: 공용 가구 배치 규칙 (풋프린트 회전·벽/소파/책장 전용·겹침·러그·충돌 맵·책상 슬롯) — /js/layout.js 로 브라우저에도 그대로
-│   │   └── npc.js            # 강아지 NPC: 어슬렁/앉기/자기/산책 상태기계, BFS 경로(충돌 준수), 쳐다보기, 쓰다듬기 쿨다운, 이름
+│   │   └── npc.js            # 펫 NPC (10단계 일반화): BaseNpc(BFS 경로·쓰다듬기·이름·꾸미기·스킬) · DogNpc/SharedPetNpc(자율 행동, 종별 잠자리) · FishNpc(어항) · FollowerNpc(주인 따라다니기)
 │   ├── rooms/
 │   │   ├── build.js          # RoomBuilder: tiles.json 기준으로 레이어 배열 + 충돌/의자/문/조명/창문/구역/화면/상호작용 지점 생성
 │   │   └── studyroom.js      # "우리의 스터디룸" 46x34 타일 정의 (3단계: 유리 스터디룸·식물 정리·수납장/선반 채우기)
@@ -139,6 +148,7 @@ npm test
 | 파일 | 내용 |
 |---|---|
 | `game.test.js` | 단위: 닉네임 규칙/중복, 이동 예산(정상 속도 허용·순간이동 거부·벽), 채팅 이스케이프/도배, 뽀모도로 자동 전환, 월드(좌석 점유·상태 복귀·유예 재접속) |
+| `stage10.test.js` | 10단계: 카탈로그(개인 펫 10·공용 3·꾸미기 8·행동 3)·pets.json 앵커·petdeco.json 프레임, FollowerNpc(궤적 따라오기·벽 통과 안 함·순간이동 조건·멈추면 앉기·발밑 앉기/자기·앵무새 어깨·거북이 지연), 월드(구매→활성 펫 전환/교체/제거·이름·꾸미기 슬롯 검증·주인 퇴장 정리·재입장 복원, 공용 펫 풀기 3마리 제한/중복·회수/이름/꾸미기 권한·강아지 꾸미기 저장·재시작 로드, 스킬 펫별 1회·이름 부르면 달려옴·하이파이브·공용 펫 잠자리/속도/어항), 소켓 E2E(npc:update ownerId/cosmetics·npc:remove·pet:release/recall·npc:name 권한·npc:pet 반응·스킬 구매), 브라우저(펫·꾸미기 오버레이 렌더·지갑 펫/꾸미기 탭·설정 내 펫·npc:remove) |
 | `stage9.test.js` | 9단계: 카탈로그 23종·아틀라스 프레임 존재(아이콘 32x32·회전·애니·이불), 배치 규칙(빈 바닥/벽/좌석/문/스폰/맵 밖/기존 오브젝트/겹침/러그 예외/벽 전용/소파·책장·커피머신 위/사람이 선 셀/충돌 맵), 월드(구매 variant·책상 슬롯 장착·`playerDesk`, 배치/이동/회수·충돌 맵 반영·이동 검증, 잠금(먼저 잡은 사람·30초 만료·편집 종료/퇴장 해제·앉아 있으면 못 잡음), 권한("내가 놓은 것만" 접속 중/오프라인), 침대·안마의자(자동 휴식·공부로 못 바꿈·세션 없음·1인 점유·가로 침대 좌석), 재시작 로드), 소켓 E2E(ack `layout`·`layout:update`·`playerEdit`·`playerDesk`·동시 잡기 `locked`·끊기면 해제), 브라우저(지갑 가구 탭 카드·색 선택·구매·미리보기·편집 모드 배치 초록/빨강·R 회전·Del 회수·조명·침대 눕기 💤·책상 소품 표시) |
 | `stage8.test.js` | 8단계: 적립 계산(10분 경계 599/600·이월 정산 `settleStudy`·세션 분할 9+9 = 1코인+480초 이월·59초 폐기는 이월에도 안 들어감·재시작 뒤 이월 유지·사람마다 따로·기록 초기화 시 이월 0), 집중 완주 보너스(시작 전부터 끝까지 앉아 공부 중일 때만 · 중간에 일어나면 없음 · 20분 미만 없음 · 정지/휴식 종료 없음), 이중 지급 방지(같은 사이클 두 번 정산 · 세션 end 두 번), 저장소 `adjustCoins` 원자성(음수 불가·거부는 원장 없음)·최근순 원장·이번 주 획득 합계·인벤토리·초기화는 코인 유지, 구매(없는 아이템·잔액 부족 거부·성공 시 차감/원장/인벤토리), stats 의 coins/weekCoins, 소켓 E2E(`coins` 본인 balance/남은 없음·`wallet`·`shop:buy`·`playerPomodoro` 동기화·늦게 들어온 사람도 봄·재입장 잔액), 브라우저(배지·머리 위 "+2 🪙"·지갑 모달 탭 4개 "준비 중"·거래 내역·머리 위 🍅 남은 시간·랭킹 코인 탭·코인 소리 설정) |
 | `stage7.test.js` | 7단계: 뽀모도로 configure 범위(20~90/5~20)·진행 중 거부, 월드 개인 타이머(따로 돌고·시작 때 설정·퇴장 정리·재접속 유지), 기록 초기화(메모리 저장소 resetUser 는 세션·출석·목표·할 일만, StudyTracker.reset 은 진행 중 세션 폐기, World.resetProfile 토큰·닉네임 확인), 소켓 `profile:reset` E2E(거부·삭제·playerGoal null·leaderboard:refresh·랭킹 0), 브라우저(카드 접기 새로고침 유지·채팅 높이·뽀모도로 입력 범위/잠김·줌 2.5 텍스트 해상도·넓게 보기 캔버스 전체·초기화 모달 닉네임 확인) |
@@ -182,6 +192,10 @@ npm test
 | `profile:reset { nickname, token }` | 내 기록 초기화 (7단계): 세션 토큰·닉네임이 모두 맞아야 `{ ok, counts: { sessions, attendance, goals, todos } }`, 아니면 `confirm_mismatch`. 공부 세션·출석·오늘 목표·할 일 삭제(아바타·강아지 이름 유지), 진행 중 세션은 버리고 앉아 있으면 새로 센다 → 모두에게 `playerGoal { id, goal: null }` + `leaderboard:refresh` |
 | `time:ping { t0 }` | `{ t0, serverTime }` — 클라이언트가 왕복/2 를 빼서 시계 차이를 맞춤 |
 | `leave` | 즉시 정리 → `playerLeft` |
+| `pet:config { active?, petId?, name?, cosmetics? }` | 10단계 내 펫 설정 (`users.pet_config`): 활성 펫(inventoryId \| null) 바꾸면 따라다니는 펫이 생기고/바뀌고/사라진다(`npc:update` / `npc:remove`), 이름(8자), 꾸미기 슬롯 `{ head, neck, back }`(내 꾸미기 inventoryId, 슬롯이 맞아야 함). ack `{ ok, petConfig, pet }` \| `no_item \| not_pet \| invalid_name \| wrong_slot` |
+| `pet:release { inventoryId, name? }` / `pet:recall { id }` | 10단계 공용 펫 방에 풀기(최대 3마리 `room_full`, 중복 `already_released`) / 회수(푼 사람만 `forbidden`). `room_pets` 에 저장, 서버 재시작 후에도 남는다 |
+| `pet:deco { id, slots }` | 10단계 꾸미기 장착: 강아지(`dog`, 누구나) · 공용 펫(`s:<id>`, 푼 사람) · 개인 펫(`p:<playerId>`, 주인). ack `{ ok, cosmetics }` |
+| `shop:buy { itemId: 'skill_*', target }` | 10단계 행동 업그레이드: `target` = `'dog'` \| `'s:<roomPetId>'` \| 내 개인 펫 inventoryId. 펫별 1회(`already_has`), 대상 없으면 `no_target`. 구매 즉시 그 펫에 적용 |
 | `npc:pet { id }` | 거리(56px)·3초 쿨다운 검사 → `npc:pet { id, by, playerId }` + 시스템 `chat { system: true, text }` |
 | `npc:name { id, name }` | 문자·숫자·공백·_- 8자 → `npc:name { id, name }` |
 
@@ -217,7 +231,7 @@ HTTP: `GET /api/oembed?url=…` 은 유튜브 주소만 받아 서버가 oEmbed 
 ### Supabase 설정
 
 1. Supabase 프로젝트 → SQL Editor 에서 [`supabase/schema.sql`](supabase/schema.sql) 실행 (여러 번 실행해도 안전 — `if not exists` / `add column if not exists`).
-   테이블 `users`(8단계: `coins` · `coin_carry_seconds`, 9단계: `desk_items` · `layout_lock` 컬럼) · `study_sessions` · `todos` · `daily_goals` · `attendance` · `coin_ledger` · `inventory` · `room_layout`(9단계) 와
+   테이블 `users`(8단계: `coins` · `coin_carry_seconds`, 9단계: `desk_items` · `layout_lock`, 10단계: `pet_config` 컬럼) · `study_sessions` · `todos` · `daily_goals` · `attendance` · `coin_ledger` · `inventory` · `room_layout`(9단계) · `room_pets`(10단계) 와
    함수 `study_totals(tz)` · `attendance_streaks(tz, only_nickname)` · `list_todos(nickname, tz)` · `adjust_coins(nickname, delta, reason, at)`(잔액 확인·차감·원장 기록을 한 트랜잭션으로) · `coin_stats(tz)` 가 생깁니다.
    모든 테이블은 RLS 가 켜져 있고 정책이 없으며 함수도 anon/authenticated 에서 실행을 막아 두어, **service_role 키를 가진 서버만** 접근합니다.
 2. `.env` 에 `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`(service_role) 를 넣고 서버를 시작하면 로그에 `store=supabase` 가 찍힙니다. 연결에 실패하면 경고 후 메모리로 폴백합니다.
@@ -255,6 +269,23 @@ HTTP: `GET /api/oembed?url=…` 은 유튜브 주소만 받아 서버가 oEmbed 
 - **지갑·상점 뼈대**: 우상단 🪙(또는 좌상단 배지) → 모달. 탭 가구 / 펫 / 펫 꾸미기 / 탈것 — 카탈로그(`server/game/shop.js`)가 비어 있어 "준비 중". 하단에 최근 거래 10건.
   구매 API(`shop:buy { itemId }`)는 잔액 확인 → 차감 → 원장 → `inventory(id, nickname, item_id, acquired_at, meta)` 저장까지 동작합니다 (테스트는 `World` 옵션 `shop: [...]` 로 아이템을 넣어 검증).
 - **랭킹**: "이번 주 코인" 탭 — 월요일부터 획득한 코인 합(양수 delta 만, 구매로 쓴 건 빼지 않음). `stats` 행에 `coins`(잔액)·`weekCoins` 가 붙습니다.
+
+## 펫 상점 + 펫 꾸미기 (10단계)
+
+- **카탈로그** (`server/game/shop.js` 펫 탭 · 펫 꾸미기 탭). 스프라이트는 `tools/pet_sprites.py` 가 강아지 규격(16×24 논리, 걷기 4방향 2프레임 + 앉기 + 자기)으로 12종을 그려 `public/assets/pets.png/json` 한 장에 담습니다
+  (프레임 = `row*24 + species*2 + f`, 기존 갈색 푸들이 0번). 종마다 행별 **앵커**(head/face/neck/back)를 pets.json 에 두고 꾸미기(`petdeco.png/json`, 뷰 front/side/back)를 그 위치에 겹칩니다.
+  - **개인 펫** (주인을 따라다님, 한 번에 1마리): 햄스터 25 · 병아리 25 · 거북이 28(느림) · 토끼 35 · 고양이 40 · 흰 말티즈 40 · 검정 푸들 40 · 시바 40 · 앵무새 45(어깨 위) · 슬라임 50(통통 튐).
+    `FollowerNpc`: 주인의 최근 위치 궤적을 따라 **1.5타일 뒤**를 BFS 경로로 따라옵니다(가구·벽 통과 안 함). 8타일 넘게 멀어지거나 경로가 없으면 **주인 옆으로 순간이동**.
+    주인이 멈추면 1초 뒤 앉고, 주인이 앉아 공부 중이면 발밑에서 앉습니다("옆에서 같이 자기" 스킬이면 잡니다). 주인이 나가면 같이 사라집니다(`npc:remove`). 서버가 위치를 판정해 강아지와 같은 `npc:update` 채널로 보냅니다(`ownerId` 포함).
+  - **공용 펫** (지갑에서 "방에 풀기", 최대 3마리): 고양이 50(책장 선반·소파 위에서 자기 좋아함) · 거북이 35(아주 느림) · 어항 물고기 40(라운지 둥근 테이블 위 어항 안에서 헤엄침).
+    강아지와 같은 상태기계(`SharedPetNpc`)에 종별 선호 구역·잠자리·속도. 이름은 푼 사람이 정하고 설정에서 바꿀 수 있으며, 회수도 푼 사람만. `room_pets(id, room_id, item_id, inventory_id, name, released_by, released_at, cosmetics, skills)` + 메모리 폴백.
+  - **꾸미기** (강아지 포함 모든 펫, 슬롯 머리/목/등): 리본 5(색 4) · 목걸이 6(색 4) · 스카프 8(색 4) · 밀짚모자 10 · 비니 10 · 안경 10(얼굴 앵커) · 왕관 15 · 날개 15(펄럭임 2프레임).
+    기존 강아지는 설정 → 강아지에서 **누구나** 장착(`room_pets` 의 `item_id='dog'` 행에 저장), 개인 펫은 `users.pet_config`, 공용 펫은 `room_pets.cosmetics`.
+  - **행동 업그레이드** (펫별 1회, 구매 때 대상 선택): "이름 부르면 달려옴" 10(채팅에 펫 이름이 들어 있으면 부른 사람 옆으로 달려와 쳐다봄 — 개인 펫은 주인이 부를 때만) · "옆에서 같이 자기" 10 · "하이파이브" 8(쓰다듬기 반응에 🖐 추가).
+- **쓰다듬기**: 모든 펫에 E (거리 56px·3초 쿨다운 그대로), 종별 반응 이모지(❤️ 😻 🥕 🐣 🌰 🍀 🎵 ✨ 🫧 …). 남의 개인 펫도 쓰다듬을 수 있고 펫 이름은 발밑 작은 글씨. 미니맵에 펫은 종별 색 점.
+- **UI**: 지갑 펫 탭(개인 펫 / 공용 펫 / 행동 업그레이드 카테고리) · 펫 꾸미기 탭(색 선택) — 카드(아이콘·이름·가격·보유), 아이콘 클릭 → 미리보기(펫은 4방향 걷기 애니메이션).
+  설정 → 내 펫(활성 펫 선택 · 이름 · 꾸미기 슬롯 3개) · 강아지(이름 + 꾸미기 슬롯) · 공용 펫 목록(내가 푼 것은 이름 변경·꾸미기·회수).
+  요청서의 "행동 탭"은 별도 탭 대신 펫 탭 안의 카테고리로 두었습니다(탭 4개 고정 유지).
 
 ## 가구 상점 + 자유 배치 (9단계)
 
@@ -391,12 +422,14 @@ Free 플랜은 15분 무요청 시 잠들고, 재시작 시 메모리 상태가 
 node tools/screenshot_stage3.js http://localhost:3000 screenshots   # 낮/노을/밤, 스터디룸 확대, 커피, 전체 맵
 python tools/furniture.py                                            # 9단계 가구 아틀라스 + tools/out/furniture_icons.png
 node tools/screenshot_stage9.js                                      # 9단계: 지갑 가구 탭·책상 소품·편집 모드·침대 (서버를 스스로 띄운다)
+python tools/pet_sprites.py                                          # 10단계 펫 12종 시트 + 꾸미기 아틀라스 + tools/out/pets_row.png
+node tools/screenshot_stage10.js                                     # 10단계: 방 안 펫들·꾸미기 장착 예시 (서버를 스스로 띄운다)
 python tools/compare_mockup.py                                        # screenshots/compare_mockup.png
 ```
 
 ## 다음 단계
 
-- 상점 펫 · 펫 꾸미기 · 탈것 탭 채우기 (가구 탭은 9단계에서 완성)
+- 상점 탈것 탭 채우기 (가구는 9단계, 펫·펫 꾸미기는 10단계에서 완성)
 - 뽀모도로 회차 기록, 주간 리포트
 - 유리문/입구 `doors` 로 방 이동, 실외 연결
 - 앉은 자세 프레임, 아바타 파츠 확장(치마·가방·모자 색)

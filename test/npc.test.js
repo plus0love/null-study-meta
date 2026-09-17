@@ -107,7 +107,7 @@ test('강아지 NPC: 쓰다듬기 — 거리 검사, 3초 쿨다운, 이벤트',
   assert.equal(dog.pet(near).error, 'cooldown');
   advance(200);
   assert.equal(dog.pet(near).ok, true);
-  assert.deepEqual(pets, [{ by: '민수', id: 'p' }, { by: '민수', id: 'p' }]);
+  assert.deepEqual(pets, [{ by: '민수', id: 'p', reaction: '❤️', highFive: false }, { by: '민수', id: 'p', reaction: '❤️', highFive: false }]);
   assert.ok(now() > 0);
   dog.dispose();
 });
@@ -166,7 +166,7 @@ test('소켓 E2E: 두 클라이언트가 같은 npc:update 를 받고, 쓰다듬
   assert.equal(pet.playerId, ja.self.id);
   const chat = await chatSeen;
   assert.equal(chat.system, true);
-  assert.equal(chat.text, '민수님이 강아지를 쓰다듬었어요');
+  assert.equal(chat.text, '민수님이 사랑을(를) 쓰다듬었어요');
   assert.equal((await ask(a, 'npc:pet', { id: 'dog' })).error, 'cooldown');
 
   // 이름 변경

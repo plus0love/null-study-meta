@@ -461,7 +461,9 @@
   }
 
 
-  // ── 강아지 NPC 표시 ─────────────────────────────────────────────────
+  // ── 펫 NPC 표시 (강아지 · 공용 펫 · 개인 펫) ─────────────────────────
+  // 스프라이트시트 'pets': 프레임 = row*framesPerRow + species*2 + f. 꾸미기는 'petdeco' 아틀라스를 종별 앵커(pets.json)에 겹친다.
+  const DECO_ORDER = ['back', 'neck', 'head'];
   class Npc {
     constructor(scene, snap) {
       this.scene = scene;
@@ -469,21 +471,96 @@
       this.name = snap.name;
       this.state = snap.state;
       this.facing = snap.facing || 'down';
+      this.species = snap.species || 'dog';
+      this.ownerId = snap.ownerId || null;
+      this.shoulder = Boolean(snap.shoulder);
+      this.bounce = Boolean(snap.bounce);
       this.x = snap.x;
       this.y = snap.y;
       this.buffer = [];
       this.animKey = null;
-      const meta = scene.dogMeta;
-      this.sprite = scene.add.sprite(snap.x, snap.y, 'dog', meta.rows.sit * meta.framesPerRow).setOrigin(0.5, 1);
+      this.bounceT = 0;
+      const meta = scene.petsMeta;
+      this.spIndex = (meta.species[this.species] || meta.species.dog).index;
+      this.sprite = scene.add.sprite(snap.x, snap.y, 'pets', this.frameIndex('sit', 0)).setOrigin(0.5, 1);
       this.shadow = scene.add.ellipse(snap.x, snap.y - 2, 18, 6, 0x000000, 0.25).setDepth(DEPTH.shadow);
       this.nameText = scene.add.text(snap.x, snap.y + 2, snap.name, {
-        fontFamily: FONTS.sans, fontSize: '10px', fontStyle: 'bold', color: '#ffd9a8',
+        fontFamily: FONTS.sans, fontSize: this.ownerId ? '9px' : '10px', fontStyle: 'bold', color: this.ownerId ? '#d9eeff' : '#ffd9a8',
         stroke: '#14111a', strokeThickness: 3, resolution: ZOOM,
       }).setOrigin(0.5, 0).setDepth(DEPTH.label);
+      this.deco = { head: null, neck: null, back: null }; // 슬롯 → { key, sprite }
+      this.cosmetics = {};
       this.heart = null;
       this.heartTimer = null;
+      this.setCosmetics(snap.cosmetics || {});
       this.setPosition(snap.x, snap.y);
       this.applyState();
+    }
+
+    frameIndex(row, f) {
+      const meta = this.scene.petsMeta;
+      return meta.rows[row] * meta.framesPerRow + this.spIndex * meta.framesPerSpecies + f;
+    }
+
+    rowName() {
+      if (this.state === 'sleep') return 'sleep';
+      if (this.state === 'sit' || this.state === 'look') return 'sit';
+      return this.facing;
+    }
+
+    /** 앵커 (프레임 안 논리 px) → 스프라이트 원점(발 가운데) 기준 월드 오프셋 */
+    anchorOffset(row, name) {
+      const meta = this.scene.petsMeta;
+      const sp = meta.species[this.species] || meta.species.dog;
+      const a = (sp.anchors[row] || sp.anchors.down)[name] || [8, 12];
+      return { dx: (a[0] - 8) * 2, dy: (a[1] - 24) * 2 };
+    }
+
+    /** cosmetics: { head: 'ribbon/red' | null, neck, back } */
+    setCosmetics(c) {
+      const next = c || {};
+      for (const slot of DECO_ORDER) {
+        const key = next[slot] || null;
+        const cur = this.deco[slot];
+        if (cur && cur.key === key) continue;
+        if (cur) { cur.sprite.destroy(); this.deco[slot] = null; }
+        if (!key) continue;
+        const sp = this.scene.add.sprite(0, 0, 'petdeco', this.decoFrame(key, 'front', 0)).setOrigin(0.5, 0.5);
+        sp.setVisible(false);
+        this.deco[slot] = { key, sprite: sp, item: key.split('/')[0] };
+        const anim = this.scene.decoAnimKey(key);
+        if (anim) sp.anims.play(anim);
+      }
+      this.cosmetics = next;
+      this.syncDeco();
+    }
+
+    decoFrame(key, view, f) {
+      const k = `deco/${key}/${view}/f${f}`;
+      return this.scene.textures.get('petdeco').has(k) ? k : `deco/${key}/front/f0`;
+    }
+
+    /** 방향/상태에 맞춰 꾸미기 프레임·위치·깊이 */
+    syncDeco() {
+      const row = this.rowName();
+      const view = row === 'up' ? 'back' : row === 'left' || row === 'right' || row === 'sleep' ? 'side' : 'front';
+      const flip = row === 'right' || (row === 'sleep' && false);
+      for (const slot of DECO_ORDER) {
+        const d = this.deco[slot];
+        if (!d) continue;
+        const anchor = d.item === 'glasses' ? 'face' : slot;
+        const off = this.anchorOffset(row, anchor);
+        const base = this.sprite.depth;
+        const behind = (slot === 'back' && view === 'front') || (slot === 'head' && view === 'back' && d.item === 'glasses');
+        const hidden = d.item === 'glasses' && view === 'back';
+        d.sprite.setVisible(!hidden);
+        if (hidden) continue;
+        const animKey = this.scene.decoAnimKey(d.key, view);
+        if (animKey) { if (d.sprite.anims.currentAnim?.key !== animKey) d.sprite.anims.play(animKey); } else d.sprite.setFrame(this.decoFrame(d.key, view, 0));
+        d.sprite.setFlipX(flip);
+        const fx = flip ? -off.dx : off.dx;
+        d.sprite.setPosition(Math.round(this.sprite.x + fx), Math.round(this.sprite.y + off.dy)).setDepth(base + (behind ? -0.00002 : 0.00002 + DECO_ORDER.indexOf(slot) * 0.000001));
+      }
     }
 
     setPosition(x, y) {
@@ -491,10 +568,18 @@
       this.y = y;
       const rx = Math.round(x);
       const ry = Math.round(y);
-      this.sprite.setPosition(rx, ry).setDepth(DEPTH.avatar + y / this.scene.mapH);
-      this.shadow.setPosition(rx, ry - 2);
-      this.nameText.setPosition(rx, ry + 2);
+      const hop = this.bounce && this.state === 'walk' ? Math.round(Math.abs(Math.sin(this.bounceT)) * 6) : 0;
+      // 어깨 위 앵무새는 주인보다 앞에 그린다
+      let depth = DEPTH.avatar + y / this.scene.mapH;
+      if (this.shoulder && this.ownerId) {
+        const o = this.scene.avatarOf(this.ownerId);
+        if (o) depth = DEPTH.avatar + o.y / this.scene.mapH + 0.00005;
+      }
+      this.sprite.setPosition(rx, ry - hop).setDepth(depth);
+      this.shadow.setPosition(rx, ry - 2).setVisible(!this.shoulder);
+      this.nameText.setPosition(rx, ry + (this.shoulder ? -46 : 2));
       if (this.heart) this.heart.setPosition(rx, ry - 52 - (this.heart.rise || 0));
+      this.syncDeco();
     }
 
     setName(name) {
@@ -507,6 +592,10 @@
       this.buffer.push({ x: snap.x, y: snap.y, t: performance.now() });
       if (this.buffer.length > 30) this.buffer.splice(0, this.buffer.length - 30);
       if (snap.name !== this.name) this.setName(snap.name);
+      if (snap.cosmetics) {
+        const a = JSON.stringify(snap.cosmetics);
+        if (a !== JSON.stringify(this.cosmetics)) this.setCosmetics(snap.cosmetics);
+      }
       if (snap.state !== this.state || snap.facing !== this.facing) {
         this.state = snap.state;
         this.facing = snap.facing;
@@ -515,8 +604,6 @@
     }
 
     applyState() {
-      const meta = this.scene.dogMeta;
-      const per = meta.framesPerRow;
       const play = (key) => {
         if (this.animKey === key) return;
         this.animKey = key;
@@ -527,17 +614,20 @@
         this.sprite.anims.stop();
         this.sprite.setFrame(frame);
       };
+      const sp = this.species;
       switch (this.state) {
-        case 'walk': play(`dog-walk-${this.facing}`); break;
-        case 'look': play('dog-wag'); break; // 앉아서 꼬리 흔들기
-        case 'sleep': play('dog-sleep'); break;
-        case 'sit': still(meta.rows.sit * per); break;
-        default: still(meta.rows[this.facing] * per); // idle: 서서 정지
+        case 'walk': play(`pet-${sp}-walk-${this.facing}`); break;
+        case 'look': play(`pet-${sp}-wag`); break; // 앉아서 꼬리 흔들기
+        case 'sleep': play(`pet-${sp}-sleep`); break;
+        case 'sit': still(this.frameIndex('sit', 0)); break;
+        default: still(this.frameIndex(this.facing, 0)); // idle: 서서 정지
       }
+      this.syncDeco();
     }
 
     /** INTERP_DELAY 만큼 과거 시각을 두 스냅샷 사이에서 선형 보간 */
-    update() {
+    update(delta = 16) {
+      if (this.bounce) this.bounceT += delta / 90;
       const buf = this.buffer;
       if (!buf.length) return;
       const rt = performance.now() - INTERP_DELAY;
@@ -550,9 +640,10 @@
       } else this.setPosition(s0.x, s0.y);
     }
 
-    showHeart() {
+    /** 쓰다듬기 반응: 종별 이모지 (+ 하이파이브 🖐) */
+    showHeart(reaction = '❤️', highFive = false) {
       this.clearHeart();
-      const t = this.scene.add.text(0, 0, '❤️', { fontSize: '16px', resolution: ZOOM }).setOrigin(0.5, 1).setDepth(DEPTH.bubble);
+      const t = this.scene.add.text(0, 0, highFive ? `${reaction}🖐` : reaction, { fontSize: '16px', resolution: ZOOM }).setOrigin(0.5, 1).setDepth(DEPTH.bubble);
       t.rise = 0;
       this.heart = t;
       this.setPosition(this.x, this.y);
@@ -570,6 +661,7 @@
 
     destroy() {
       this.clearHeart();
+      for (const slot of DECO_ORDER) if (this.deco[slot]) this.deco[slot].sprite.destroy();
       this.sprite.destroy();
       this.shadow.destroy();
       this.nameText.destroy();
@@ -587,7 +679,7 @@
       this.tilesMeta = data.tiles;
       this.avatarKit = data.avatarKit; // AvatarKit (catalog + 레이어 PNG)
       this.playerMeta = { frameWidth: this.avatarKit.frame.width, frameHeight: this.avatarKit.frame.height, framesPerRow: this.avatarKit.frame.framesPerRow, rows: this.avatarKit.frame.rows };
-      this.dogMeta = data.dog;
+      this.petsMeta = data.pets; // 10단계: 펫 스프라이트시트 메타 (종별 인덱스·앵커)
       this.catalog = data.catalog || { items: [] }; // 9단계: 상점 카탈로그 (가구 스프라이트 메타)
       this.onReady = data.onReady || (() => {});
       this.hooks = {
@@ -627,7 +719,8 @@
     preload() {
       const v = this.room.assetVersion ? `?v=${this.room.assetVersion}` : '';
       this.load.image('tiles', `/assets/tiles.png${v}`);
-      this.load.spritesheet('dog', `/assets/dog.png${v}`, { frameWidth: this.dogMeta.frameWidth, frameHeight: this.dogMeta.frameHeight });
+      this.load.spritesheet('pets', `/assets/pets.png${v}`, { frameWidth: this.petsMeta.frameWidth, frameHeight: this.petsMeta.frameHeight });
+      this.load.atlas('petdeco', `/assets/petdeco.png${v}`, `/assets/petdeco.json${v}`);
       this.load.atlas('furn', `/assets/furniture.png${v}`, `/assets/furniture.json${v}`);
     }
 
@@ -643,7 +736,7 @@
       this.buildZones();
       this.buildLabels();
       this.buildLightTextures();
-      this.buildDogAnims();
+      this.buildPetAnims();
       this.buildLighting();
       this.buildScreens();
       this.furniture = new FurnitureLayer(this, this.catalog);
@@ -1053,7 +1146,15 @@
 
     onNpcPet(d) {
       const n = this.npcs.get(d.id);
-      if (n) n.showHeart();
+      if (n) n.showHeart(d.reaction || '❤️', Boolean(d.highFive));
+    }
+
+    /** 펫 회수 · 주인 퇴장 (10단계) */
+    removeNpc(id) {
+      const n = this.npcs.get(id);
+      if (!n) return;
+      n.destroy();
+      this.npcs.delete(id);
     }
 
     onNpcName(d) {
@@ -1111,17 +1212,31 @@
       return cands[0];
     }
 
-    buildDogAnims() {
-      const meta = this.dogMeta;
+    /** 종마다 걷기 4방향·꼬리 흔들기·자기 애니메이션 (pets 시트: row*framesPerRow + species*2 + f) */
+    buildPetAnims() {
+      const meta = this.petsMeta;
       const per = meta.framesPerRow;
-      const mk = (key, row, frameRate) => {
-        if (this.anims.exists(key)) return;
-        const start = meta.rows[row] * per;
-        this.anims.create({ key, frames: this.anims.generateFrameNumbers('dog', { start, end: start + per - 1 }), frameRate, repeat: -1 });
-      };
-      for (const dir of ['down', 'right', 'up', 'left']) mk(`dog-walk-${dir}`, dir, 5);
-      mk('dog-wag', 'sit', 6);
-      mk('dog-sleep', 'sleep', 1.2);
+      const n = meta.framesPerSpecies;
+      for (const [name, sp] of Object.entries(meta.species)) {
+        const mk = (key, row, frameRate) => {
+          if (this.anims.exists(key)) return;
+          const start = meta.rows[row] * per + sp.index * n;
+          this.anims.create({ key, frames: this.anims.generateFrameNumbers('pets', { start, end: start + n - 1 }), frameRate, repeat: -1 });
+        };
+        const fast = name === 'slime' || name === 'chick' || name === 'hamster';
+        for (const dir of ['down', 'right', 'up', 'left']) mk(`pet-${name}-walk-${dir}`, dir, fast ? 7 : 5);
+        mk(`pet-${name}-wag`, 'sit', 6);
+        mk(`pet-${name}-sleep`, 'sleep', 1.2);
+      }
+    }
+
+    /** 꾸미기 애니(날개 펄럭임): 프레임이 2개 이상인 키만 */
+    decoAnimKey(key, view = 'front') {
+      const tex = this.textures.get('petdeco');
+      if (!tex.has(`deco/${key}/${view}/f1`)) return null;
+      const animKey = `deco-${key}-${view}`;
+      if (!this.anims.exists(animKey)) this.anims.create({ key: animKey, frames: [{ key: 'petdeco', frame: `deco/${key}/${view}/f0` }, { key: 'petdeco', frame: `deco/${key}/${view}/f1` }], frameRate: 4, repeat: -1 });
+      return animKey;
     }
 
     // ── 좌석 ────────────────────────────────────────────────────────
@@ -1194,7 +1309,7 @@
         }
       }
       this.updateRemotes();
-      for (const n of this.npcs.values()) n.update();
+      for (const n of this.npcs.values()) n.update(delta);
       this.pomoAcc += delta;
       if (this.pomoAcc >= POMO_TICK) {
         this.pomoAcc = 0;
@@ -1211,7 +1326,7 @@
         const map = {};
         if (this.me) map[this.me.id] = { x: this.me.x, y: this.me.y };
         for (const [id, r] of this.remotes) map[id] = { x: r.avatar.x, y: r.avatar.y };
-        for (const [id, n] of this.npcs) map[id] = { x: n.x, y: n.y, npc: true };
+        for (const [id, n] of this.npcs) map[id] = { x: n.x, y: n.y, npc: true, species: n.species };
         this.hooks.onPositions(map);
       }
     }

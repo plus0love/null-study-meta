@@ -17,6 +17,8 @@ alter table public.users add column if not exists coin_carry_seconds integer not
 -- 9단계: 내 책상 소품 슬롯 3개 (inventory.id 또는 null 의 배열) + "내가 놓은 가구는 나만 이동·회수" 설정
 alter table public.users add column if not exists desk_items jsonb not null default '[null, null, null]'::jsonb;
 alter table public.users add column if not exists layout_lock boolean not null default false;
+-- 10단계: 내 펫 설정 { active: inventory.id|null, pets: { [inventory.id]: { name, cosmetics: { head, neck, back }, skills: [] } } }
+alter table public.users add column if not exists pet_config jsonb;
 
 create table if not exists public.study_sessions (
   id          bigint generated always as identity primary key,
@@ -88,6 +90,22 @@ create table if not exists public.room_layout (
 create index if not exists room_layout_room_id on public.room_layout (room_id);
 create unique index if not exists room_layout_inventory_id on public.room_layout (inventory_id);
 
+-- 10단계: 방에 풀린 공용 펫 (최대 3마리, 서버가 검증) + 기존 강아지의 꾸미기/스킬 설정 행(item_id = 'dog', inventory_id null)
+-- cosmetics: { head, neck, back } 각각 { inventoryId, itemId, variant } | null. skills: ['come', 'sleep_beside', 'high_five'] 중 산 것
+create table if not exists public.room_pets (
+  id            bigint generated always as identity primary key,
+  room_id       text not null,
+  item_id       text not null,
+  inventory_id  bigint references public.inventory(id) on delete cascade,
+  name          text not null,
+  released_by   text references public.users(nickname) on delete set null,
+  released_at   timestamptz not null default now(),
+  cosmetics     jsonb not null default '{}'::jsonb,
+  skills        jsonb not null default '[]'::jsonb
+);
+create index if not exists room_pets_room_id on public.room_pets (room_id);
+create unique index if not exists room_pets_inventory_id on public.room_pets (inventory_id);
+
 alter table public.users          enable row level security;
 alter table public.study_sessions enable row level security;
 alter table public.todos          enable row level security;
@@ -96,6 +114,7 @@ alter table public.attendance     enable row level security;
 alter table public.coin_ledger    enable row level security;
 alter table public.inventory      enable row level security;
 alter table public.room_layout    enable row level security;
+alter table public.room_pets      enable row level security;
 
 -- ── 집계 함수 ─────────────────────────────────────────────────────────
 -- 시간대(tz, 기본 Asia/Seoul) 기준 0시에 날이 바뀌고 주는 월요일에 시작한다 (date_trunc('week') = ISO 월요일).

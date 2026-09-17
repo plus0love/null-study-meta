@@ -178,7 +178,8 @@ SLEEP_B = [
 ]
 
 
-def build():
+def frame_rows():
+    """6행 x 2프레임의 문자 격자 (10단계 pet_sprites.py 가 팔레트만 바꿔 말티즈·검정 푸들을 만든다)."""
     down = [frame(HEAD + BODY_FRONT + LEGS_A), frame(HEAD + BODY_FRONT + LEGS_B)]
     up = [frame(HEAD_BACK + BODY_BACK + LEGS_A), frame(HEAD_BACK + BODY_BACK + LEGS_B)]
     # 뒷모습 꼬리 겹치기
@@ -197,7 +198,11 @@ def build():
         y = H - 3 + i
         sit_r[y] = "".join(t if t != "." else c for t, c in zip(tr, sit_r[y]))
     sleep = [frame(SLEEP_A), frame(SLEEP_B)]
-    rows = [down, right, up, left, [sit_l, sit_r], sleep]
+    return [down, right, up, left, [sit_l, sit_r], sleep]
+
+
+def build():
+    rows = frame_rows()
 
     sheet = Image.new("RGBA", (2 * W, len(rows) * H), (0, 0, 0, 0))
     px = sheet.load()

@@ -11,12 +11,14 @@
  *  resetUser (세션·출석·목표·할 일 삭제 + 코인 이월 초 0, users 행·코인 잔액·인벤토리는 유지)
  *  getCoins / adjustCoins / getCoinCarry / setCoinCarry / coinLedger / coinStats / addInventory / listInventory (8단계)
  *  roomLayout / addLayout / updateLayout / removeLayout (9단계: 방에 놓인 공용 가구) · users.deskItems / layoutLock 은 upsertUser/getUser
+ *  roomPets / addRoomPet / updateRoomPet / removeRoomPet (10단계: 방에 풀린 공용 펫 + 강아지 설정 행 item_id 'dog') · users.petConfig
  */
 const { DEFAULT_TZ, dateKey, weekStart, streakOf, totalsOf } = require('./stats');
 
 function createMemoryStore() {
   const users = new Map(); // nickname → { nickname, avatar, dogName, coins, coinCarrySeconds, deskItems, layoutLock, createdAt, updatedAt }
   const layout = []; // { id, roomId, itemId, inventoryId, x, y, rotation, meta, placedBy, placedAt } — 방에 놓인 공용 가구
+  const roomPets = []; // { id, roomId, itemId, inventoryId, name, releasedBy, releasedAt, cosmetics, skills } — 공용 펫 (+ 강아지 설정 행)
   const sessions = []; // { id, nickname, startedAt, endedAt, seconds }
   const attendance = new Set(); // `${nickname}|${date}`
   const todos = []; // { id, nickname, text, done, createdAt, doneAt }
@@ -28,7 +30,7 @@ function createMemoryStore() {
   const ensureUser = (nickname, now = Date.now()) => {
     let u = users.get(nickname);
     if (!u) {
-      u = { nickname, avatar: null, dogName: null, coins: 0, coinCarrySeconds: 0, deskItems: [null, null, null], layoutLock: false, createdAt: now, updatedAt: now };
+      u = { nickname, avatar: null, dogName: null, coins: 0, coinCarrySeconds: 0, deskItems: [null, null, null], layoutLock: false, petConfig: null, createdAt: now, updatedAt: now };
       users.set(nickname, u);
     }
     return u;
@@ -47,6 +49,7 @@ function createMemoryStore() {
       if (data.dogName !== undefined) u.dogName = data.dogName;
       if (data.deskItems !== undefined) u.deskItems = [...data.deskItems];
       if (data.layoutLock !== undefined) u.layoutLock = Boolean(data.layoutLock);
+      if (data.petConfig !== undefined) u.petConfig = data.petConfig ? JSON.parse(JSON.stringify(data.petConfig)) : null;
       u.updatedAt = Date.now();
       return { ...u };
     },
@@ -226,6 +229,30 @@ function createMemoryStore() {
       if (i < 0) return null;
       const [e] = layout.splice(i, 1);
       return { ...e };
+    },
+
+    // ── 공용 펫 (10단계) ──────────────────────────────────────────────
+    async roomPets(roomId) {
+      return roomPets.filter((p) => p.roomId === roomId).map((p) => ({ ...p, cosmetics: { ...p.cosmetics }, skills: [...p.skills] }));
+    },
+    async addRoomPet(roomId, { itemId, inventoryId = null, name, releasedBy = null, cosmetics = {}, skills = [] }, now = Date.now()) {
+      const p = { id: seq++, roomId, itemId, inventoryId, name, releasedBy, releasedAt: now, cosmetics: { ...cosmetics }, skills: [...skills] };
+      roomPets.push(p);
+      return { ...p, cosmetics: { ...p.cosmetics }, skills: [...p.skills] };
+    },
+    async updateRoomPet(roomId, id, { name, cosmetics, skills } = {}) {
+      const p = roomPets.find((r) => r.id === Number(id) && r.roomId === roomId);
+      if (!p) return null;
+      if (name !== undefined) p.name = name;
+      if (cosmetics !== undefined) p.cosmetics = { ...cosmetics };
+      if (skills !== undefined) p.skills = [...skills];
+      return { ...p, cosmetics: { ...p.cosmetics }, skills: [...p.skills] };
+    },
+    async removeRoomPet(roomId, id) {
+      const i = roomPets.findIndex((r) => r.id === Number(id) && r.roomId === roomId);
+      if (i < 0) return null;
+      const [p] = roomPets.splice(i, 1);
+      return { ...p };
     },
 
     // ── 기록 초기화 (7단계) ───────────────────────────────────────────

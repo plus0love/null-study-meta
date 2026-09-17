@@ -31,7 +31,7 @@ const { createShop } = require('./game/shop');
 function assetVersion() {
   const dir = path.join(__dirname, '..', 'public', 'assets');
   const h = crypto.createHash('sha1');
-  for (const f of ['tiles.json', 'tiles.png', 'dog.json', 'dog.png', 'furniture.json', 'furniture.png']) h.update(fs.readFileSync(path.join(dir, f)));
+  for (const f of ['tiles.json', 'tiles.png', 'dog.json', 'dog.png', 'furniture.json', 'furniture.png', 'pets.json', 'pets.png', 'petdeco.json', 'petdeco.png']) h.update(fs.readFileSync(path.join(dir, f)));
   for (const f of [CATALOG_PATH, ...avatarAssetFiles()]) h.update(fs.readFileSync(f));
   return h.digest('hex').slice(0, 10);
 }

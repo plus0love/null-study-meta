@@ -77,7 +77,22 @@
         <form class="field" id="npc-name-form" autocomplete="off">
           <label for="npc-name">강아지 이름 (모두에게 적용)</label>
           <div class="row"><input id="npc-name" type="text" maxlength="8" placeholder="사랑" /><button class="btn small" type="submit">저장</button></div>
+          <div class="pet-deco" id="dog-deco"></div>
         </form>
+        <!-- 10단계: 내 펫 (활성 펫 · 이름 · 꾸미기) / 공용 펫 -->
+        <div class="field" id="mypet-field">
+          <label>내 펫 <span class="muted">주인을 따라다녀요 · 한 번에 1마리</span></label>
+          <select id="mypet-active" title="활성 펫"></select>
+          <form id="mypet-name-form" class="row" autocomplete="off" hidden>
+            <input id="mypet-name" type="text" maxlength="8" placeholder="이름 (8자)" /><button class="btn small" type="submit">저장</button>
+          </form>
+          <div class="pet-deco" id="mypet-deco"></div>
+          <p class="hint" id="mypet-hint"></p>
+        </div>
+        <div class="field" id="shared-pets-field">
+          <label>공용 펫 <span class="muted" id="shared-pets-count"></span></label>
+          <ul class="list shared-pets" id="shared-pets"></ul>
+        </div>
         <div class="field">
           <label>화면</label>
           <div class="row">
