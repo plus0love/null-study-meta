@@ -190,6 +190,10 @@
       <h1>📚 우리의 스터디룸</h1>
       <p class="muted">닉네임을 정하고 입장하세요. 문자·숫자·공백·_ - 12자 이내.</p>
       <input id="login-nick" type="text" maxlength="12" placeholder="닉네임" required />
+      <div class="field" id="login-pass-field" hidden>
+        <label for="login-pass">방 비밀번호</label>
+        <input id="login-pass" type="password" maxlength="128" placeholder="비밀번호" autocomplete="current-password" />
+      </div>
       <div class="field">
         <label>아바타</label>
         <div id="login-avatar-slot"></div>

@@ -122,6 +122,11 @@ class World extends EventEmitter {
   /**
    * @returns {{ ok: true, player, resumed: boolean } | { ok: false, error }}
    */
+  /** 살아 있는 세션 토큰인지 (유예 중 포함) — 게이트가 재접속을 비밀번호 없이 통과시킬 때 사용 */
+  hasSession(token) {
+    return typeof token === 'string' && this.sessions.has(token);
+  }
+
   join({ nickname, token, avatar, socketId }) {
     if (token && this.sessions.has(token)) {
       const player = this.sessions.get(token);

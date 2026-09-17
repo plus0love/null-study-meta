@@ -23,6 +23,7 @@ const express = require('express');
 const { createStore } = require('./store');
 const { getStudyRoom } = require('./rooms/studyroom');
 const { attachSocket } = require('./socket');
+const { createGate } = require('./gate');
 const { CATALOG_PATH, assetFiles: avatarAssetFiles } = require('./game/avatar');
 
 // 아틀라스/캐릭터/아바타 파츠 파일 해시 → 클라이언트가 ?v= 로 붙여 요청하므로 에셋을 다시 빌드하면 캐시가 자동 무효화된다
@@ -66,7 +67,7 @@ async function fetchOembedTitle(url, fetcher, cache) {
   return value;
 }
 
-/** ctx: { store, world, fetch? } — world 는 소켓을 붙인 뒤 채워진다 */
+/** ctx: { store, world, gate, fetch? } — world 는 소켓을 붙인 뒤 채워진다 */
 function createApp(ctx) {
   const app = express();
   app.disable('x-powered-by');
@@ -77,6 +78,12 @@ function createApp(ctx) {
     const out = await fetchOembedTitle(url, ctx.fetch || globalThis.fetch, oembedCache);
     res.set('Cache-Control', 'no-cache');
     res.status(out.ok ? 200 : 400).json(out);
+  });
+
+  // 클라이언트가 입장 화면을 그리기 전에 알아야 하는 것 (비밀번호 칸 표시 여부). 값은 절대 내려가지 않는다.
+  app.get('/api/config', (_req, res) => {
+    res.set('Cache-Control', 'no-cache');
+    res.json({ passwordRequired: !!(ctx.gate && ctx.gate.enabled) });
   });
 
   app.get('/healthz', (_req, res) => {
@@ -96,19 +103,21 @@ function createApp(ctx) {
 
 /**
  * opts.world: World 옵션 (테스트용 — graceMs, pomodoro: { focusMs, breakMs })
+ * opts.gate:  게이트 옵션 (테스트용 — maxFailures, lockMs, now). 비밀번호 자체는 env.ROOM_PASSWORD 에서만 읽는다.
  */
-async function startServer({ port = Number(process.env.PORT) || 3000, env = process.env, log = console, world: worldOpts = {}, fetch: fetcher = null } = {}) {
+async function startServer({ port = Number(process.env.PORT) || 3000, env = process.env, log = console, world: worldOpts = {}, gate: gateOpts = {}, fetch: fetcher = null } = {}) {
   const store = await createStore(env, log);
+  const gate = createGate({ password: env.ROOM_PASSWORD || '', log, ...gateOpts });
   // Socket.io 는 기존 request 리스너를 감싸므로 Express 를 먼저 붙이고 나서 attach 한다
-  const ctx = { store, world: null, fetch: fetcher };
+  const ctx = { store, world: null, gate, fetch: fetcher };
   const app = createApp(ctx);
   const server = http.createServer(app);
-  const { io, world } = attachSocket(server, { room: getStudyRoom(), world: { store, tz: env.STATS_TZ || undefined, log, ...worldOpts }, log });
+  const { io, world } = attachSocket(server, { room: getStudyRoom(), gate, world: { store, tz: env.STATS_TZ || undefined, log, ...worldOpts }, log });
   ctx.world = world;
   await world.init(); // 강아지 이름 · 저장된 공부 합계
   await new Promise((resolve) => server.listen(port, resolve));
   const actualPort = server.address().port;
-  log.log(`[server] http://localhost:${actualPort}  store=${store.kind}${store.kind === 'memory' ? ' (영구 저장 없음)' : ''}  tz=${world.tz}  node=${process.version}`);
+  log.log(`[server] http://localhost:${actualPort}  store=${store.kind}${store.kind === 'memory' ? ' (영구 저장 없음)' : ''}  tz=${world.tz}  password=${gate.enabled ? 'on' : 'off'}  node=${process.version}`);
 
   // 종료: 진행 중인 공부 세션을 먼저 저장(SIGTERM 포함)하고 소켓·저장소를 닫는다
   let closing = null;
@@ -122,7 +131,7 @@ async function startServer({ port = Number(process.env.PORT) || 3000, env = proc
     }
     return closing;
   };
-  return { app, server, io, world, store, port: actualPort, close };
+  return { app, server, io, world, store, gate, port: actualPort, close };
 }
 
 if (require.main === module) {

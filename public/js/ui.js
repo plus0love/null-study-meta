@@ -807,11 +807,15 @@
     }
 
     // ── 입장 모달 ────────────────────────────────────────────────────
-    /** 입장 정보를 받는다. submit 이 실패(reject)하면 에러를 보여주고 다시 기다린다. */
-    showLogin({ nickname = '', avatar = null, error = '' }, submit) {
+    /**
+     * 입장 정보를 받는다. submit 이 실패(reject)하면 에러를 보여주고 다시 기다린다.
+     * passwordRequired 면 비밀번호 칸을 보여 준다(6단계). 거부 에러에 retryAfterMs 가 있으면 그동안 버튼을 잠그고 초를 센다.
+     */
+    showLogin({ nickname = '', avatar = null, error = '', passwordRequired = false, password = '' }, submit) {
       const modal = $('login');
       const form = $('login-form');
       const input = $('login-nick');
+      const pass = $('login-pass');
       const err = $('login-error');
       const btn = $('login-submit');
       this.inRoom = false;
@@ -821,28 +825,60 @@
       this.setAvatar(avatar);
       this.builder.setVisible(true);
       input.value = nickname;
+      $('login-pass-field').hidden = !passwordRequired;
+      pass.value = passwordRequired ? password : '';
+      pass.required = passwordRequired;
       err.textContent = error;
       err.hidden = !error;
       modal.hidden = false;
-      setTimeout(() => input.focus(), 50);
+      setTimeout(() => (passwordRequired && nickname ? pass : input).focus(), 50);
+      clearInterval(this.loginLockTimer);
       const onSubmit = async (e) => {
         e.preventDefault();
         btn.disabled = true;
         err.hidden = true;
         try {
-          await submit({ nickname: input.value.trim(), avatar: this.avatarTouched ? this.avatar : null });
+          await submit({ nickname: input.value.trim(), avatar: this.avatarTouched ? this.avatar : null, password: passwordRequired ? pass.value : '' });
           form.removeEventListener('submit', onSubmit);
           modal.hidden = true;
           this.builder.setVisible(false);
           this.inRoom = true;
         } catch (ex) {
+          if (ex.retryAfterMs > 0) {
+            this.lockLogin(ex.retryAfterMs);
+            return; // 버튼은 카운트다운이 끝날 때 풀린다
+          }
           err.textContent = ex.message || '입장에 실패했습니다.';
           err.hidden = false;
-        } finally {
+          if (ex.clearPassword) { pass.value = ''; pass.focus(); }
           btn.disabled = false;
         }
       };
       form.addEventListener('submit', onSubmit);
+    }
+
+    /** 비밀번호를 여러 번 틀려 잠긴 동안 입장 버튼을 막고 남은 초를 센다 */
+    lockLogin(ms) {
+      const err = $('login-error');
+      const btn = $('login-submit');
+      const until = Date.now() + ms;
+      clearInterval(this.loginLockTimer);
+      const tick = () => {
+        const left = Math.ceil((until - Date.now()) / 1000);
+        if (left <= 0) {
+          clearInterval(this.loginLockTimer);
+          this.loginLockTimer = null;
+          btn.disabled = false;
+          err.hidden = true;
+          $('login-pass').focus();
+          return;
+        }
+        err.textContent = `비밀번호를 여러 번 틀렸어요. ${left}초 뒤에 다시 시도해 주세요.`;
+        err.hidden = false;
+        btn.disabled = true;
+      };
+      tick();
+      this.loginLockTimer = setInterval(tick, 250);
     }
 
     hideLoading() {

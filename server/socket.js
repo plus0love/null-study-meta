@@ -1,7 +1,9 @@
 'use strict';
 /**
  * Socket.io 배선. 프로토콜 (클라이언트 → 서버는 ack 콜백으로 결과를 돌려준다):
- *   join      { nickname, token?, avatar? }  → ack { ok, self, token, players, seats, pomodoro, config, serverTime, resumed } | { ok:false, error }
+ *   join      { nickname, token?, avatar?, password? } → ack { ok, self, token, players, seats, pomodoro, config, serverTime, resumed } | { ok:false, error, remaining?, retryAfterMs? }
+ *             ROOM_PASSWORD 가 설정돼 있으면 password 필수 (error: password_required | wrong_password{remaining} | locked{retryAfterMs}).
+ *             살아 있는 token 으로 이어받는 재접속은 비밀번호를 다시 묻지 않는다.
  *   move      { x, y, facing, moving }       → 다른 사람에게 playerMoved. 거부 시 본인에게만 move:correct { x, y, reason }
  *   sit       { seatId } / stand             → ack { ok, error? }, 모두에게 playerSat / playerStood
  *   status    { status: 'study'|'rest' }     → 모두에게 playerStatus
@@ -26,8 +28,9 @@
  */
 const { Server } = require('socket.io');
 const { World } = require('./game/world');
+const { createGate, clientKey } = require('./gate');
 
-function attachSocket(httpServer, { room, world: worldOpts = {}, log = console } = {}) {
+function attachSocket(httpServer, { room, world: worldOpts = {}, gate = createGate(), log = console } = {}) {
   const io = new Server(httpServer, {
     serveClient: true,
     pingInterval: 10000,
@@ -72,7 +75,15 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, log = console }
     socket.on('join', async (payload, cb) => {
       const ack = ackOf(cb);
       if (player) return ack({ ok: false, error: 'already_joined' });
-      const res = world.join({ ...(payload || {}), socketId: socket.id });
+      const { password, ...rest } = payload || {};
+      // 비밀번호: 살아 있는 세션을 이어받는 게 아니면 게이트를 통과해야 한다 (평문은 로그·월드 어디에도 넘기지 않는다)
+      if (gate.enabled && !world.hasSession(rest.token)) {
+        const g = await gate.check(clientKey(socket), password);
+        if (!g.ok) return ack(g);
+        if (player) return ack({ ok: false, error: 'already_joined' }); // 해시 계산 사이에 다른 join 이 먼저 끝남
+        if (!socket.connected) return;
+      }
+      const res = world.join({ ...rest, socketId: socket.id });
       if (!res.ok) return ack({ ok: false, error: res.error });
       player = res.player;
       // 같은 토큰으로 온 새 연결 → 옛 소켓은 즉시 정리 (옛 소켓의 disconnect 핸들러는 socketId 가 달라 무시된다)

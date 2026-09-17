@@ -7,7 +7,7 @@
 (function () {
   'use strict';
 
-  const LS = { token: 'nsm.token', nickname: 'nsm.nickname', avatar: 'nsm.avatar' };
+  const LS = { token: 'nsm.token', nickname: 'nsm.nickname', avatar: 'nsm.avatar', password: 'nsm.password' };
   const FORWARD = [
     'playerJoined', 'playerLeft', 'playerMoved', 'move:correct', 'playerSat', 'playerStood', 'playerStatus',
     'avatar:update', 'playerEmoji', 'chat', 'pomodoro', 'roomCount', 'playerDisconnected', 'playerReconnected',
@@ -20,7 +20,7 @@
       this.socket = null;
       this.listeners = new Map();
       this.session = null; // 마지막 join ack
-      this.credentials = null; // { nickname, avatar(파츠 객체) }
+      this.credentials = null; // { nickname, avatar(파츠 객체), password? }
       this.offset = 0; // serverTime - Date.now()
       this.corrections = 0; // 디버그/테스트용 카운터
       this.wasConnected = false;
@@ -56,9 +56,10 @@
           token: localStorage.getItem(LS.token) || null,
           nickname: localStorage.getItem(LS.nickname) || '',
           avatar: Net.savedAvatar(),
+          password: localStorage.getItem(LS.password) || '', // 6단계: 맞춘 방 비밀번호 (틀리면 지운다)
         };
       } catch (_) {
-        return { token: null, nickname: '', avatar: null };
+        return { token: null, nickname: '', avatar: null, password: '' };
       }
     }
 
@@ -90,19 +91,26 @@
       });
     }
 
-    /** 입장 (또는 재입장). 실패하면 reject(Error(message)). */
-    async join({ nickname, avatar }) {
+    /**
+     * 입장 (또는 재입장). 실패하면 reject(Error(error)) — err.ack 에 서버 ack 전체(remaining, retryAfterMs 등).
+     * password 는 방 비밀번호가 켜진 서버에서만 의미가 있다. 성공하면 localStorage 에 기억하고, 틀리면 지운다.
+     */
+    async join({ nickname, avatar, password = '' }) {
       const saved = Net.saved();
       const payload = { nickname, avatar, token: saved.token };
+      if (password) payload.password = password;
       const ack = await this.ask('join', payload);
       if (!ack.ok) {
         if (ack.error === 'already_joined') return this.session;
-        throw new Error(ack.error);
+        if (ack.error === 'wrong_password' || ack.error === 'password_required') Net.save({ password: null });
+        const err = new Error(ack.error);
+        err.ack = ack;
+        throw err;
       }
-      this.credentials = { nickname: ack.self.nickname, avatar: ack.self.avatar };
+      this.credentials = { nickname: ack.self.nickname, avatar: ack.self.avatar, password };
       this.session = ack;
       this.offset = ack.serverTime - Date.now();
-      Net.save({ token: ack.token, nickname: ack.self.nickname, avatar: ack.self.avatar });
+      Net.save({ token: ack.token, nickname: ack.self.nickname, avatar: ack.self.avatar, password: password || null });
       if (saved.token && !ack.resumed) this.emitLocal('sessionLost', ack);
       this.emitLocal('session', ack);
       return ack;

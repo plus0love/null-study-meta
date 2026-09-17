@@ -129,6 +129,7 @@ npm test
 | `stage3.test.js` | 3단계: 커피머신 상호작용(거리·토글·앉으면 공부→일어나면 휴식), 듣는 중 제목, 소켓 `interact`/`listening` 브로드캐스트, oEmbed 프록시(가짜 fetch·캐시, 네트워크 없음), 시간대 가중치(경계 30분·합 1·팔레트), 유튜브 URL 파싱·최근 5개 |
 | `npc.test.js` | 강아지: 결정적 난수로 20분 돌려도 막힌 칸에 안 들어감·모든 상태 순환·산책, 틱당 이동량, 쳐다보기, 쓰다듬기 쿨다운, 이름 규칙 + 소켓: 두 클라이언트가 같은 `npc:update` 를 받음, 쓰다듬기/이름 브로드캐스트 |
 | `socket.test.js` | 소켓 E2E: 입장/중복 닉네임, playerMoved 가 발신자에게 안 감, move:correct 는 본인에게만, 착석/상태/아바타, 채팅/이모지, 뽀모도로 동기화, 토큰 재접속·옛 소켓 정리·유예 만료 |
+| `gate.test.js` | 6단계: 게이트 단위(비활성 통과·빈 값·틀림/맞음·5회 → 잠금·시간 경과 후 해제·성공 시 초기화·긴 값·IP 분리·X-Forwarded-For 키·평문 미로그), 서버 E2E(`/api/config`·`password_required`·`wrong_password remaining`·`locked retryAfterMs`·정상 입장·살아 있는 토큰 재접속은 비밀번호 없이·재시작 후엔 다시 필요·로그에 평문 없음), 브라우저(비밀번호 칸 표시·틀림 → 에러·맞음 → 입장·`nsm.password` 기억·새 탭 자동 입장) |
 | `avatar.test.js` | 5단계: 카탈로그(머리 ≥10·상의 5·안경 3·색 6/10/12/8/6, 톤 수 = 팔레트 수), 검증(없는 id·잘못된 값 → 기본값, 옛 정수/`{shirt}` → 상의 색, 여분 필드 제거), `users.avatar` 저장/아바타 미전송 재입장 복원, `avatar:update` ack·본인 포함 브로드캐스트, 모든 레이어 PNG 존재 + 128×256(32×64 ×4×4) 규격 |
 | `latency.test.js` | TCP 지연 프록시(편도 300ms)로 두 명이 20Hz 이동 → 거부 0건, 상대·서버·새 입장자 모두 같은 최종 위치 |
 | `browser.test.js` | 헤드리스 Chrome 2탭(B 는 300ms 지연): 입장 → 키보드 이동이 상대 화면에 같은 위치 → 채팅(입력 중 이동 차단, HTML 미렌더) → 이모지 → 소파까지 걸어가 E 착석 → 강아지 옆까지 걸어가 E 쓰다듬기(두 탭 ❤️·채팅·같은 위치) → 책상 착석 시 두 탭 모두 모니터 켜짐/일어나면 꺼짐 → 커피머신까지 걸어가 E ☕ 휴식(상대 멤버 목록 반영) → 시각 고정으로 낮/노을/밤 전환·항상 밤 → 시스템 메시지 ×N → localStorage 할 일 서버 이전 → 목표 저장이 상대 화면 팻말에 → 출석 토스트·목표 달성 🎉·시스템 채팅 → 랭킹 카드(시간·🔥·메모리 배지) → 아바타 꾸미기 모달에서 단발·핑크 선택이 상대 화면에 즉시 반영·localStorage 저장 → 소켓 강제 종료 후 이어받기 → 나가기. Chrome 이 없으면 건너뜀 (`CHROME_PATH`) |
@@ -140,7 +141,7 @@ npm test
 
 | 클라이언트 → 서버 | ack / 결과 |
 |---|---|
-| `join { nickname, token?, avatar? }` | `{ ok, resumed, token, self, players, seats, pomodoro, config, serverTime }` — `token` 이 살아 있으면 기존 플레이어를 이어받고 옛 소켓은 즉시 끊음. `avatar` 를 안 보내면(새 브라우저) `users.avatar` 에서 복원 |
+| `join { nickname, token?, avatar?, password? }` | `{ ok, resumed, token, self, players, seats, pomodoro, config, serverTime }` — `token` 이 살아 있으면 기존 플레이어를 이어받고 옛 소켓은 즉시 끊음. `avatar` 를 안 보내면(새 브라우저) `users.avatar` 에서 복원. `ROOM_PASSWORD` 가 켜져 있으면 `password` 필수 — 거부 시 `{ ok:false, error: password_required \| wrong_password, remaining \| locked, retryAfterMs }` (살아 있는 토큰으로 이어받을 땐 안 물음) |
 | `move { x, y, facing, moving }` (20Hz, volatile) | 통과 시 다른 사람에게만 `playerMoved`. 거부(예산 초과·벽·착석 중) 시 **본인에게만** `move:correct { x, y, reason }` |
 | `sit { seatId }` / `stand` | 점유·거리(56px) 검사 → 모두에게 `playerSat` / `playerStood` |
 | `status { study \| rest }` | `playerStatus` |
@@ -166,6 +167,7 @@ npm test
 `leaderboard:refresh { nickname, seconds }`(세션 저장 시), `attendance { streak, weekDays }`(본인, 출석 기록 시), `goalReached { id, nickname }` + 시스템 `chat`.
 입장 ack 에는 `profile { goal, streak: { streak, weekDays, attendedToday } }`, `store`, `tz` 가 함께 옵니다 (오늘 출석했으면 "N일 연속 출석 🔥" 토스트).
 HTTP: `GET /api/oembed?url=…` 은 유튜브 주소만 받아 서버가 oEmbed 제목을 대신 가져옵니다(10분 캐시, 브라우저 CORS 우회). 테스트는 fetch 를 주입해 네트워크를 쓰지 않습니다.
+`GET /api/config` → `{ passwordRequired }` 로 클라이언트가 입장 화면에 비밀번호 칸을 보일지 정합니다 (값은 내려가지 않음).
 
 이동 검증은 **예산 방식**입니다: 마지막 이동 이후 경과 시간 × 최대 속도(150px/s) × 1.5 만큼 예산이 쌓이고(상한 0.5초치),
 이동 거리만큼 소모합니다. 지연으로 패킷이 몰려 와도 통과하고, 순간이동은 거부됩니다. 거부되면 클라이언트는 순간이동 없이 서버 위치로 부드럽게 수렴합니다.
@@ -191,6 +193,15 @@ HTTP: `GET /api/oembed?url=…` 은 유튜브 주소만 받아 서버가 oEmbed 
    테이블 `users` · `study_sessions` · `todos` · `daily_goals` · `attendance` 와 집계 함수 `study_totals(tz)` · `attendance_streaks(tz, only_nickname)` · `list_todos(nickname, tz)` 가 생깁니다.
    모든 테이블은 RLS 가 켜져 있고 정책이 없으며 함수도 anon/authenticated 에서 실행을 막아 두어, **service_role 키를 가진 서버만** 접근합니다.
 2. `.env` 에 `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`(service_role) 를 넣고 서버를 시작하면 로그에 `store=supabase` 가 찍힙니다. 연결에 실패하면 경고 후 메모리로 폴백합니다.
+
+## 방 비밀번호 (6단계)
+
+`ROOM_PASSWORD` 환경변수를 넣으면 방 전체에 비밀번호가 걸립니다 (`server/gate.js`).
+
+- 서버는 시작할 때 무작위 솔트로 **scrypt 해시**만 들고 있고, 입장 때 받은 값을 같은 방식으로 해시해 `timingSafeEqual` 로 비교합니다. 평문은 로그·ack·월드 어디에도 남기지 않습니다 (로그엔 `password=on/off` 와 실패 횟수·IP 만).
+- 클라이언트(IP, 프록시 뒤에서는 `X-Forwarded-For` 첫 IP)별로 **5회 연속 실패 → 30초 잠금**. 잠긴 동안은 `locked { retryAfterMs }` 로 즉시 거부되고, 입장 화면은 남은 초를 세며 버튼을 막습니다. 맞추면 실패 횟수가 초기화됩니다.
+- 입장 화면은 `GET /api/config` 의 `passwordRequired` 를 보고 비밀번호 칸을 보입니다. **맞춘 값은 `localStorage`(`nsm.password`) 에 기억**해 다음 접속·재연결 때 자동으로 보내고, 틀리면 지웁니다. 살아 있는 세션 토큰으로 이어받는 재접속은 비밀번호를 다시 묻지 않습니다.
+- 비워두면 게이트가 꺼져 지금까지처럼 누구나 입장합니다. 바꾸려면 서버를 재시작합니다.
 
 ## 아바타 (5단계)
 
@@ -293,11 +304,12 @@ python tools/avatar_parts.py     # public/assets/avatar/ (catalog.json + 레이�
 | `SUPABASE_URL` | – | Supabase 프로젝트 URL |
 | `SUPABASE_SERVICE_KEY` | – | Supabase **service_role** 키 (서버 전용, 클라이언트 노출 금지) |
 | `STATS_TZ` | `Asia/Seoul` | 통계 시간대 (오늘/이번 주/출석의 0시·월요일 기준) |
+| `ROOM_PASSWORD` | – | 방 전체 비밀번호 (6단계). 비워두면 누구나 입장 |
 
 ## Render 배포 (Free)
 
 `render.yaml` 이 있어 **New + → Blueprint** 로 배포합니다. `NODE_VERSION=24`, `healthCheckPath: /healthz`,
-`SUPABASE_URL` / `SUPABASE_SERVICE_KEY` 는 `sync: false` 라 대시보드에서 입력합니다 (지금 안 넣으면 메모리 저장소로 동작). `STATS_TZ` 는 `Asia/Seoul`.
+`SUPABASE_URL` / `SUPABASE_SERVICE_KEY` / `ROOM_PASSWORD` 는 `sync: false` 라 대시보드에서 입력합니다 (Supabase 키를 안 넣으면 메모리 저장소, 비밀번호를 안 넣으면 누구나 입장). `STATS_TZ` 는 `Asia/Seoul`.
 Free 플랜은 15분 무요청 시 잠들고, 재시작 시 메모리 상태가 초기화됩니다.
 
 검수 스크린샷을 다시 찍으려면 서버를 띄운 뒤:

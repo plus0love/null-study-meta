@@ -20,3 +20,5 @@ services:
         sync: false
       - key: STATS_TZ
         value: Asia/Seoul
+      - key: ROOM_PASSWORD
+        sync: false

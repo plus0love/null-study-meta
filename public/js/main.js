@@ -19,12 +19,14 @@
   let tiles;
   let dog;
   let avatarKit;
+  let config = { passwordRequired: false };
   try {
     room = await fetch('/api/rooms/studyroom').then((r) => r.json());
-    [tiles, dog, avatarKit] = await Promise.all([
+    [tiles, dog, avatarKit, config] = await Promise.all([
       fetch('/assets/tiles.json').then((r) => r.json()),
       fetch('/assets/dog.json').then((r) => r.json()),
       AvatarKit.load(room.assetVersion),
+      fetch('/api/config').then((r) => r.json()).catch(() => ({ passwordRequired: false })),
     ]);
   } catch (err) {
     fail(`방 데이터를 불러오지 못했습니다: ${err.message}`);
@@ -265,22 +267,40 @@
   setInterval(() => { if (net.connected) net.syncTime(); }, 30000);
 
   // ── 입장 ───────────────────────────────────────────────────────
-  function startLogin({ error = '' } = {}) {
+  /** 서버 join 거부 → 사용자에게 보여줄 Error (retryAfterMs / clearPassword 는 입장 모달이 읽는다) */
+  function joinError(err) {
+    const ack = err.ack || {};
+    const out = new Error(err.message);
+    if (err.message === 'not_connected') out.message = '서버에 연결할 수 없어요.';
+    else if (err.message === 'password_required') { out.message = '방 비밀번호를 입력해 주세요.'; out.clearPassword = true; }
+    else if (err.message === 'wrong_password') { out.message = `비밀번호가 틀렸어요. (남은 횟수 ${ack.remaining}회)`; out.clearPassword = true; }
+    else if (err.message === 'locked') { out.message = '비밀번호를 여러 번 틀렸어요. 잠시 뒤에 다시 시도해 주세요.'; out.retryAfterMs = ack.retryAfterMs || 30000; out.clearPassword = true; }
+    return out;
+  }
+
+  function startLogin({ error = '', retryAfterMs = 0 } = {}) {
     const saved = Net.saved();
-    ui.showLogin({ nickname: saved.nickname, avatar: saved.avatar, error }, async ({ nickname, avatar }) => {
+    ui.showLogin({ nickname: saved.nickname, avatar: saved.avatar, error, passwordRequired: config.passwordRequired, password: saved.password }, async ({ nickname, avatar, password }) => {
       net.connect();
-      await net.join({ nickname, avatar });
+      try {
+        await net.join({ nickname, avatar, password });
+      } catch (err) {
+        throw joinError(err);
+      }
     });
+    if (retryAfterMs > 0) ui.lockLogin(retryAfterMs);
   }
 
   const saved = Net.saved();
   ui.setAvatar(saved.avatar);
-  if (saved.token && saved.nickname) {
+  // 비밀번호 방인데 기억한 비밀번호가 없으면 자동 재입장 대신 모달을 띄운다 (토큰이 살아 있으면 서버가 안 물어보지만, 재시작됐을 수 있다)
+  if (saved.token && saved.nickname && (!config.passwordRequired || saved.password)) {
     net.connect();
     try {
-      await net.join({ nickname: saved.nickname, avatar: saved.avatar });
+      await net.join({ nickname: saved.nickname, avatar: saved.avatar, password: saved.password });
     } catch (err) {
-      startLogin({ error: err.message === 'not_connected' ? '서버에 연결할 수 없어요.' : err.message });
+      const e = joinError(err);
+      startLogin({ error: e.message, retryAfterMs: e.retryAfterMs || 0 });
     }
   } else {
     startLogin();
