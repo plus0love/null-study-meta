@@ -75,6 +75,10 @@ Null Study Meta — 에셋 출처 / 제작자 / 라이선스
    - Pretendard — 제작: 길형진 (orioncactus), SIL Open Font License 1.1
      https://github.com/orioncactus/pretendard
 
+18단계 오리지널 (tools/props_v6.py · tools/npc_sprites.py)
+   - 세로 슬라이딩 유리문 패널·열린 문 자리, 동물원 매점 건물(어닝·창구·카운터)·메뉴판·파라솔 테이블·카페 의자·야외 쓰레기통: 직접 그림 (오리지널)
+   - 사람 NPC 시트 npcs.png (매점 점원·바리스타): tools/avatar_parts.py 의 파츠(원본 캐릭터 character.png, CC0 — 위 항목)를 합성하고 앞치마·모자·동작을 직접 덧그림 (수정본)
+
 검토했으나 사용하지 않은 후보
    - Ninja Adventure (Pixel-boy / Sparklin Labs, CC0): 닌자·승려 컨셉이라 스터디룸과 맞지 않음
    - Twelve 16x18 RPG sprites (Antifarea, CC-BY 3.0): 프리뷰 시트에 배경색이 구워져 있고 구식 느낌

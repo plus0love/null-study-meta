@@ -359,7 +359,7 @@ test('소켓 E2E: pet:config → 모두 npc:update(ownerId·cosmetics) · 주인
   t.after(() => { a.close(); b.close(); });
   const ja = await joinAs(a, { nickname: '민수' });
   const jb = await joinAs(b, { nickname: '영희' });
-  assert.deepEqual(ja.npcs.map((n) => n.id), ['dog']);
+  assert.deepEqual(ja.npcs.map((n) => n.id), ['dog', 'barista']); // 18단계: 바리스타
   assert.equal(ja.npcs[0].species, 'dog');
   assert.deepEqual(ja.npcs[0].cosmetics, { head: null, neck: null, back: null });
   await srv.world.store.adjustCoins('민수', 300, 'study', Date.now());

@@ -1813,7 +1813,7 @@ class World extends EventEmitter {
     this.walk = null;
     clearInterval(this.walkTimer);
     this.walkTimer = null;
-    const player = this.players.get(w.playerId) || null;
+    const player = this.players.get(w.playerId) || (this.walker && this.walker.owner) || null;
     if (player) player.dogWalk = null;
     if (this.walker) {
       const id = this.walker.id;

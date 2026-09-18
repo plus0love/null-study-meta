@@ -309,7 +309,7 @@ test('소켓 E2E: note:leave → note:waiting/seatItems → note:read · coffee:
   assert.equal(g2.delivered, false);
   await sleep(30);
   assert.deepEqual(itemsA.at(-1).mugs, { 'study-b': [{ id: g2.gift.id, menu: 'cocoa', from: '민수', to: '영희' }] });
-  assert.ok(chatsA.some((c) => /영희님 자리에 ☕ 코코아를 놓고 갔어요/.test(c.text)));
+  assert.ok(chatsA.some((c) => /바리스타 바리스타가 민수님이 보낸 코코아를 놓고 갔어요/.test(c.text))); // 18단계 문구
   assert.deepEqual(await ask(a, 'coffee:gift', { menu: 'latte', to: '영희' }), { ok: false, error: 'insufficient', balance: 0 });
   // 늦게 들어온 사람의 입장 ack 에 머그가 실린다
   const c = connect(srv.port);

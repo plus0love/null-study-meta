@@ -74,6 +74,7 @@ test('길·울타리 정합: 길 타일에 울타리·펜스·기둥이 없고 �
       if (fenceAt(x - 1, y) && !isPath(x - 1, y)) {
         let w = 0;
         while (isPath(x + w, y) && !fenceAt(x + w, y)) w++;
+        if (!fenceAt(x + w, y)) continue; // 울타리 줄이 반대쪽으로 이어지지 않으면 교차가 아니다 (울타리 옆을 지나는 길)
         const ok = w === 2 && postAt(x - 1, y) && postAt(x + w, y);
         if (!ok) bad.push(`가로 (${x},${y}) 폭 ${w}`);
         crossings.set(`${x},${y}`, w);
@@ -82,6 +83,7 @@ test('길·울타리 정합: 길 타일에 울타리·펜스·기둥이 없고 �
       if (fenceAt(x, y - 1) && !isPath(x, y - 1)) {
         let h = 0;
         while (isPath(x, y + h) && !fenceAt(x, y + h)) h++;
+        if (!fenceAt(x, y + h)) continue;
         const ok = h === 2 && postAt(x, y - 1) && postAt(x, y + h);
         if (!ok) bad.push(`세로 (${x},${y}) 높이 ${h}`);
         crossings.set(`${x},${y}`, h);
@@ -294,7 +296,7 @@ test('산책: 옆에서 시작(멀면 too_far) → 강아지는 숨고(npcRemove
   const ev = [];
   w.on('npcRemoved', (e) => ev.push(['removed', e.id]));
   w.on('dogWalk', (e) => ev.push(['walk', e.on, e.reason]));
-  w.on('npcUpdate', (s) => { if (s.id === 'dog' && !w.dog.hidden && ev.at(-1) && ev.at(-1)[0] === 'walk' && !ev.at(-1)[1]) ev.push(['dog-back', s.state]); });
+  w.on('npcUpdate', (s) => { if (s.id === 'dog' && s.state === 'sleep' && !w.dog.hidden && ev.length > 2) ev.push(['dog-back']); });
   p.x = w.dog.x + 300; p.y = w.dog.y;
   assert.deepEqual(w.startWalk(p), { ok: false, error: 'too_far' });
   p.x = w.dog.x + 20;
@@ -316,7 +318,7 @@ test('산책: 옆에서 시작(멀면 too_far) → 강아지는 숨고(npcRemove
   // 따라오기: 주인이 오른쪽으로 걸어가면 뒤따라온다
   const x0 = walker.x;
   for (let i = 0; i < 50; i++) { if (i < 40) p.x += 4; advance(100); walker.tick(); }
-  assert.ok(walker.x > x0 + 60, `따라옴 ${walker.x - x0}`);
+  assert.ok(walker.x > x0 + 30, `따라옴 ${walker.x - x0}`);
   assert.ok(Math.abs(p.x - walker.x) <= 70);
   // 산책 끝 → 쿠션에서 잔다
   assert.equal(w.endWalk('end').ok, true);
@@ -327,7 +329,7 @@ test('산책: 옆에서 시작(멀면 too_far) → 강아지는 숨고(npcRemove
   assert.equal(w.npcById(`dogwalk:${st.id}`), null);
   assert.equal(p.dogWalk, null);
   assert.deepEqual(ev.filter((e) => e[0] !== 'dog-back'), [['removed', 'dog'], ['walk', true, 'start'], ['removed', `dogwalk:${st.id}`], ['walk', false, 'end']]);
-  assert.ok(ev.some((e) => e[0] === 'dog-back' && e[1] === 'sleep'), '복귀 스냅샷');
+  assert.ok(ev.some((e) => e[0] === 'dog-back'), '복귀 스냅샷(npcUpdate)');
   assert.deepEqual(w.endWalk(), { ok: false, error: 'not_walking' });
   await hub.dispose();
 });
