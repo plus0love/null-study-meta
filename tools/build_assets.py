@@ -30,6 +30,7 @@ import props_zoo as Z  # noqa: E402
 import props_zoo2 as Z2  # noqa: E402
 import props_v4 as S  # noqa: E402
 import props_v5 as S2  # noqa: E402
+import props_v6 as S3  # noqa: E402
 from pixel import Canvas  # noqa: E402
 from recolor import recolor  # noqa: E402
 
@@ -428,6 +429,17 @@ def build_objects():
     add("cushion_floor_a", S2.cushion_floor(0), solid=False)
     add("cushion_floor_b", S2.cushion_floor(1), solid=False)
     add("bean_shelf_wall", over(V.wall_block(2, 2), S.bean_shelf()))  # 커피 코너 동선: 원두 선반을 스터디룸 위쪽 벽에 건다 (벽 배경 포함)
+
+    # ── 18단계: 스터디룸 좌우 벽 슬라이딩 문 · 동물원 매점 건물 · 파라솔 테이블 · 카페 의자 (항상 맨 뒤에 추가) ──
+    add("study_panel_v", S3.study_panel_v("s"))  # 세로 슬라이딩 문 패널 1x2 (통로가 아래)
+    add("door_open_v", S3.door_open_v(), solid=False, door=True)
+    add("snack_shop", S3.snack_shop(), top=1)  # 4x2, 위 줄 어닝은 top
+    add("snack_counter", S3.snack_counter(), "top", False)  # 4x1 카운터 (점원 다리를 가린다, 충돌은 서버 setSolid)
+    add("snack_menu", S3.snack_menu())
+    add("parasol_table", S3.parasol_table(), top=1)
+    add("cafe_chair_e", S3.cafe_chair("right"), solid=False, seats=[(0, 0, "right")])
+    add("cafe_chair_w", S3.cafe_chair("left"), solid=False, seats=[(0, 0, "left")])
+    add("park_bin", S3.park_bin())
 
 
 # ── 아틀라스 패킹 ──────────────────────────────────────────────────────

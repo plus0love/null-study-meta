@@ -30,7 +30,9 @@
   const $ = (id) => document.getElementById(id);
   const STATUS_LABEL = { study: '공부 중', rest: '휴식 중', coffee: '☕ 휴식 중' };
   const STATUS_ICON = { study: 'i-book', rest: 'i-leaf', coffee: 'i-coffee' };
-  const HINT_LABEL = { sit: '앉기', stand: '일어나기', seatChoice: '앉기 · 쪽지 남기기', read: '쪽지 읽기', coffee: '커피 코너', pet: '쓰다듬기', music: '음악 듣기', lie: '눕기', massage: '안마의자에 앉기', board: '기록 보기', shop: '탈것 상점', sign: '안내판 보기', feed: '먹이 주기', snack_icecream: '아이스크림 사기 (1🪙)', snack_churros: '츄러스 사기 (1🪙)', fish: '낚시하기', reel: '지금! 낚아채기', telescope: '망원경 보기' };
+  const HINT_LABEL = { sit: '앉기', stand: '일어나기', seatChoice: '앉기 · 쪽지 남기기', read: '쪽지 읽기', coffee: '커피 코너', pet: '쓰다듬기', dog: '강아지 (쓰다듬기 · 산책 · 재주)', music: '음악 듣기', lie: '눕기', massage: '안마의자에 앉기', board: '기록 보기', shop: '탈것 상점', sign: '안내판 보기', feed: '먹이 주기', snack: '매점 (1🪙)', fish: '낚시하기', reel: '지금! 낚아채기', telescope: '망원경 보기' };
+  const TRICK_LABEL = { sit: '앉아', paw: '손', spin: '빙글' }; // 18단계
+  const TRICK_EMOJI = { sit: '🐕', paw: '🖐', spin: '🌀' };
   const ANIMAL_LABEL = { panda: '판다', lion: '사자', giraffe: '기린', penguin: '펭귄', guinea_pig: '기니피그', flamingo: '플라밍고', monkey: '원숭이', elephant: '코끼리', duck: '오리', squirrel: '다람쥐', pigeon: '비둘기', rabbit: '토끼', cat: '고양이' };
   const VEHICLE_LABEL = { rickshaw: '🛒 낡은 인력거', bicycle: '🚲 자전거', kickboard: '🛴 킥보드', kart: '🏎 기본 카트', sport: '🏎 스포츠 카트' };
   // 9단계: 편집 거부 사유 → 안내
@@ -181,6 +183,16 @@
       this.onStudyKick = async () => ({ ok: false });
       this.onStudyDelete = async () => ({ ok: false });
       this.onRankScope = () => {};
+      // 18단계
+      this.onDogInfo = async () => ({ ok: false });
+      this.onDogWalk = async () => ({ ok: false });
+      this.onDogTrick = async () => ({ ok: false });
+      this.onPet = () => {};
+      this.onSnackMenu = async () => ({ ok: false });
+      this.onSnackBuy = async () => ({ ok: false });
+      this.onStaffName = async () => ({ ok: false });
+      this.dogInfo = null; // 마지막 dog:info
+      this.dogWalk = null; // { by, playerId } 산책 중
       this.lobbyHandlers = null; // showLobby 가 채움 { onEnter(code), onCreate(form), onRename() }
 
       this.todos = [];
@@ -206,6 +218,7 @@
       this.bindLobby();
       this.bindOutdoor();
       this.bindSocial(); // 15단계: 쪽지 · 커피 · D-day
+      this.bindDogAndSnack(); // 18단계: 강아지 E 메뉴 · 매점 · 스태프 이름
       this.buildMinimapBase();
       this.renderTodos();
       setInterval(() => { this.tickPomodoro(); this.tickLap(); this.tickCoinProgress(); }, 250);
@@ -357,6 +370,107 @@
       $('board-track').textContent = r.track ? `한 바퀴 약 ${r.track.lengthTiles}타일 · 체크포인트 ${r.track.checkpoints}개` : '';
       $('board-mine').textContent = r.myBest ? `내 최고 기록 ${(r.myBest.ms / 1000).toFixed(1)}s (${VEHICLE_LABEL[r.myBest.vehicle] || r.myBest.vehicle}) · 하루 첫 완주 +1 🪙` : '탈것을 타고 출발선을 지나 한 바퀴 돌면 기록돼요 · 하루 첫 완주 +1 🪙';
       if (r.myBest) this.setLapBest(r.myBest.ms);
+    }
+
+    // ── 18단계: 강아지 E 메뉴 · 매점 모달 · 애정도 · 스태프 이름 ─────────────
+    bindDogAndSnack() {
+      for (const [modal, btn] of [['dog-menu-modal', 'dog-menu-close'], ['snack-modal', 'snack-close']]) {
+        $(btn).addEventListener('click', () => { $(modal).hidden = true; });
+        $(modal).addEventListener('click', (e) => { if (e.target === $(modal)) $(modal).hidden = true; });
+      }
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { $('dog-menu-modal').hidden = true; $('snack-modal').hidden = true; } });
+      for (const id of ['barista-name', 'clerk-name']) $(id).addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); $(`${id}-save`).click(); } });
+      $('barista-name-save').addEventListener('click', async () => { const r = await this.onStaffName('barista', $('barista-name').value.trim()); if (r && r.ok) this.toast(`바리스타 이름: ${r.name}`); });
+      $('clerk-name-save').addEventListener('click', async () => { const r = await this.onStaffName('clerk', $('clerk-name').value.trim()); if (r && r.ok) this.toast(`매점 점원 이름: ${r.name}`); });
+    }
+
+    /** 강아지 옆 E → 메뉴: 쓰다듬기 · 산책 가기/끝 · 재주(앉아·손·빙글, 레벨 해금) */
+    async openDogMenu(npcId) {
+      const box = $('dog-menu');
+      box.innerHTML = '';
+      $('dog-menu-modal').hidden = false;
+      let info = null;
+      try { info = await this.onDogInfo(); } catch (_) { /* 오프라인 */ }
+      if (!info || !info.ok) { $('dog-menu-modal').hidden = true; return; }
+      this.dogInfo = info;
+      this.renderDogAffection(info);
+      const a = info.affection;
+      const name = info.name || '강아지';
+      $('dog-menu-title').textContent = `🐶 ${name}`;
+      $('dog-menu-level').textContent = `❤️ Lv${a.level}${a.need ? ` · ${a.xp}/${a.need}` : ' · MAX'}`;
+      const walk = info.walk;
+      const mine = walk && walk.playerId === this.selfId;
+      $('dog-menu-hint').textContent = walk ? (mine ? `${name}와(과) 산책 중 · 5분마다 ❤️ +1` : `${walk.by}님과 산책 중이에요`) : '산책을 나가면 야외까지 따라와요 (5분마다 ❤️ +1)';
+      const add = (emoji, label, sub, onclick, { locked = false, disabled = false } = {}) => {
+        const b = el('button', { type: 'button', class: `btn ghost${locked ? ' locked' : ''}`, onclick }, [el('em', { text: emoji }), el('span', { text: label }), sub ? el('small', { text: sub }) : null]);
+        if (disabled || locked) b.disabled = true;
+        box.appendChild(b);
+      };
+      add('🤚', '쓰다듬기', '하루 첫 3번 ❤️ +1', () => { $('dog-menu-modal').hidden = true; this.onPet(npcId); });
+      if (walk && mine) add('🏠', '산책 끝', '쿠션으로 돌아가요', async () => { $('dog-menu-modal').hidden = true; const r = await this.onDogWalk(false); if (r && r.ok) this.toast(`${name}이(가) 쿠션으로 돌아갔어요 🐾`); });
+      else if (walk) add('🐾', '산책 가기', `${walk.by}님과 산책 중`, () => {}, { disabled: true });
+      else add('🐾', '산책 가기', this.outdoor ? '라운지에서만' : '나를 따라와요', async () => { $('dog-menu-modal').hidden = true; const r = await this.onDogWalk(true); if (r && r.ok) this.toast(`${name}와(과) 산책 시작! 문을 지나면 야외까지 따라와요 🐾`); else this.notify({ busy: `${r && r.by ? `${r.by}님과` : '누군가와'} 산책 중이에요.`, too_far: '강아지 옆으로 조금 더 가까이.', not_indoor: '산책은 라운지에서 시작해요.', riding: '탈것에서 내린 뒤에요.' }[r && r.error] || '산책을 시작하지 못했어요.'); }, { disabled: this.outdoor });
+      for (const u of a.unlocks.filter((x) => TRICK_LABEL[x.id])) {
+        const has = a.unlocked.includes(u.id);
+        add(TRICK_EMOJI[u.id], TRICK_LABEL[u.id], has ? u.desc.replace(/^E 메뉴 → [^ ]+ /, '') : `Lv${u.level}에 해금`, async () => { $('dog-menu-modal').hidden = true; const r = await this.onDogTrick(u.id); if (r && !r.ok) this.notify({ too_far: '강아지 가까이에서 해요.', locked: `Lv${r.level}에 해금돼요.`, no_npc: '강아지가 근처에 없어요.' }[r.error] || '지금은 할 수 없어요.'); }, { locked: !has });
+      }
+    }
+
+    isDogMenuOpen() {
+      return !$('dog-menu-modal').hidden;
+    }
+
+    /** 설정 팝오버의 애정도 상세 + 강아지 메뉴 헤더 (dog:info / dog:level / dog:xp) */
+    renderDogAffection(info) {
+      if (!info || !info.ok) return;
+      this.dogInfo = info;
+      const a = info.affection;
+      if (!$('dog-level')) return;
+      $('dog-level').textContent = `❤️ Lv${a.level}`;
+      $('dog-xp-bar').style.width = a.need ? `${Math.round((a.xp / a.need) * 100)}%` : '100%';
+      $('dog-xp-text').textContent = a.need ? `${a.xp}/${a.need}` : 'MAX';
+      const w = info.walk;
+      $('dog-walk-text').textContent = w ? `${w.playerId === this.selfId ? '나' : `${w.by}님`}와(과) 산책 중 🐾 (5분마다 ❤️ +1)` : '라운지 강아지 옆에서 E → 산책 가기 · 5분마다 ❤️ +1 · 쓰다듬기 하루 첫 3번 +1';
+      const ul = $('dog-unlocks');
+      ul.innerHTML = '';
+      for (const u of a.unlocks) ul.appendChild(el('li', { class: a.unlocked.includes(u.id) ? '' : 'locked' }, [el('span', { text: u.emoji }), el('span', { text: `Lv${u.level} ${u.name}` }), el('span', { class: 'muted', text: u.desc })]));
+    }
+
+    async refreshDogInfo() {
+      try { const r = await this.onDogInfo(); if (r && r.ok) this.renderDogAffection(r); } catch (_) { /* 오프라인 */ }
+    }
+
+    /** dog:walk 방송 → 산책 상태 (강아지 메뉴가 열려 있으면 다시 그린다) */
+    setDogWalk(d) {
+      this.dogWalk = d && d.on ? { by: d.by, playerId: d.playerId } : null;
+      if (this.dogInfo) this.dogInfo.walk = this.dogWalk ? { by: this.dogWalk.by, playerId: this.dogWalk.playerId } : null;
+      if (this.dogInfo) this.renderDogAffection(this.dogInfo);
+    }
+
+    /** 매점 모달: 메뉴 4종 (각 1코인) */
+    async openSnack() {
+      $('snack-error').hidden = true;
+      $('snack-modal').hidden = false;
+      $('snack-balance').textContent = `보유 ${this.coins} 🪙`;
+      const box = $('snack-menu');
+      box.innerHTML = '';
+      let r = null;
+      try { r = await this.onSnackMenu(); } catch (_) { /* 오프라인 */ }
+      if (!r || !r.ok) return;
+      $('snack-hint').textContent = `${r.clerk ? `${r.clerk}: "어서 오세요!" · ` : ''}각 1코인 · 5분 동안 손에 들어요`;
+      for (const m of r.menu) {
+        box.appendChild(el('button', { type: 'button', 'data-item': m.id, onclick: async () => {
+          const res = await this.onSnackBuy(m.id);
+          if (res && res.ok) { $('snack-modal').hidden = true; return; }
+          const err = $('snack-error');
+          err.textContent = { insufficient: '코인이 모자라요. 1코인이 필요해요.', too_far: '창구 앞으로 조금 더 가까이.', no_item: '없는 메뉴예요.' }[res && res.error] || '사지 못했어요.';
+          err.hidden = false;
+        } }, [el('em', { text: m.emoji }), el('span', { text: m.name }), el('span', { class: 'muted', text: `${m.price}🪙` })]));
+      }
+    }
+
+    isSnackOpen() {
+      return !$('snack-modal').hidden;
     }
 
     // ── 15단계: 쪽지 남기기/읽기/쪽지함 · 커피 코너 · 자리 선택 · D-day ─────────────
@@ -552,7 +666,7 @@
           pops[name].hidden = false;
           btns[name].classList.add('active');
           if (name === 'notify') this.clearUnread();
-          if (name === 'settings') this.refreshWallet(); // 내 책상 슬롯 목록(인벤토리)
+          if (name === 'settings') { this.refreshWallet(); this.refreshDogInfo(); } // 내 책상 슬롯 목록(인벤토리) · 18단계 애정도
           if (name === 'study') this.refreshStudyInfo(); // 11단계: 멤버·주간 목표
         }
       };
@@ -788,8 +902,8 @@
     }
 
     setNpcName(id, name) {
-      if (id !== 'dog') return;
-      const input = $('npc-name');
+      const input = { dog: $('npc-name'), barista: $('barista-name'), clerk: $('clerk-name') }[id];
+      if (!input) return;
       if (document.activeElement !== input) input.value = name;
       input.placeholder = name;
     }
@@ -2303,6 +2417,7 @@
       $('study-info-title').textContent = study ? `${study.locked ? '🔒 ' : ''}${study.name}` : '스터디';
       $('study-info-code').textContent = study ? study.code : '------';
       $('study-owner').hidden = !(study && study.isOwner);
+      if ($('npc-staff-form')) $('npc-staff-form').hidden = !(study && study.isOwner); // 18단계: 바리스타·점원 이름은 방장만
       if (study && study.isOwner) this.fillStudyForm(study);
     }
 

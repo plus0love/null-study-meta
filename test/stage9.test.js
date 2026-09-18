@@ -408,7 +408,7 @@ test('월드: 서버 재시작 — 저장소의 배치를 init() 에서 로드�
   assert.equal(w2.world.canStand(22.5 * T, 15 * T), false);
   assert.equal(w2.world.canStand(27.5 * T, 15 * T), false, '가로 침대 머리 쪽');
   assert.equal(w2.world.seat(`f:${pb.entry.id}`).kind, 'bed');
-  assert.equal(w2.world.canStand(30.5 * T, 15 * T), true, '모르는 아이템·다른 방 항목은 무시');
+  assert.equal(w2.world.canStand(32.5 * T, 15 * T), true, '모르는 아이템·다른 방 항목은 무시 (18단계: x 30 은 스터디룸 벽 → 오른쪽 복도 x 32)');
   await w2.world.dispose();
 });
 

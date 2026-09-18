@@ -135,9 +135,10 @@ test('소켓 E2E: 두 클라이언트가 같은 npc:update 를 받고, 쓰다듬
   t.after(() => { a.close(); b.close(); });
   const ja = await joinAs(a, { nickname: '민수' });
   const jb = await joinAs(b, { nickname: '영희' });
-  assert.equal(ja.npcs.length, 1);
+  assert.equal(ja.npcs.length, 2, '강아지 + 바리스타 (18단계)');
   assert.equal(ja.npcs[0].id, 'dog');
   assert.equal(ja.npcs[0].name, '사랑');
+  assert.equal(ja.npcs[1].id, 'barista');
   assert.deepEqual(jb.npcs[0], srv.world.dog.snapshot());
 
   const seenA = collect(a, 'npc:update');
@@ -147,7 +148,7 @@ test('소켓 E2E: 두 클라이언트가 같은 npc:update 를 받고, 쓰다듬
   await sleep(50);
   assert.equal(seenA.length, seenB.length, '두 클라이언트가 같은 수의 업데이트를 받음');
   for (let i = 0; i < seenA.length; i++) assert.deepEqual(seenA[i], seenB[i]);
-  const last = seenA.at(-1);
+  const last = seenA.filter((s) => s.id === 'dog').at(-1);
   assert.equal(last.id, 'dog');
   assert.ok(Number.isFinite(last.x) && Number.isFinite(last.y));
 
@@ -176,5 +177,5 @@ test('소켓 E2E: 두 클라이언트가 같은 npc:update 를 받고, 쓰다듬
   assert.equal((await ask(a, 'npc:name', { id: 'dog', name: '' })).ok, false);
   const c = connect(srv.port);
   t.after(() => c.close());
-  assert.equal((await joinAs(c, { nickname: 'C' })).npcs[0].name, '초코');
+  assert.equal((await joinAs(c, { nickname: 'C' })).npcs.find((n) => n.id === 'dog').name, '초코');
 });

@@ -559,11 +559,13 @@ const FLOOR_TILE = { sand: 'sand_', ice: 'ice_', soil: 'soil_', savanna: 'savann
 const ZOO_PHOTO = { x0: 74, y0: 61, x1: 75, y1: 61 }; // 포토존 발자국 두 칸 (둘이 서면 플래시)
 
 function buildZoo(b, c) {
-  // ── 경계 울타리 (아래 띠 위쪽 y 50 · 우측 띠 왼쪽 x 80) + 정문(32..33, 50: 2칸 + 양쪽 기둥) 아치 + 옆문(80, 32..33: 2칸 + 양쪽 기둥) ──
-  // 산책로가 울타리와 만나는 곳은 전부 이런 문이다 (ZOO_GATES — 통행 테스트가 검증)
+  // ── 경계 울타리 (아래 띠 위쪽 y 50 · 우측 띠 왼쪽 x 80) + 정문(32..33, 50) 아치 + 옆문(80, 32..33) + 동쪽 세로 산책로 문(88..89, 50) ──
+  // 산책로가 울타리와 만나는 곳은 전부 2칸 문 + 양쪽 기둥이다 (ZOO_GATES — 통행 테스트가 검증).
+  // 18단계: 우리 사이 세로 산책로(x 88..89)가 y 50 울타리를 지나는 곳에 문이 없어 막혀 있던 것을 고쳤다.
+  const northGates = ZOO_GATES.filter((g) => g.cells[0][1] === 50);
   for (let x = 0; x < W; x++) {
-    if (x >= 32 && x <= 33) continue;
-    if (x === 31 || x === 34) { b.place('gate_post', x, 50); continue; }
+    if (northGates.some((g) => g.cells.some(([gx]) => gx === x))) continue;
+    if (northGates.some((g) => g.posts.some(([gx]) => gx === x))) { b.place('gate_post', x, 50); continue; }
     b.place(x === 79 ? 'fence_ne' : 'fence_h', x, 50);
   }
   for (let y = 13; y < 50; y++) {
@@ -576,8 +578,7 @@ function buildZoo(b, c) {
   b.label(82.5, 32.9, 'ZOO →', { ...SANS, size: 7, weight: 700, color: '#fff0cc', spacing: 1 });
   c.setKind(0, 50, W - 1, 50, 'fence');
   c.setKind(80, 13, 80, 50, 'fence');
-  for (let x = 32; x <= 33; x++) c.kind[50][x] = 'grass';
-  for (let y = 32; y <= 33; y++) c.kind[y][80] = 'grass';
+  for (const g of ZOO_GATES) for (const [x, y] of g.cells) if (c.kind[y][x] === 'fence') c.kind[y][x] = 'grass';
 
   // ── 산책로: 정문 → y 58..59 가로 → x 88..89 세로(우측 띠) → 전망 데크. 옆문 → 세로 길 ──
   for (let y = 50; y <= 57; y++) for (let x = 32; x <= 33; x++) c.path(x, y);
@@ -671,11 +672,33 @@ function buildZoo(b, c) {
     zoo.enclosures.push({ id: e.id, name: e.name, desc: e.desc, species: e.species, count: e.count, extra: e.extra || [], area: { x0: x0 + 1, y0: y0 + 1, x1: x1 - 1, y1: y1 - 1 }, floor: e.floor, pool: e.pool ? { x0: e.pool[0], y0: e.pool[1], x1: e.pool[2], y1: e.pool[3] } : null, feedTile, sign: { x: sign.x, y: sign.y }, enterable: Boolean(e.gate) });
   }
 
-  // ── 매점 · 포토존 · 벤치 · 전망 데크 (산책로 남쪽 y 61..) ──────────────
-  b.place('snack_bar', 66, 61);
-  b.interactable('snack:icecream', 'snack_icecream', 66.5, 64, { hint: '아이스크림 1🪙', range: 40 });
-  b.interactable('snack:churros', 'snack_churros', 68.5, 64, { hint: '츄러스 1🪙', range: 40 });
-  zoo.snacks = [{ id: 'icecream', name: '아이스크림', emoji: '🍦', price: 1 }, { id: 'churros', name: '츄러스', emoji: '🥨', price: 1 }];
+  // ── 매점 건물 (18단계: 4x3, 세로·가로 산책로 교차점(88..89 × 58..59) 남서쪽 빈 잔디) · 포토존 · 벤치 · 전망 데크 ──
+  // 건물 x 82..85 · y 61..63: 위 줄 줄무늬 어닝(top) · 가운데 창구(점원이 선다) · 아래 카운터(top 레이어로 점원 다리를 가리고 setSolid 로 막는다)
+  const SHOP = { x: 82, y: 61 };
+  c.put('snack_shop', SHOP.x, SHOP.y);
+  b.place('snack_counter', SHOP.x, SHOP.y + 2);
+  b.setSolid(SHOP.x, SHOP.y + 2, SHOP.x + 3, SHOP.y + 2, true);
+  c.setKind(SHOP.x, SHOP.y + 2, SHOP.x + 3, SHOP.y + 2, 'prop');
+  b.light(SHOP.x + 0.95, SHOP.y + 0.15, 2.0, 0xffd48a, 0.45); // 간판 조명 2개 (어닝 위)
+  b.light(SHOP.x + 2.95, SHOP.y + 0.15, 2.0, 0xffd48a, 0.45);
+  b.interactable('snack', 'snack', SHOP.x + 2, SHOP.y + 4, { hint: '매점 (1🪙)', range: 48 }); // 창구 앞 (카운터 바로 아래 칸)
+  c.put('snack_menu', SHOP.x + 4, SHOP.y + 1); // 메뉴판 (글자는 클라이언트 라벨)
+  b.label(SHOP.x + 4.5, SHOP.y + 1.55, '🍦 🥨\n🌭 🍋\n1🪙', { ...SANS, size: 7, weight: 600, color: '#fff0cc', lineHeight: 1.15 });
+  c.put('park_bin', SHOP.x - 1, SHOP.y + 2);
+  // 파라솔 테이블 2 + 의자 (앉기 = 휴식) — 건물 오른쪽
+  for (const ty of [SHOP.y + 1, SHOP.y + 5]) {
+    c.put('parasol_table', 88, ty);
+    c.put('cafe_chair_e', 87, ty + 1);
+    c.put('cafe_chair_w', 90, ty + 1);
+  }
+  zoo.snacks = [
+    { id: 'icecream', name: '아이스크림', emoji: '🍦', price: 1 },
+    { id: 'churros', name: '츄러스', emoji: '🥨', price: 1 },
+    { id: 'hotdog', name: '핫도그', emoji: '🌭', price: 1 },
+    { id: 'lemonade', name: '레모네이드', emoji: '🍋', price: 1 },
+  ];
+  // 점원 NPC 자리 (창구 가운데, 발은 카운터 줄 아래 끝 → 다리는 카운터 뒤, 상체는 창구에)
+  zoo.clerk = { x: (SHOP.x + 2) * TILE - 1, y: (SHOP.y + 3) * TILE, greet: { x: (SHOP.x + 2) * TILE, y: (SHOP.y + 4) * TILE, range: 64 } };
   b.place('photo_board', 73, 60);
   b.place('photo_mark', 74, 61);
   b.place('photo_mark', 75, 61);
@@ -709,6 +732,7 @@ function buildZoo(b, c) {
 const ZOO_GATES = [
   { id: 'main', cells: [[32, 50], [33, 50]], posts: [[31, 50], [34, 50]] },
   { id: 'side', cells: [[80, 32], [80, 33]], posts: [[80, 31], [80, 34]] },
+  { id: 'east', cells: [[88, 50], [89, 50]], posts: [[87, 50], [90, 50]] }, // 18단계: 우리 사이 세로 산책로 ↔ 동물원 위쪽 울타리
   { id: 'petting', cells: [[55, 56], [56, 56]], posts: [[54, 56], [57, 56]] },
 ];
 

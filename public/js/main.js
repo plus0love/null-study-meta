@@ -34,12 +34,13 @@
   let vehicles; // 12단계: 탈것 아틀라스 { img, frames, meta }
   let animals; // 14단계: 동물 시트 메타 { meta, img }
   let fish; // 14단계: 물고기 시트 { meta, img } (도감 아이콘 · 어항)
+  let npcs; // 18단계: 사람 NPC 시트 메타 (점원·바리스타)
   let config = { passwordRequired: false };
   try {
     room = await fetch('/api/rooms/studyroom').then((r) => r.json());
     const v = room.assetVersion ? `?v=${room.assetVersion}` : '';
     const loadImg = (src) => new Promise((resolve) => { const img = new Image(); img.onload = () => resolve(img); img.onerror = () => resolve(null); img.src = src; });
-    [tiles, dog, avatarKit, config, catalog, furn, pets, petdeco, vehicles, animals, fish] = await Promise.all([
+    [tiles, dog, avatarKit, config, catalog, furn, pets, petdeco, vehicles, animals, fish, npcs] = await Promise.all([
       fetch('/assets/tiles.json').then((r) => r.json()),
       fetch('/assets/dog.json').then((r) => r.json()),
       AvatarKit.load(room.assetVersion),
@@ -56,6 +57,7 @@
       fetch(`/assets/vehicles.json${v}`).then((r) => r.json()).then(async (json) => ({ img: await loadImg(`/assets/vehicles.png${v}`), frames: json.frames, meta: json.meta })).catch(() => ({ img: null, frames: {}, meta: { seat: {}, decal: {} } })),
       fetch(`/assets/animals.json${v}`).then((r) => r.json()).then(async (meta) => ({ meta, img: await loadImg(`/assets/animals.png${v}`) })).catch(() => ({ meta: null, img: null })),
       fetch(`/assets/fish.json${v}`).then((r) => r.json()).then(async (meta) => ({ meta, img: await loadImg(`/assets/fish.png${v}`) })).catch(() => ({ meta: null, img: null })),
+      fetch(`/assets/npcs.json${v}`).then((r) => r.json()).catch(() => null),
     ]);
   } catch (err) {
     fail(`방 데이터를 불러오지 못했습니다: ${err.message}`);
@@ -88,7 +90,7 @@
   });
   // 부팅 중에는 add() 가 인스턴스를 돌려주지 않으므로 직접 만들어 넘긴다
   const scene = new RoomScene();
-  const sceneData = (r, onReady) => ({ room: r, tiles, avatarKit, dog, pets: pets.meta, vehicles: vehicles.meta, animals: animals.meta, fish: fish.meta, catalog, onReady });
+  const sceneData = (r, onReady) => ({ room: r, tiles, avatarKit, dog, pets: pets.meta, vehicles: vehicles.meta, animals: animals.meta, fish: fish.meta, npcs, catalog, onReady });
   await new Promise((onReady) => game.scene.add('room', scene, true, sceneData(room, onReady)));
   ui.hideLoading();
 
@@ -150,14 +152,23 @@
         else ui.notify({ daytime: '낮에는 별이 안 보여요. 밤(19시~6시)에 다시 와요 🌙', too_far: '망원경 앞으로 조금 더 가까이.' }[r.error] || '하늘을 볼 수 없어요.');
       }).catch(() => {});
     }
-    if (kind === 'snack_icecream' || kind === 'snack_churros') {
-      return net.zooSnack(kind.slice(6)).then((r) => {
-        if (r.ok) { ui.toast(`${r.snack.emoji} 맛있게 드세요! (5분 동안 손에 들어요)`); sound.coin(-1); }
-        else ui.notify({ insufficient: '코인이 모자라요. 1코인이 필요해요.', too_far: '매점 앞으로 조금 더 가까이.' }[r.error] || '사지 못했어요.');
-      }).catch(() => {});
-    }
+    if (kind === 'snack') return ui.openSnack(); // 18단계: 매점 창구 → 메뉴 4종 모달
     net.interact(id).then((r) => { if (!r.ok && r.error === 'too_far') ui.notify('조금 더 가까이 가 주세요.'); }).catch(() => {});
   };
+  // 18단계: 강아지 E 메뉴(쓰다듬기·산책·재주) · 매점 · NPC 말풍선 · 애정도
+  scene.hooks.onDogMenu = (npcId) => ui.openDogMenu(npcId);
+  ui.onPet = (id) => net.petNpc(id).catch(() => {});
+  ui.onDogInfo = () => net.dogInfo();
+  ui.onDogWalk = (on) => net.dogWalk(on).catch(() => ({ ok: false }));
+  ui.onDogTrick = (trick) => net.dogTrick(trick).catch(() => ({ ok: false }));
+  ui.onSnackMenu = () => net.zooMenu();
+  ui.onSnackBuy = (item) => net.zooSnack(item).then((r) => { if (r.ok) { ui.toast(`${r.snack.emoji} 맛있게 드세요! (5분 동안 손에 들어요)`); sound.coin(-1); if (r.balance !== undefined) ui.setCoins(r.balance, { bump: true }); } return r; }).catch(() => ({ ok: false }));
+  ui.onStaffName = (id, name) => net.setNpcName(id, name).then((r) => { if (!r.ok) ui.notify(r.error === 'forbidden' ? '방장만 바꿀 수 있어요.' : r.error || '이름을 바꾸지 못했어요.'); return r; }).catch(() => ({ ok: false }));
+  net.on('npc:say', (d) => scene.onNpcSay(d));
+  net.on('npc:trick', (d) => scene.onNpcTrick(d));
+  net.on('dog:walk', (d) => { ui.setDogWalk(d); if (scene.me && d.playerId === scene.me.id && d.on) ui.setSitHint(null); });
+  net.on('dog:xp', (d) => { scene.onDogXp(d); if (d.affection && ui.dogInfo) { ui.dogInfo.affection = d.affection; ui.renderDogAffection(ui.dogInfo); } });
+  net.on('dog:level', (d) => { ui.toast(`❤️ ${d.dog || '강아지'} 애정도 Lv${d.level}!${d.unlocked && d.unlocked.length ? ` 해금: ${d.unlocked.map((u) => `${u.emoji} ${u.name}`).join(' · ')}` : ''}`, 6000); sound.chime('goal'); ui.refreshDogInfo(); });
   // 15단계: 쪽지 · 커피 · D-day
   const NOTE_ERR = { invalid_target: '자기 자신에게는 남길 수 없어요.', not_member: '스터디 멤버에게만 남길 수 있어요.', empty: '내용을 적어 주세요.', too_long: '쪽지는 60자까지예요.', no_seat: '상대의 자리를 찾지 못했어요.', too_far: '상대 자리 앞으로 조금 더 가까이.' };
   scene.hooks.onSeatChoice = async (seat, owner) => {
@@ -691,5 +702,5 @@
   }
 
   // 디버그/테스트용 전역 핸들
-  window.NSM = { game, room, net, ui, scene, sound, avatarKit, catalog, enterStudy, openLobby, ensureRoom, rooms };
+  window.NSM = { game, room, net, ui, scene, sound, avatarKit, catalog, enterStudy, openLobby, ensureRoom, rooms, npcs };
 })();

@@ -16,6 +16,8 @@
  *  - 12단계 야외: OutdoorWorld 하나(outdoor, 처음 나갈 때 생성·계속 유지). 스터디 이중문 → goOutdoor(): 스터디 월드에서 detach 해
  *    야외로 adopt (같은 플레이어 객체, player.homeStudy = { id, name }). 건물 문 → goInside(): 소속 스터디 월드로(비어서 해제됐으면 다시 만든다,
  *    삭제됐으면 no_study, 정원이 찼으면 study_full). 재접속(findSession)·닉네임 중복·랭킹 online 은 야외 사람도 포함한다.
+ *  - 18단계 강아지 산책: 스터디 이중문으로 나갈 때 산책 중이면(from.walk) 야외 월드에 산책 강아지를 다시 만들고(spawnWalkDog), 건물 문으로 들어오면 산책이 끝난다(endWalk).
+ *    야외에서 접속이 끊기거나 내보내지면 onPlayerLeft 가 소속 월드의 endWalk 를 부른다. 산책 중인 월드는 비어도 해제하지 않는다. 매점 점원 이름은 방장이 바꾼다(setClerkName).
  * 이벤트: 'worldCreated' (world), 'worldReleased' (world), 'studyUpdated' ({ study, world }), 'studyDeleted' ({ study })
  */
 const EventEmitter = require('node:events');
@@ -241,8 +243,39 @@ class Hub extends EventEmitter {
       studyNameOf: (id) => { const st = this.studies.get(Number(id)); return st ? st.name : null; },
     });
     this.outdoor = world;
+    world.on('playerLeft', (p, reason) => this.onPlayerLeft(world, p, reason));
     this.emit('worldCreated', world);
     return world;
+  }
+
+  /** 18단계: 어느 월드에서든 퇴장(이동 아님)하면 산책 중이던 강아지는 소속 스터디 쿠션으로 */
+  onPlayerLeft(world, player, reason) {
+    if (reason === 'outdoor' || reason === 'inside') return;
+    const sid = player.dogWalk ? player.dogWalk.studyId : null;
+    const home = sid !== null && sid !== undefined ? this.worlds.get(sid) : null;
+    if (home && home.walk && home.walk.playerId === player.id) home.endWalk('left');
+    player.dogWalk = null;
+  }
+
+  /** 18단계: 플레이어의 소속 스터디 월드 (야외에 있으면 homeStudy 로) */
+  homeWorldOf(player, world) {
+    const sid = this.studyIdOf(world, player);
+    return sid !== null && sid !== undefined ? this.worlds.get(sid) || null : null;
+  }
+
+  /** 18단계: 산책 끝 (어디서든 E). 야외에 있으면 그쪽 산책 강아지를 지우고 소속 월드의 endWalk */
+  endDogWalk(player, world, reason = 'end') {
+    const home = world.outdoor ? this.homeWorldOf(player, world) : world;
+    if (!home || !home.walk || home.walk.playerId !== player.id) return { ok: false, error: 'not_walking' };
+    if (world.outdoor && home.walker && world.npcById(home.walker.id)) world.removeNpc(home.walker.id);
+    return home.endWalk(reason);
+  }
+
+  /** 18단계: 매점 점원 이름 — 방장만 (소속 스터디 기준) */
+  async setClerkName(player, world, name) {
+    const study = this.studies.get(this.studyIdOf(world, player));
+    if (!study || !this.isOwner(study, player.nickname)) return { ok: false, error: 'forbidden' };
+    return this.ensureOutdoor().setClerkName(name);
   }
 
   /**
@@ -253,9 +286,11 @@ class Hub extends EventEmitter {
     const study = this.studies.get(from.studyId);
     if (!study) return { ok: false, error: 'no_study' };
     const outdoor = this.ensureOutdoor();
+    const walking = Boolean(from.walk && from.walk.playerId === player.id);
     const { pomodoro } = from.detach(player, 'outdoor');
     player.homeStudy = { id: study.id, name: study.name };
     await outdoor.adopt(player, { pomodoro });
+    if (walking && from.walk && from.walk.playerId === player.id) outdoor.spawnWalkDog(player, from); // 18단계: 산책 강아지도 같이 나간다
     return { ok: true, world: outdoor, player, study };
   }
 
@@ -271,6 +306,7 @@ class Hub extends EventEmitter {
     if (world.players.size >= study.maxPlayers) return { ok: false, error: 'study_full' };
     const { pomodoro } = from.detach(player, 'inside');
     player.homeStudy = null;
+    if (world.walk && world.walk.playerId === player.id) world.endWalk('inside'); // 18단계: 실내로 돌아오면 강아지는 쿠션으로
     await world.adopt(player, { pomodoro });
     this.cancelRelease(study.id);
     await this.touch(study.id);
@@ -291,7 +327,7 @@ class Hub extends EventEmitter {
         takenNicknames: () => this.takenNicknames(),
         allPlayers: () => this.allPlayers(),
       });
-      world.on('playerLeft', () => this.scheduleRelease(id));
+      world.on('playerLeft', (p, reason) => { this.onPlayerLeft(world, p, reason); this.scheduleRelease(id); });
       await world.init();
       this.worlds.set(id, world);
       this.emit('worldCreated', world);
@@ -304,7 +340,7 @@ class Hub extends EventEmitter {
 
   scheduleRelease(id) {
     const w = this.worlds.get(id);
-    if (!w || w.players.size > 0) return;
+    if (!w || w.players.size > 0 || w.walk) return; // 18단계: 강아지가 산책 중이면 (주인이 야외) 내리지 않는다
     this.cancelRelease(id);
     const t = setTimeout(() => this.releaseWorld(id).catch((err) => this.log.warn(`[hub] 월드 해제 실패: ${err.message}`)), this.releaseMs);
     t.unref?.();
@@ -320,7 +356,7 @@ class Hub extends EventEmitter {
   async releaseWorld(id) {
     this.cancelRelease(id);
     const w = this.worlds.get(id);
-    if (!w || w.players.size > 0) return false;
+    if (!w || w.players.size > 0 || w.walk) return false;
     this.worlds.delete(id);
     await w.dispose();
     this.emit('worldReleased', w);

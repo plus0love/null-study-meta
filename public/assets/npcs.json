@@ -1,0 +1,1 @@
+{"frameWidth": 32, "frameHeight": 64, "framesPerRow": 4, "rowsPerChar": 6, "framesPerChar": 24, "rows": {"down": 0, "right": 1, "up": 2, "left": 3, "act": 4, "act2": 5}, "actions": {"wave": [16, 17], "wipe": [18, 19], "machine": [20, 21], "arrange": [22, 23]}, "chars": {"clerk": {"index": 0, "name": "사장님"}, "barista": {"index": 1, "name": "바리스타"}}}

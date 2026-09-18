@@ -43,6 +43,13 @@
  *    D-day: 개인(studyId null) + 스터디 공용. 칠판 목록은 dday.forBoard, 당일 연출은 사람·날짜마다 한 번(ddayCelebrations, 입장 ack profile.ddays.celebrate).
  * 이벤트(15단계): 'note' { note, seatId, by, recipient }, 'notesWaiting' { player, seatId, notes }, 'seatItems' { mugs, notes },
  *         'coffee' { gift, by, recipient, seatId, delivered, self, late }, 'buff' { player }, 'ddays' { by }
+ *  - 18단계: 바리스타 NPC(HumanNpc 'barista', 카운터 뒤 anchors.barista) — 손님이 카운터 앞에 서면 "뭐 드릴까요?", 커피 마시기/배달 때 "맛있게 드세요 ☕"(+김).
+ *    이름은 방장 설정(room_pets item_id 'barista' 행, 기본 '바리스타').
+ *    강아지 산책: startWalk(player) → 강아지(DogNpc)는 숨고(hidden) 같은 id 규칙의 FollowerNpc('dogwalk:<studyId>', walk: true)가 주인을 따라온다.
+ *    야외로 나가면 Hub 가 야외 월드에 같은 산책 강아지를 다시 만들고(spawnWalkDog), 실내로 돌아오거나 산책 끝(E)·접속 종료면 endWalk → 쿠션으로 복귀.
+ *    한 번에 한 사람(this.walk). 애정도(affection.js): 산책 5분마다 +1(tickWalk) · 쓰다듬기 하루 첫 3번 +1(dogPetted) → dog_affection 저장, 레벨업 해금(재주·같이 자기·리본).
+ * 이벤트(18단계): 'npcSay' { npc, text, ms, steam? }, 'npcTrick' { npc, trick, ms }, 'dogWalk' { player, on, reason }, 'dogXp' { player, amount, reason, affection },
+ *         'dogLevel' { player, level, unlocked, affection }
  */
 const EventEmitter = require('node:events');
 const crypto = require('node:crypto');
@@ -51,7 +58,8 @@ const { normalizeNickname, uniqueNickname } = require('./nickname');
 const { SPEED, FEET_W, FEET_H, applyMove, maxBudget, canStand } = require('./movement');
 const { sanitizeChat, createRateLimiter, MAX_LEN: CHAT_MAX } = require('./chat');
 const { Pomodoro } = require('./pomodoro');
-const { DogNpc, SharedPetNpc, FishNpc, FollowerNpc, SPECIES: PET_SPECIES } = require('./npc');
+const { DogNpc, SharedPetNpc, FishNpc, FollowerNpc, HumanNpc, SPECIES: PET_SPECIES, PET_RANGE_PX } = require('./npc');
+const Affection = require('./affection');
 const { StudyTracker } = require('./study');
 const { createMemoryStore } = require('../store/memory');
 const { DEFAULT_TZ, dateKey, weekStart, isValidTz } = require('../store/stats');
@@ -92,6 +100,11 @@ const STUDY_CHAIRS = /^study-[ab]$/; // 2인 스터디룸 의자 (자리를 모�
 const COFFEE_PRICE = 1;
 const COFFEE_BUFF_MS = 10 * 60 * 1000;
 const COFFEE_MENU = { americano: { name: '아메리카노', emoji: '☕' }, latte: { name: '라떼', emoji: '☕' }, cocoa: { name: '코코아', emoji: '☕' } };
+// 18단계
+const BARISTA_DEFAULT = '바리스타';
+const WALK_TICK_MS = 5000; // 산책 xp 판정 주기
+const WALK_RANGE_PX = PET_RANGE_PX; // 강아지 옆 E (산책 가기·재주)
+const TRICK_RANGE_PX = 96;
 
 function seatCenter(room, seat) {
   return { x: (seat.x + 0.5) * room.tileSize, y: (seat.y + 1) * room.tileSize };
@@ -166,9 +179,23 @@ class World extends EventEmitter {
     this.roomPets = new Map(); // roomPetId → { row, npc } (10단계 공용 펫)
     this.dogRow = null; // 강아지 꾸미기/스킬 설정 행 (room_pets item_id 'dog')
     this.dog = null;
+    // 18단계
+    this.walk = null; // { playerId, nickname, startedAt, xpAt } 산책 중 (한 번에 한 사람)
+    this.walker = null; // 산책 강아지 FollowerNpc (어느 월드에 있든 같은 객체)
+    this.walkTimer = null;
+    this.affection = { level: 1, xp: 0 };
+    this.petXp = new Map(); // `${nickname}|${date}` → 오늘 쓰다듬기로 받은 xp 수
+    this.baristaRow = null; // room_pets item_id 'barista' (이름)
+    this.barista = null;
     if (!this.outdoor) {
       this.dog = new DogNpc(this.room, this.npcOpts);
+      this.dog.setLevel(1);
       this.addNpc(this.dog);
+      const ba = (this.room.anchors || {}).barista;
+      if (ba) {
+        this.barista = new HumanNpc(this.room, { ...this.npcOpts, id: 'barista', char: 'barista', name: BARISTA_DEFAULT, x: ba.x, y: ba.y, facing: ba.facing || 'down', greet: ba.greet ? { x: ba.greet.x * this.room.tileSize, y: ba.greet.y * this.room.tileSize, range: ba.greet.range || 64 } : null, greeting: '뭐 드릴까요?' });
+        this.addNpc(this.barista);
+      }
     }
   }
 
@@ -176,8 +203,15 @@ class World extends EventEmitter {
   addNpc(n) {
     n.players = () => [...this.players.values()].filter((p) => p.connected);
     n.on('update', (snap) => this.emit('npcUpdate', snap));
-    n.on('pet', ({ by, id, reaction, highFive }) => this.emit('npcPet', { npc: n.id, by, playerId: id, name: n.name, reaction, highFive }));
+    n.on('pet', ({ by, id, reaction, highFive }) => {
+      this.emit('npcPet', { npc: n.id, by, playerId: id, name: n.name, reaction, highFive });
+      // 18단계: 라운지 강아지(또는 산책 중인 그 강아지)를 쓰다듬으면 애정도 (산책 강아지는 소속 스터디 월드가 센다)
+      const home = n.id === 'dog' ? this : n.walk && n.home ? n.home : null;
+      if (home) home.dogPetted({ id, nickname: by });
+    });
     n.on('name', (name) => this.emit('npcName', { npc: n.id, name }));
+    n.on('say', ({ text, ms }) => this.emit('npcSay', { npc: n.id, text, ms, steam: n.id === 'barista' && n.thanking === true }));
+    n.on('trick', ({ trick, ms }) => this.emit('npcTrick', { npc: n.id, trick, ms }));
     this.npcs.push(n);
     if (this.npcOpts.autoStart !== false) n.start();
     this.emit('npcUpdate', n.snapshot());
@@ -200,6 +234,7 @@ class World extends EventEmitter {
       await this.loadLayout();
       await this.loadPets();
       await this.loadSocial();
+      await this.loadAffection();
       // 강아지 이름: 스터디의 'dog' 행. 독립 실행(스터디 없음)이면 옛 users.dog_name 의 마지막 값
       if (this.dog && this.dogRow && this.dogRow.name) this.dog.setName(this.dogRow.name);
       else if (this.dog && this.studyId === null) {
@@ -217,7 +252,7 @@ class World extends EventEmitter {
   }
 
   npcSnapshots() {
-    return this.npcs.map((n) => n.snapshot());
+    return this.npcs.filter((n) => !n.hidden).map((n) => n.snapshot());
   }
 
   npcById(id) {
@@ -414,6 +449,8 @@ class World extends EventEmitter {
     this.releaseLocks(player);
     player.editing = false;
     this.removeNpc(`p:${player.id}`); // 개인 펫은 주인과 함께 사라진다
+    for (const n of this.npcs.filter((x) => x.walk && x.ownerId === player.id)) this.removeNpc(n.id); // 18단계: 산책 강아지도 (야외로 나가면 Hub 가 새 월드에 다시 만든다)
+    if (this.walk && this.walk.playerId === player.id && reason !== 'outdoor') this.endWalk(reason === 'inside' ? 'inside' : 'left'); // 실내로 돌아오거나 접속이 끊기면 복귀
     player.removed = true;
     this.study.sync(player); // 앉은 채 나가면 세션 저장
     if (player.seatId) { player.seatId = null; player.status = player.prevStatus === 'coffee' ? 'rest' : player.prevStatus || 'rest'; }
@@ -585,6 +622,7 @@ class World extends EventEmitter {
       if (player.seatId) return { ok: false, error: 'seated' };
       player.status = player.status === 'coffee' ? 'rest' : 'coffee';
       player.prevStatus = player.status;
+      if (player.status === 'coffee') this.baristaThanks();
       return { ok: true, kind: it.kind, status: player.status };
     }
     return { ok: true, kind: it.kind };
@@ -1251,6 +1289,7 @@ class World extends EventEmitter {
     if (!pay.ok) return { ok: false, error: pay.error, balance: pay.balance };
     const now = this.now();
     const deliverNow = self || Boolean(recipient && recipient.seatId);
+    this.baristaThanks();
     const gift = await this.store.addCoffeeGift({ studyId: this.scopeId, from: player.nickname, to: target, seatId: seat ? seat.id : player.seatId || null, menu, receivedAt: deliverNow ? now : null }, now);
     if (deliverNow) {
       this.applyCoffeeBuff(recipient);
@@ -1261,6 +1300,20 @@ class World extends EventEmitter {
       this.emit('seatItems', this.seatItems());
     }
     return { ok: true, gift: this.publicGift(gift), delivered: deliverNow, balance: pay.balance };
+  }
+
+  /** 18단계: 바리스타 이름 (커피 배달 채팅용) */
+  baristaName() {
+    return this.barista ? this.barista.name : BARISTA_DEFAULT;
+  }
+
+  /** 18단계: 커피를 내주고 한마디 + 머신 김 (npcSay steam) */
+  baristaThanks() {
+    if (!this.barista) return null;
+    this.barista.thanking = true;
+    const r = this.barista.thank('맛있게 드세요 ☕');
+    this.barista.thanking = false;
+    return r;
   }
 
   /** 자리에 놓여 있던 커피를 받는다 (앉을 때) */
@@ -1479,6 +1532,9 @@ class World extends EventEmitter {
         if (!this.dog) continue;
         this.dog.setCosmetics(row.cosmetics);
         for (const sk of row.skills || []) this.dog.addSkill(sk);
+      } else if (row.itemId === 'barista') {
+        this.baristaRow = row; // 18단계: 바리스타 이름
+        if (this.barista && row.name) this.barista.setName(row.name);
       } else if (this.shop.get(row.itemId)) this.spawnSharedPet(row);
     }
   }
@@ -1662,6 +1718,7 @@ class World extends EventEmitter {
     const npc = this.npcById(npcId);
     if (!npc) return { ok: false, error: 'no_npc' };
     if (npc.id === 'dog') return this.setDogName(player, raw);
+    if (npc.id === 'barista') return this.setBaristaName(player, raw);
     if (!this.npcOwnerCheck(player, npc)) return { ok: false, error: 'forbidden' };
     const res = npc.setName(raw);
     if (!res.ok) return res;
@@ -1673,6 +1730,184 @@ class World extends EventEmitter {
       await this.store.upsertUser(player.nickname, { petConfig: cfg });
     }
     return res;
+  }
+
+  /** 18단계: 방장인지 (스터디 없이 돌면 누구나) */
+  isOwner(player) {
+    const info = this.studyInfo();
+    return !info || !info.ownerNickname || info.ownerNickname === player.nickname;
+  }
+
+  /** 18단계: 바리스타 이름 (방장만, 8자, room_pets 'barista' 행) */
+  async setBaristaName(player, raw) {
+    if (!this.barista) return { ok: false, error: 'no_npc' };
+    if (!this.isOwner(player)) return { ok: false, error: 'forbidden' };
+    const res = this.barista.setName(raw);
+    if (!res.ok) return res;
+    try {
+      if (!this.baristaRow) this.baristaRow = await this.store.addRoomPet(this.scopeId, { itemId: 'barista', name: res.name, releasedBy: null, roomId: this.roomId }, this.now());
+      else this.baristaRow = (await this.store.updateRoomPet(this.scopeId, this.baristaRow.id, { name: res.name })) || this.baristaRow;
+    } catch (err) {
+      this.log.warn(`[world] 바리스타 이름 저장 실패: ${err.message}`);
+    }
+    return res;
+  }
+
+  // ── 18단계: 강아지 산책 · 애정도 ────────────────────────────────────
+  async loadAffection() {
+    if (this.outdoor || this.studyId === null) return;
+    const a = await this.store.getDogAffection(this.scopeId);
+    this.affection = Affection.normalize(a || { level: 1, xp: 0 });
+    if (this.dog) this.dog.setLevel(this.affection.level);
+  }
+
+  /** 설정 → 강아지: 이름·산책 상태·애정도 요약 */
+  dogInfo() {
+    return { ok: true, name: this.dog ? this.dog.name : null, walk: this.walk ? { by: this.walk.nickname, playerId: this.walk.playerId, since: this.walk.startedAt } : null, affection: Affection.summary(this.affection) };
+  }
+
+  /** 산책 강아지 FollowerNpc 를 이 월드에 만든다 (home = 소속 스터디 월드; 야외로 나갈 때 Hub 가 부른다) */
+  spawnWalkDog(player, home = this) {
+    const id = `dogwalk:${home.scopeId}`;
+    if (this.npcById(id)) this.removeNpc(id);
+    const npc = new FollowerNpc(this.room, player, {
+      id, species: 'dog', name: home.dog.name, cosmetics: home.dog.cosmetics, skills: [...home.dog.skills], walk: true,
+      sleepBeside: Affection.has(home.affection.level, 'sleep_beside'), now: this.now, random: this.npcOpts.random, tickMs: this.npcOpts.tickMs,
+    });
+    npc.home = home;
+    npc.setLevel(home.affection.level);
+    home.walker = npc;
+    this.addNpc(npc);
+    return npc;
+  }
+
+  /**
+   * 산책 가기: 라운지 강아지 옆(E)에서. 한 번에 한 사람.
+   * @returns {{ ok: true, walk } | { ok: false, error: 'not_indoor' | 'no_npc' | 'busy' | 'too_far' | 'riding', by? }}
+   */
+  startWalk(player) {
+    if (this.outdoor || !this.dog) return { ok: false, error: this.outdoor ? 'not_indoor' : 'no_npc' };
+    if (this.walk) return { ok: false, error: 'busy', by: this.walk.nickname, playerId: this.walk.playerId };
+    if (player.vehicle) return { ok: false, error: 'riding' };
+    if (Math.hypot(player.x - this.dog.x, player.y - this.dog.y) > WALK_RANGE_PX) return { ok: false, error: 'too_far' };
+    const now = this.now();
+    this.walk = { playerId: player.id, nickname: player.nickname, startedAt: now, xpAt: now };
+    player.dogWalk = { studyId: this.scopeId };
+    this.dog.hidden = true;
+    this.dog.stop();
+    this.dog.path = [];
+    this.emit('npcRemoved', { id: 'dog' });
+    this.spawnWalkDog(player, this);
+    if (this.npcOpts.autoStart !== false) {
+      this.walkTimer = setInterval(() => this.tickWalk(this.now()), WALK_TICK_MS);
+      this.walkTimer.unref?.();
+    }
+    this.emit('dogWalk', { player, on: true, reason: 'start' });
+    return { ok: true, walk: this.dogInfo().walk };
+  }
+
+  /** 산책 끝: 강아지는 쿠션으로 (산책 강아지 NPC 가 이 월드에 있으면 지운다; 다른 월드에 있으면 그쪽 detach 가 지운다) */
+  endWalk(reason = 'end') {
+    if (!this.walk) return { ok: false, error: 'not_walking' };
+    const w = this.walk;
+    this.walk = null;
+    clearInterval(this.walkTimer);
+    this.walkTimer = null;
+    const player = this.players.get(w.playerId) || null;
+    if (player) player.dogWalk = null;
+    if (this.walker) {
+      const id = this.walker.id;
+      if (this.npcById(id)) this.removeNpc(id);
+      else this.walker.dispose();
+      this.walker = null;
+    }
+    if (this.dog) {
+      const cushion = this.dog.spots[0] || { x: 24, y: 9 };
+      const T = this.room.tileSize;
+      this.dog.x = (cushion.x + 0.5) * T;
+      this.dog.y = (cushion.y + 1) * T;
+      this.dog.hidden = false;
+      this.dog.path = [];
+      this.dog.setState('sleep', 8000);
+      this.dog.dirty = true;
+      if (this.npcOpts.autoStart !== false) this.dog.start();
+      this.emit('npcUpdate', this.dog.snapshot());
+    }
+    this.emit('dogWalk', { player, on: false, reason, by: w.nickname, playerId: w.playerId });
+    return { ok: true, reason };
+  }
+
+  /** 산책 5분마다 +1 xp (WALK_XP_MS). 테스트는 now 를 직접 준다 */
+  tickWalk(now = this.now()) {
+    if (!this.walk) return 0;
+    let n = 0;
+    while (now - this.walk.xpAt >= Affection.WALK_XP_MS) {
+      this.walk.xpAt += Affection.WALK_XP_MS;
+      n++;
+    }
+    if (n) this.addAffection(n, 'walk', this.players.get(this.walk.playerId) || this.walkerPlayer() || null);
+    return n;
+  }
+
+  walkerPlayer() {
+    return this.walker ? this.walker.owner : null;
+  }
+
+  /** 쓰다듬기 → 하루 첫 PET_XP_PER_DAY 번만 +1 (사람마다) */
+  dogPetted(by) {
+    if (this.outdoor || !by || !by.nickname) return 0;
+    const key = `${by.nickname}|${this.today()}`;
+    const used = this.petXp.get(key) || 0;
+    if (used >= Affection.PET_XP_PER_DAY) return 0;
+    this.petXp.set(key, used + 1);
+    this.addAffection(1, 'pet', this.playerByNickname(by.nickname) || (this.walker && this.walker.owner && this.walker.owner.nickname === by.nickname ? this.walker.owner : null) || { id: by.id, nickname: by.nickname });
+    return 1;
+  }
+
+  /** xp 를 더하고 저장·레벨업 처리. 'dogXp' / 'dogLevel' 이벤트 */
+  addAffection(amount, reason, player = null) {
+    const r = Affection.gain(this.affection, amount);
+    this.affection = { level: r.level, xp: r.xp };
+    if (this.dog) this.dog.setLevel(r.level);
+    if (this.walker) { this.walker.setLevel(r.level); this.walker.sleepBeside = Affection.has(r.level, 'sleep_beside'); }
+    const save = this.store.setDogAffection(this.scopeId, this.affection, this.now()).catch((err) => this.log.warn(`[world] 애정도 저장 실패: ${err.message}`));
+    this.pendingAwards.add(save);
+    save.finally(() => this.pendingAwards.delete(save));
+    const summary = Affection.summary(this.affection);
+    this.emit('dogXp', { player, amount, reason, affection: summary });
+    if (r.gained) {
+      this.emit('dogLevel', { player, level: r.level, unlocked: r.unlocked, affection: summary });
+      if (r.unlocked.some((u) => u.id === 'ribbon')) this.equipRibbon(player).catch((err) => this.log.warn(`[world] 리본 지급 실패: ${err.message}`));
+    }
+    return r;
+  }
+
+  /** Lv10: 강아지에 리본 기본 장착 (머리가 비어 있을 때) + 산책한 사람 인벤토리에 리본 무료 지급 */
+  async equipRibbon(player) {
+    if (this.dog && !this.dog.cosmetics.head) {
+      const cosmetics = { ...this.dog.cosmetics, head: { itemId: 'deco_ribbon', variant: 'red', inventoryId: null } };
+      this.dog.setCosmetics(cosmetics);
+      await this.ensureDogRow();
+      this.dogRow = (await this.store.updateRoomPet(this.scopeId, this.dogRow.id, { cosmetics })) || this.dogRow;
+    }
+    const item = this.shop.get('deco_ribbon');
+    if (player && player.nickname && item) await this.store.addInventory(player.nickname, item.id, { name: item.name, price: 0, tab: item.tab, category: item.category, variant: 'red', gift: 'dog_lv10' }, this.now());
+  }
+
+  /**
+   * 재주: 앉아(Lv2)·손(Lv3)·빙글(Lv5). 산책 중이면 산책 강아지가, 아니면 라운지 강아지가 한다. 강아지 가까이(96px)에서.
+   * @returns {{ ok: true, trick, ms, npc } | { ok: false, error: 'no_npc' | 'locked' | 'too_far' | 'no_trick', level? }}
+   */
+  dogTrick(player, id) {
+    const trickId = String(id || '');
+    if (!Affection.TRICKS[trickId]) return { ok: false, error: 'no_trick' };
+    const npc = this.walk && this.walker ? this.walker : this.dog;
+    if (!npc || npc.hidden) return { ok: false, error: 'no_npc' };
+    if (!Affection.has(this.affection.level, trickId)) return { ok: false, error: 'locked', level: Affection.UNLOCKS.find((u) => u.id === trickId).level };
+    if (Math.hypot(player.x - npc.x, player.y - npc.y) > TRICK_RANGE_PX) return { ok: false, error: 'too_far' };
+    npc.faceToward(player);
+    const r = npc.trick(trickId);
+    return r.ok ? { ...r, npc: npc.id } : r;
   }
 
   /** 강아지 설정 행 (없으면 만든다) */
@@ -1785,6 +2020,8 @@ class World extends EventEmitter {
     this.graceTimers.clear();
     for (const p of this.pomodoros.values()) p.dispose();
     this.pomodoros.clear();
+    clearInterval(this.walkTimer);
+    this.walkTimer = null;
     for (const n of this.npcs) n.dispose();
     if (this.ownsStudy) await this.study.flushAll('shutdown');
     else {

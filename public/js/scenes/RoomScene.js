@@ -34,6 +34,8 @@
  * 15단계 실내: 가구 밑 반투명 타원 그림자(buildPropShadows) · 펜던트 아래 바닥 빛 웅덩이(light.pool) · 창밖 비(10%, setRain) ·
  *    커피머신 김(anchors.steam) · 벽시계 초침(wall_clock 소품) · 어항 물결(FishNpc) · 문 명패(setNameplate) · 코르크보드 목표 팻말(syncCorkboard) ·
  *    책상 위 쪽지/머그 아이콘(tiles 텍스처의 타일 프레임, setSeatNotes/setSeatMugs) · D-day 칠판(setDdays).
+ * 18단계: 사람 NPC(sheet 'npcs': 매점 점원·바리스타 — 캐릭터별 6행 x 4프레임, 행동 애니 wave/wipe/machine/arrange) · NPC 말풍선(npc:say, 바리스타는 steam 으로 머신 김 강해짐) ·
+ *    강아지 E 메뉴(hooks.onDogMenu — 쓰다듬기/산책/재주) · 재주 연출(npc:trick: 앉아·손🖐·빙글) · 산책 xp "🐾 +1"(dog:xp) · 이름 옆 ❤️Lv(snapshot.level).
  */
 (function () {
   'use strict';
@@ -641,8 +643,15 @@
       this.buffer = [];
       this.animKey = null;
       this.bounceT = 0;
-      // 14단계: 동물 시트(sheet 'animals') · 반딧불이(glow) · 쓰다듬기 가능 여부
-      this.sheet = snap.sheet === 'animals' && scene.animalsMeta && scene.textures.exists('animals') ? 'animals' : 'pets';
+      // 14단계: 동물 시트(sheet 'animals') · 반딧불이(glow) · 쓰다듬기 가능 여부. 18단계: 사람 NPC 시트(sheet 'npcs')
+      this.sheet = snap.sheet === 'animals' && scene.animalsMeta && scene.textures.exists('animals') ? 'animals' : snap.sheet === 'npcs' && scene.npcsMeta && scene.textures.exists('npcs') ? 'npcs' : 'pets';
+      this.char = snap.char || null;
+      this.level = snap.level !== undefined ? snap.level : null;
+      this.walk = Boolean(snap.walk);
+      this.bubble = null;
+      this.bubbleTimer = null;
+      this.xpText = null;
+      this.spinTween = null;
       this.glow = Boolean(snap.glow);
       this.pettable = snap.pettable !== false;
       this.fly = Boolean(snap.fly);
@@ -660,15 +669,19 @@
         const am = scene.animalsMeta;
         this.animalBase = (am.species[this.species] || am.species.panda).index * am.framesPerSpecies;
         this.sprite = scene.add.sprite(snap.x, snap.y, 'animals', this.animalBase + am.frames.idle).setOrigin(0.5, 1);
+      } else if (this.sheet === 'npcs') {
+        const nm = scene.npcsMeta;
+        this.humanBase = ((nm.chars[this.char] || nm.chars.clerk).index) * nm.framesPerChar;
+        this.sprite = scene.add.sprite(snap.x, snap.y, 'npcs', this.humanBase + nm.rows.down * nm.framesPerRow).setOrigin(0.5, 1);
       } else this.sprite = scene.add.sprite(snap.x, snap.y, 'pets', this.frameIndex('sit', 0)).setOrigin(0.5, 1);
       // 우리 안 동물은 1.4배 (후속 수정) — 그림자도 같이
       this.zooScale = snap.kind === 'animal' ? ZOO_ANIMAL_SCALE : 1;
       if (this.zooScale !== 1) this.sprite.setScale(this.zooScale);
       const small = this.glow || this.fly;
-      this.shadow = scene.add.ellipse(snap.x, snap.y - 2, (this.sheet === 'animals' && !small ? 24 : 18) * this.zooScale, (small ? 4 : 6) * this.zooScale, 0x000000, small ? 0.12 : 0.25).setDepth(DEPTH.shadow);
+      this.shadow = scene.add.ellipse(snap.x, snap.y - 2, (this.sheet === 'animals' && !small ? 24 : this.sheet === 'npcs' ? 22 : 18) * this.zooScale, (small ? 4 : this.sheet === 'npcs' ? 8 : 6) * this.zooScale, 0x000000, small ? 0.12 : 0.28).setDepth(DEPTH.shadow);
       if (this.glow) this.shadow.setVisible(false);
-      this.nameText = scene.add.text(snap.x, snap.y + 2, snap.name, {
-        fontFamily: FONTS.sans, fontSize: this.ownerId ? '9px' : '10px', fontStyle: 'bold', color: this.ownerId ? '#d9eeff' : '#ffd9a8',
+      this.nameText = scene.add.text(snap.x, snap.y + 2, this.labelText(snap.name), {
+        fontFamily: FONTS.sans, fontSize: this.ownerId && !this.walk ? '9px' : '10px', fontStyle: 'bold', color: this.sheet === 'npcs' ? '#f1e6d2' : this.ownerId && !this.walk ? '#d9eeff' : '#ffd9a8',
         stroke: '#14111a', strokeThickness: 3, resolution: ZOOM,
       }).setOrigin(0.5, 0).setDepth(DEPTH.label);
       // 우리 안 동물·새·반딧불이는 이름표를 숨긴다 (쓰다듬을 수 있는 자유 동물만 표시)
@@ -688,9 +701,71 @@
       return meta.rows[row] * meta.framesPerRow + this.spIndex * meta.framesPerSpecies + f;
     }
 
+    /** 18단계: 이름 옆 ❤️Lv (강아지·산책 강아지) */
+    labelText(name = this.name) {
+      return this.level !== null && this.level !== undefined ? `${name} ❤️${this.level}` : name;
+    }
+
+    get isDog() {
+      return this.id === 'dog' || this.walk;
+    }
+
+    /** 18단계: 말풍선 (NPC 가 말한다) */
+    say(text, ms = 2500) {
+      this.clearBubble();
+      const scene = this.scene;
+      const t = scene.add.text(0, 0, text, { fontFamily: FONTS.sans, fontSize: '11px', color: '#f1e6d2', resolution: ZOOM, align: 'center', wordWrap: { width: 150, useAdvancedWrap: true } }).setOrigin(0.5, 0.5);
+      const w = Math.ceil(t.width) + 12;
+      const h = Math.ceil(t.height) + 12;
+      const g = scene.add.graphics();
+      g.fillStyle(0x1c1824, 0.88);
+      g.lineStyle(1, 0xffb85c, 0.55);
+      g.fillRoundedRect(-w / 2, -h / 2, w, h, 8);
+      g.strokeRoundedRect(-w / 2, -h / 2, w, h, 8);
+      const c = scene.add.container(0, 0, [g, t]).setDepth(DEPTH.bubble);
+      c.bubbleH = h;
+      c.setAlpha(0);
+      scene.tweens.add({ targets: c, alpha: 1, duration: 120 });
+      this.bubble = c;
+      this.setPosition(this.x, this.y);
+      this.bubbleTimer = scene.time.delayedCall(ms, () => this.clearBubble());
+    }
+
+    clearBubble() {
+      if (this.bubbleTimer) this.bubbleTimer.remove(false);
+      this.bubbleTimer = null;
+      if (this.bubble) this.bubble.destroy();
+      this.bubble = null;
+    }
+
+    /** 18단계: 산책 xp — 머리 위 "🐾 +1" 가 떠오른다 */
+    showXp(amount = 1) {
+      if (this.xpText) this.xpText.destroy();
+      const t = this.scene.add.text(0, 0, `🐾 +${amount}`, { fontFamily: FONTS.sans, fontSize: '11px', fontStyle: 'bold', color: '#ffd08a', stroke: '#14111a', strokeThickness: 3, resolution: ZOOM }).setOrigin(0.5, 1).setDepth(DEPTH.bubble);
+      t.rise = 0;
+      this.xpText = t;
+      this.setPosition(this.x, this.y);
+      this.scene.tweens.add({ targets: t, rise: 22, duration: 1600, ease: 'Sine.easeOut', onUpdate: () => this.setPosition(this.x, this.y) });
+      this.scene.tweens.add({ targets: t, alpha: 0, delay: 1000, duration: 600, onComplete: () => { if (this.xpText === t) this.xpText = null; t.destroy(); } });
+    }
+
+    /** 18단계: 재주 연출 — 손(🖐) · 빙글(프레임을 돌린다) · 앉아(상태 프레임) */
+    showTrick(trick, ms = 1400) {
+      if (trick === 'paw') this.showHeart('🖐', false);
+      if (trick === 'spin' && this.sheet === 'pets') {
+        if (this.spinTween) this.spinTween.remove();
+        const dirs = ['down', 'left', 'up', 'right'];
+        let i = 0;
+        this.animKey = null;
+        this.sprite.anims.stop();
+        this.spinTween = this.scene.time.addEvent({ delay: Math.max(60, ms / 8), repeat: 7, callback: () => { i++; this.sprite.setFrame(this.frameIndex(dirs[i % 4], 0)); this.syncDeco(); } });
+      }
+      if (trick === 'sit') this.showHeart('🐾', false);
+    }
+
     rowName() {
       if (this.state === 'sleep') return 'sleep';
-      if (this.state === 'sit' || this.state === 'look') return 'sit';
+      if (this.state === 'sit' || this.state === 'look' || this.state === 'trick_sit' || this.state === 'trick_paw') return 'sit';
       return this.facing;
     }
 
@@ -765,14 +840,22 @@
       if (this.dot) this.dot.setPosition(rx, ry - hop).setDepth(depth + 0.00001);
       this.shadow.setPosition(rx, ry - 2).setVisible(!this.shoulder && !this.glow);
       this.nameText.setPosition(rx, ry + (this.shoulder ? -46 : 2));
-      if (this.heart) this.heart.setPosition(rx, ry - 52 - (this.heart.rise || 0));
+      const top = this.sheet === 'npcs' ? 70 : 52;
+      if (this.heart) this.heart.setPosition(rx, ry - top - (this.heart.rise || 0));
+      if (this.xpText) this.xpText.setPosition(rx, ry - top - 4 - (this.xpText.rise || 0));
+      if (this.bubble) this.bubble.setPosition(rx, ry - top - 6 - this.bubble.bubbleH / 2);
       this.syncDeco();
       this.syncTank();
     }
 
     setName(name) {
       this.name = name;
-      this.nameText.setText(name);
+      this.nameText.setText(this.labelText(name));
+    }
+
+    setLevel(level) {
+      this.level = level;
+      this.nameText.setText(this.labelText());
     }
 
     /** 서버 스냅샷 반영: 위치는 보간 버퍼에, 상태/방향은 즉시 */
@@ -780,6 +863,7 @@
       this.buffer.push({ x: snap.x, y: snap.y, t: performance.now() });
       if (this.buffer.length > 30) this.buffer.splice(0, this.buffer.length - 30);
       if (snap.name !== this.name) this.setName(snap.name);
+      if (snap.level !== undefined && snap.level !== this.level) this.setLevel(snap.level);
       if (snap.pettable !== undefined) this.pettable = snap.pettable !== false;
       if (Array.isArray(snap.tank)) this.setTank(snap.tank);
       if (snap.cosmetics) {
@@ -806,6 +890,13 @@
       };
       const sp = this.species;
       if (this.glow) { this.animKey = null; return; }
+      if (this.sheet === 'npcs') {
+        // 사람 NPC: 행동 상태(wave/wipe/machine/arrange)는 2프레임 애니, 나머지는 방향 정지 프레임
+        const nm = this.scene.npcsMeta;
+        if (nm.actions[this.state]) play(`npc-${this.char}-${this.state}`);
+        else still(this.humanBase + (nm.rows[this.facing] ?? 0) * nm.framesPerRow);
+        return;
+      }
       if (this.sheet === 'animals') {
         // 동물 시트: 옆모습 하나로 방향은 flipX (왼쪽이 기본)
         const am = this.scene.animalsMeta;
@@ -824,9 +915,10 @@
       }
       switch (this.state) {
         case 'walk': play(`pet-${sp}-walk-${this.facing}`); break;
-        case 'look': play(`pet-${sp}-wag`); break; // 앉아서 꼬리 흔들기
+        case 'look': case 'trick_paw': play(`pet-${sp}-wag`); break; // 앉아서 꼬리 흔들기
         case 'sleep': play(`pet-${sp}-sleep`); break;
-        case 'sit': still(this.frameIndex('sit', 0)); break;
+        case 'sit': case 'trick_sit': still(this.frameIndex('sit', 0)); break;
+        case 'trick_spin': break; // showTrick 이 프레임을 돌린다
         default: still(this.frameIndex(this.facing, 0)); // idle: 서서 정지
       }
       this.syncDeco();
@@ -928,6 +1020,9 @@
 
     destroy() {
       this.clearHeart();
+      this.clearBubble();
+      if (this.xpText) this.xpText.destroy();
+      if (this.spinTween) this.spinTween.remove();
       for (const slot of DECO_ORDER) if (this.deco[slot]) this.deco[slot].sprite.destroy();
       this.sprite.destroy();
       if (this.dot) this.dot.destroy();
@@ -953,6 +1048,7 @@
       this.vehiclesMeta = data.vehicles || { seat: {}, decal: {} }; // 12단계: 탈것 아틀라스 메타 (앉는 위치·데칼 앵커)
       this.animalsMeta = data.animals || null; // 14단계: 동물 시트 메타 (종별 인덱스·프레임 이름)
       this.fishMeta = data.fish || null; // 14단계: 물고기 시트 메타 (어항 물고기)
+      this.npcsMeta = data.npcs || null; // 18단계: 사람 NPC 시트 메타 (점원·바리스타)
       this.catalog = data.catalog || { items: [] }; // 9단계: 상점 카탈로그 (가구 스프라이트 메타)
       this.onReady = data.onReady || (() => {});
       // 맵 전환(restart)에도 main.js 가 채운 hooks 는 유지한다
@@ -962,6 +1058,8 @@
         onPlace: async () => ({ ok: false }), onGrab: async () => ({ ok: false }), onRelease() {}, onMove2: async () => ({ ok: false }), onRemove: async () => ({ ok: false }), onEditState() {},
         // 12단계
         onDoor() {}, onMount() {}, onHorn() {}, onProfile() {}, onVehicleMove() {}, onCreak() {},
+        // 18단계
+        onDogMenu() {},
       };
       this.doorArmed = false; // 문 타일을 벗어나면 켜진다 (도착 직후 되돌아가지 않도록)
       this.transferring = false; // 문 통과 중 (서버 응답 대기)
@@ -1017,6 +1115,7 @@
       if (!this.textures.exists('vehicles')) this.load.atlas('vehicles', `/assets/vehicles.png${v}`, `/assets/vehicles.json${v}`);
       if (this.animalsMeta && !this.textures.exists('animals')) this.load.spritesheet('animals', `/assets/animals.png${v}`, { frameWidth: this.animalsMeta.frameWidth, frameHeight: this.animalsMeta.frameHeight });
       if (this.fishMeta && !this.textures.exists('fish')) this.load.spritesheet('fish', `/assets/fish.png${v}`, { frameWidth: this.fishMeta.frameWidth, frameHeight: this.fishMeta.frameHeight });
+      if (this.npcsMeta && !this.textures.exists('npcs')) this.load.spritesheet('npcs', `/assets/npcs.png${v}`, { frameWidth: this.npcsMeta.frameWidth, frameHeight: this.npcsMeta.frameHeight });
     }
 
     create() {
@@ -1035,6 +1134,7 @@
       this.buildLightTextures();
       this.buildPetAnims();
       this.buildAnimalAnims();
+      this.buildNpcAnims();
       this.buildLighting();
       this.buildScreens();
       this.furniture = new FurnitureLayer(this, this.catalog);
@@ -1671,6 +1771,48 @@
       if (n) n.setName(d.name);
     }
 
+    /** 18단계: NPC 말풍선 (바리스타가 커피를 내주면 머신 김이 잠깐 강해진다) */
+    onNpcSay(d) {
+      const n = this.npcs.get(d.id);
+      if (n) n.say(d.text, d.ms || 2500);
+      if (d.steam) this.steamBurst();
+    }
+
+    onNpcTrick(d) {
+      const n = this.npcs.get(d.id);
+      if (n) n.showTrick(d.trick, d.ms);
+    }
+
+    /** 18단계: 산책 xp — 산책 강아지(또는 라운지 강아지) 머리 위 "🐾 +1" */
+    onDogXp(d) {
+      const n = this.npcs.get(d.id) || [...this.npcs.values()].find((x) => x.walk) || this.npcs.get('dog');
+      if (n) n.showXp(d.amount || 1);
+    }
+
+    /** 18단계: 커피머신 김 2초 동안 강하게 */
+    steamBurst() {
+      if (!this.steam) return;
+      this.steamBursts = (this.steamBursts || 0) + 1;
+      this.steam.frequency = 60;
+      this.steam.quantity = 2;
+      if (this.steamTimer) this.steamTimer.remove(false);
+      this.steamTimer = this.time.delayedCall(2000, () => { if (this.steam) { this.steam.frequency = 240; this.steam.quantity = 1; } });
+    }
+
+    /** 18단계: 사람 NPC 행동 애니 (캐릭터 x 행동, 2프레임) */
+    buildNpcAnims() {
+      const nm = this.npcsMeta;
+      if (!nm || !this.textures.exists('npcs')) return;
+      for (const [name, ch] of Object.entries(nm.chars)) {
+        const base = ch.index * nm.framesPerChar;
+        for (const [act, frames] of Object.entries(nm.actions)) {
+          const key = `npc-${name}-${act}`;
+          if (this.anims.exists(key)) continue;
+          this.anims.create({ key, frames: frames.map((f) => ({ key: 'npcs', frame: base + f })), frameRate: act === 'wave' ? 4 : 2.5, repeat: -1 });
+        }
+      }
+    }
+
     findNearNpc() {
       if (!this.me) return null;
       let best = null;
@@ -1716,7 +1858,7 @@
       const T = this.T;
       const cands = [];
       if (this.nearSeat) cands.push({ kind: this.seatActionKind(this.nearSeat), target: this.nearSeat, d: Math.hypot((this.nearSeat.x + 0.5) * T - me.x, (this.nearSeat.y + 1) * T - me.y) });
-      if (this.nearNpc) cands.push({ kind: 'pet', target: this.nearNpc, d: Math.hypot(this.nearNpc.x - me.x, this.nearNpc.y - me.y) });
+      if (this.nearNpc) cands.push({ kind: this.nearNpc.isDog ? 'dog' : 'pet', target: this.nearNpc, d: Math.hypot(this.nearNpc.x - me.x, this.nearNpc.y - me.y) }); // 18단계: 강아지는 E 메뉴
       if (this.nearItem) cands.push({ kind: this.nearItem.kind, target: this.nearItem, d: Math.hypot(this.nearItem.x - me.x, this.nearItem.y - me.y) });
       if (!cands.length) return null;
       cands.sort((a, b) => a.d - b.d);
@@ -1844,6 +1986,7 @@
       const pick = this.pickTarget();
       if (!pick) return;
       if (pick.kind === 'pet') return this.hooks.onPet(pick.target.id);
+      if (pick.kind === 'dog') { this.flushMove(false); return this.hooks.onDogMenu(pick.target.id); }
       if (pick.kind === 'seatChoice') {
         this.flushMove(false);
         return this.hooks.onSeatChoice(pick.target, this.seatLast[pick.target.id]);

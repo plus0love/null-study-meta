@@ -25,6 +25,7 @@
     'playerVehicle', 'playerHorn', 'lap:progress', 'lap', 'track:board',
     'playerSnack', 'photo', 'playerFishing', 'fish:caught',
     'note:waiting', 'note:new', 'seatItems', 'coffee:received', 'playerBuff', 'dday:update',
+    'npc:say', 'npc:trick', 'dog:walk', 'dog:xp', 'dog:level',
   ];
 
   class Net {
@@ -290,6 +291,11 @@
     // 14단계 동물원
     zooFeed(id) { return this.ask('zoo:feed', { id }); }
     zooSnack(item) { return this.ask('zoo:snack', { item }); }
+    zooMenu() { return this.ask('zoo:menu', {}); }
+    // 18단계 강아지 산책 · 재주 · 정보
+    dogWalk(on = true) { return this.ask('dog:walk', { on }); }
+    dogTrick(trick) { return this.ask('dog:trick', { trick }); }
+    dogInfo() { return this.ask('dog:info', {}); }
     // 14단계 낚시 · 별자리 · 도감
     fishCast(id) { return this.ask('fish:cast', { id }); }
     fishReel() { return this.ask('fish:reel', {}); }

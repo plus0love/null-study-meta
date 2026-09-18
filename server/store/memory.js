@@ -19,6 +19,7 @@
  *    attendanceDates (그룹 스트릭) · migrateLegacy (study_id 없는 가구·펫 행을 첫 스터디로)
  *  12단계 야외: users.vehicleConfig / statsPublic · addTrackRecord / trackTop({ scope: 'today'|'all' }) / trackBest / hasLapToday (track_records)
  *  15단계: notes(addNote / unreadNotes / markNotesRead / listNotes) · coffee_gifts(addCoffeeGift / pendingGifts / markGiftReceived) · ddays(addDday / listDdays / deleteDday)
+ *  18단계: getDogAffection / setDogAffection (스터디별 강아지 애정도 { level, xp }) · getSetting / setSetting (서버 전역 설정 — 매점 점원 이름)
  */
 const { DEFAULT_TZ, dateKey, weekStart, streakOf, totalsOf } = require('./stats');
 
@@ -42,6 +43,8 @@ function createMemoryStore() {
   const notes = []; // { id, studyId, fromNickname, toNickname, seatId, text, createdAt, readAt } — 15단계 쪽지
   const coffeeGifts = []; // { id, studyId, fromNickname, toNickname, seatId, menu, createdAt, receivedAt } — 15단계 커피 배달
   const ddays = []; // { id, studyId|null, nickname, title, date, kind, createdAt } — 15단계 D-day (studyId 있으면 스터디 공용)
+  const dogAffection = new Map(); // studyId → { studyId, level, xp, updatedAt } — 18단계 강아지 애정도
+  const settings = new Map(); // key → value (jsonb) — 18단계 서버 전역 설정
   let seq = 1;
 
   const ensureUser = (nickname, now = Date.now()) => {
@@ -322,6 +325,7 @@ function createMemoryStore() {
       for (let i = roomPets.length - 1; i >= 0; i--) if (roomPets[i].studyId === sid) roomPets.splice(i, 1);
       for (let i = rewards.length - 1; i >= 0; i--) if (rewards[i].studyId === sid) rewards.splice(i, 1);
       for (const arr of [notes, coffeeGifts, ddays]) for (let i = arr.length - 1; i >= 0; i--) if (arr[i].studyId === sid) arr.splice(i, 1);
+      dogAffection.delete(sid);
       return true;
     },
     async touchStudy(id, now = Date.now()) {
@@ -543,6 +547,24 @@ function createMemoryStore() {
       if (i < 0) return false;
       ddays.splice(i, 1);
       return true;
+    },
+
+    // ── 강아지 애정도 · 전역 설정 (18단계) ───────────────────────────
+    async getDogAffection(studyId) {
+      const a = dogAffection.get(Number(studyId));
+      return a ? { ...a } : null;
+    },
+    async setDogAffection(studyId, { level, xp }, now = Date.now()) {
+      const a = { studyId: Number(studyId), level: Number(level) || 1, xp: Number(xp) || 0, updatedAt: now };
+      dogAffection.set(a.studyId, a);
+      return { ...a };
+    },
+    async getSetting(key) {
+      return settings.has(key) ? JSON.parse(JSON.stringify(settings.get(key))) : null;
+    },
+    async setSetting(key, value) {
+      settings.set(key, JSON.parse(JSON.stringify(value)));
+      return value;
     },
 
     // ── 기록 초기화 (7단계) ───────────────────────────────────────────

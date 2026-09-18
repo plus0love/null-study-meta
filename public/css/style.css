@@ -888,3 +888,18 @@ body.outdoor #btn-edit { display: none; }
 .dday-list li .kind { font-size: 11px; color: var(--cream-faint); }
 .dday-list li .shared { font-size: 10px; padding: 1px 6px; border-radius: 999px; background: rgba(159, 211, 154, 0.14); color: var(--ok); }
 .dday-list li button { margin-left: auto; }
+
+/* ── 18단계: 강아지 E 메뉴 · 매점 · 애정도 ───────────────────────────── */
+.dog-menu { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.dog-menu button { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 8px; }
+.dog-menu button em { font-style: normal; font-size: 22px; }
+.dog-menu button.locked { opacity: 0.45; }
+.dog-menu button small { font-size: 11px; color: var(--cream-dim); }
+.snack-menu button em { font-size: 20px; }
+.dog-affection { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.dog-affection .row { align-items: center; gap: 8px; }
+.dog-level { font-weight: 700; color: var(--amber-2); white-space: nowrap; }
+.dog-xp-track { flex: 1; }
+.dog-unlocks li { display: flex; gap: 6px; align-items: center; font-size: 12px; }
+.dog-unlocks li.locked { opacity: 0.5; }
+.staff-label { width: 18px; text-align: center; }

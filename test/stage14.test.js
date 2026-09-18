@@ -66,12 +66,11 @@ test('야외 맵 14단계: 100x70 · 동물원 우리 8개(울타리 안은 사�
     }
     assert.ok(e.name && e.desc && e.species && e.count >= 2);
   }
-  assert.ok(outdoor.interactables.some((i) => i.id === 'snack:icecream' && i.kind === 'snack_icecream'));
-  assert.ok(outdoor.interactables.some((i) => i.id === 'snack:churros' && i.kind === 'snack_churros'));
-  assert.deepEqual(outdoor.zoo.snacks.map((s) => [s.id, s.price]), [['icecream', 1], ['churros', 1]]);
+  assert.ok(outdoor.interactables.some((i) => i.id === 'snack' && i.kind === 'snack'), '18단계: 매점 창구 하나');
+  assert.deepEqual(outdoor.zoo.snacks.map((s) => [s.id, s.price]), [['icecream', 1], ['churros', 1], ['hotdog', 1], ['lemonade', 1]]);
   assert.deepEqual(outdoor.zoo.photo, ZOO_PHOTO);
   for (let x = ZOO_PHOTO.x0; x <= ZOO_PHOTO.x1; x++) assert.ok(pathTo(outdoor, sp.x, sp.y, (px, py) => px === x && py === ZOO_PHOTO.y0), '포토존 발자국까지 경로');
-  assert.ok(outdoor.props.some((p) => p.name === 'zoo_banner') && outdoor.props.some((p) => p.name === 'snack_bar') && outdoor.props.some((p) => p.name === 'photo_board'));
+  assert.ok(outdoor.props.some((p) => p.name === 'zoo_banner') && outdoor.props.some((p) => p.name === 'snack_shop') && outdoor.props.some((p) => p.name === 'photo_board'));
   assert.ok(outdoor.props.filter((p) => p.name === 'glass_fence_h' || p.name === 'glass_fence_v').length >= 20, '유리 펜스');
   // A 단계: 연석·아치·관중석·피트·파사드 창문·자갈길
   for (const name of ['start_banner', 'arch_post', 'pit_box', 'stand_bench_s', 'tire_stack', 'corner_sign_1', 'corner_sign_4', 'facade_window_night', 'canopy', 'bike_rack', 'kart_garage', 'tree_round_big', 'tree_birch', 'reed']) {
@@ -210,7 +209,7 @@ test('OutdoorWorld 동물원: 먹이는 우리 앞에서 하루 3번(limit) · �
   advance(24 * 3600 * 1000);
   assert.equal(world.feedsLeft(p1), FEED_PER_DAY, '다음 날 초기화');
   // 매점
-  const snack = world.room.interactables.find((i) => i.id === 'snack:icecream');
+  const snack = world.room.interactables.find((i) => i.id === 'snack');
   p1.x = snack.x; p1.y = snack.y;
   assert.equal((await world.snack(p1, 'icecream')).error, 'insufficient');
   await store.adjustCoins('민수', 3, 'test');
@@ -220,7 +219,9 @@ test('OutdoorWorld 동물원: 먹이는 우리 앞에서 하루 3번(limit) · �
   assert.equal(s1.snack.emoji, '🍦');
   assert.equal(s1.snack.until, world.now() + SNACK_MS);
   assert.equal(world.publicPlayer(p1).snack.item, 'icecream');
+  p1.x += 500;
   assert.equal((await world.snack(p1, 'churros')).error, 'too_far');
+  p1.x -= 500;
   assert.equal((await world.snack(p1, 'pizza')).error, 'no_item');
   advance(SNACK_MS + 1);
   assert.equal(world.publicPlayer(p1).snack, null, '5분 뒤 사라짐');
@@ -279,7 +280,7 @@ test('소켓 E2E 동물원: zoo:feed → 시스템 채팅 + npc:pet 반응(by nu
   assert.ok(chats.some((c) => c.system && /민수님이 판다에게 먹이를 줬어요/.test(c.text)));
   assert.equal((await ask(b, 'zoo:feed', { id: 'panda' })).error, 'too_far');
   // 매점
-  const snack = out.room.interactables.find((i) => i.id === 'snack:churros');
+  const snack = out.room.interactables.find((i) => i.id === 'snack');
   pa.x = snack.x; pa.y = snack.y;
   const ps = once(b, 'playerSnack');
   const coinsA = collect(a, 'coins');
@@ -384,7 +385,7 @@ test('브라우저 14단계: 야외에서 동물 시트·동물 NPC 스프라이
   // 간식: 서버에서 사면 손에 아이콘
   await srv.hub.store.adjustCoins('민수', 2, 'test');
   const me = out.players.get(await page.evaluate(() => window.NSM.scene.me.id));
-  const snack = out.room.interactables.find((i) => i.id === 'snack:icecream');
+  const snack = out.room.interactables.find((i) => i.id === 'snack');
   me.x = snack.x; me.y = snack.y;
   await page.evaluate(() => window.NSM.net.zooSnack('icecream'));
   await page.waitForFunction(() => window.NSM.scene.me.snackText && window.NSM.scene.me.snackText.text === '🍦', { timeout: 5000 });

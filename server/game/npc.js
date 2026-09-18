@@ -11,7 +11,10 @@
  *    주인이 멈추면 1초 뒤 앉고, 주인이 앉아 공부 중이면 발밑에서 앉는다 (스킬 'sleep_beside' 가 있으면 잔다).
  *    앵무새는 어깨 위(위치를 주인에게 붙인다), 슬라임은 통통 튐(클라이언트 연출), 거북이는 느려서 자주 순간이동한다.
  *  - 스킬(펫별 1회 구매): 'come'(채팅에 이름을 부르면 달려옴 → comeTo), 'sleep_beside', 'high_five'(쓰다듬기 반응 추가).
- * 이벤트: 'update'(스냅샷, 바뀐 것이 있을 때) · 'pet'({ by, id, reaction, highFive }) · 'name'(name)
+ *  - 18단계: HumanNpc (매점 점원 · 바리스타) — 제자리에 서서 idle/손 흔들기/컵 닦기/머신 조작/잔 정리를 번갈아 하고, 손님이 앞(greet 지점)에 서면 말풍선.
+ *    강아지 산책: DogNpc 는 hidden(산책 중엔 스냅샷을 내지 않음) · level(애정도, 이름 옆 ❤️) · trick(앉아/손/빙글). FollowerNpc 는 산책 강아지로도 쓴다
+ *    (id 'dogwalk:<studyId>', walk: true, sleepBeside 옵션 = Lv8 같이 자기).
+ * 이벤트: 'update'(스냅샷, 바뀐 것이 있을 때) · 'pet'({ by, id, reaction, highFive }) · 'name'(name) · 'say'({ text, ms }) · 'trick'({ trick })
  */
 const EventEmitter = require('node:events');
 const { isBlocked } = require('../rooms/build');
@@ -105,7 +108,42 @@ class BaseNpc extends EventEmitter {
     if (this.ownerId) s.ownerId = this.ownerId;
     if (this.info.shoulder) s.shoulder = true;
     if (this.info.bounce) s.bounce = true;
+    if (this.level !== undefined && this.level !== null) s.level = this.level; // 18단계: 강아지 애정도 레벨 (이름 옆 ❤️)
+    if (this.walk) s.walk = true;
     return s;
+  }
+
+  /** 18단계: 애정도 레벨 표시 (강아지·산책 강아지) */
+  setLevel(level) {
+    if (this.level === level) return;
+    this.level = level;
+    this.dirty = true;
+  }
+
+  /** 18단계: 말풍선 — 'say' { text, ms } (소켓이 npc:say 로 방송). 서버 상태는 바꾸지 않는다 */
+  say(text, ms = 2500) {
+    this.emit('say', { text, ms });
+    return { text, ms };
+  }
+
+  /**
+   * 18단계: 재주 (앉아·손·빙글). 상태 'trick_<id>' 로 잠깐 바꾸고 'trick' 이벤트. 걷는 중이던 경로는 버린다.
+   * @returns {{ ok: true, trick, ms } | { ok: false, error }}
+   */
+  trick(id) {
+    const ms = { sit: 2200, paw: 1600, spin: 1400 }[id];
+    if (!ms) return { ok: false, error: 'no_trick' };
+    this.path = [];
+    this.targetTile = null;
+    this.afterLook = null;
+    this.setState(`trick_${id}`, ms);
+    this.dirty = true;
+    this.emit('trick', { trick: id, ms });
+    return { ok: true, trick: id, ms };
+  }
+
+  get inTrick() {
+    return typeof this.state === 'string' && this.state.startsWith('trick_') && this.now() < this.stateUntil;
   }
 
   setCosmetics(c) {
@@ -280,6 +318,7 @@ class BaseNpc extends EventEmitter {
   }
 
   emitIfNeeded(now) {
+    if (this.hidden) return; // 18단계: 산책 나간 강아지는 방에 없다
     if (this.state === 'walk' || this.dirty || now - this.lastEmitAt >= 1000) {
       this.dirty = false;
       this.lastEmitAt = now;
@@ -381,6 +420,7 @@ class SharedPetNpc extends BaseNpc {
   }
 
   behave(now, dt) {
+    if (this.inTrick) return; // 18단계: 재주 중엔 가만히
     const near = this.nearestPlayer();
     if (near) {
       if (this.state !== 'look') {
@@ -459,10 +499,12 @@ class FishNpc extends BaseNpc {
 
 // ── 개인 펫: 주인을 따라다닌다 ─────────────────────────────────────────
 class FollowerNpc extends BaseNpc {
-  constructor(room, owner, opts = {}) {
+  constructor(room, owner, { sleepBeside = false, walk = false, ...opts } = {}) {
     super(room, { kind: 'pet', ...opts });
     this.owner = owner; // 플레이어 객체 (위치·seatId·status·facing 을 매 틱 본다)
     this.ownerId = owner.id;
+    this.sleepBeside = Boolean(sleepBeside); // 18단계: Lv8 같이 자기 (스킬 없이도)
+    this.walk = Boolean(walk); // 18단계: 산책 중인 라운지 강아지
     this.trail = []; // 주인의 최근 위치
     this.ownerStillSince = null;
     this.lastOwner = { x: owner.x, y: owner.y };
@@ -505,6 +547,7 @@ class FollowerNpc extends BaseNpc {
 
   behave(now, dt) {
     const o = this.owner;
+    if (this.inTrick) return;
     if (this.info.shoulder) {
       // 어깨 위: 주인에게 붙어 다닌다
       const nx = o.x + (o.facing === 'left' ? -9 : 9);
@@ -535,7 +578,7 @@ class FollowerNpc extends BaseNpc {
     let restState = 'sit';
     if (o.seatId) {
       goal = this.tileBeside(o); // 발밑
-      restState = this.skills.has('sleep_beside') && o.status === 'study' ? 'sleep' : 'sit';
+      restState = (this.skills.has('sleep_beside') || this.sleepBeside) && o.status === 'study' ? 'sleep' : 'sit';
     } else {
       const fp = this.followPoint();
       if (fp) goal = { tx: Math.floor(fp.x / T), ty: Math.floor((fp.y - 1) / T) };
@@ -569,4 +612,84 @@ class FollowerNpc extends BaseNpc {
   }
 }
 
-module.exports = { BaseNpc, DogNpc, SharedPetNpc, FishNpc, FollowerNpc, SPECIES, TICK_MS, NEAR_PX, PET_RANGE_PX, PET_COOLDOWN_MS, NAME_MAX, HOME, CUSHION, DEFAULT_NAME, FOLLOW_GAP_PX, FOLLOW_TELEPORT_PX, FOLLOW_SIT_MS };
+// ── 18단계: 사람 NPC (매점 점원 · 바리스타) ─────────────────────────────
+const HUMAN_ACTS = { clerk: ['wave', 'wipe'], barista: ['wipe', 'machine', 'arrange'] };
+const ACT_MS = { wave: 1800, wipe: 2600, machine: 2400, arrange: 2200 };
+const GREET_COOLDOWN_MS = 20 * 1000; // 같은 사람에게 다시 인사하기까지
+const GREET_MS = 2200;
+
+/**
+ * 제자리에 서서 일하는 사람 NPC. 위치는 고정(x, y = 발 위치 px), 걷지 않는다.
+ * 상태: idle → (2~6초 뒤) 행동 하나(HUMAN_ACTS[char]) → idle … . greet 지점(range 안)에 손님이 서면 'greet' 상태 + 말풍선(greeting).
+ * 스냅샷: sheet 'npcs' · char ('clerk' | 'barista') · pettable false.
+ */
+class HumanNpc extends BaseNpc {
+  constructor(room, { char = 'clerk', greet = null, greeting = '어서 오세요!', facing = 'down', ...opts } = {}) {
+    super(room, { kind: 'human', species: 'dog', ...opts });
+    this.char = char;
+    this.greetSpot = greet; // { x, y, range } (px) — 없으면 인사 없음
+    this.greeting = greeting;
+    this.facing = facing;
+    this.baseFacing = facing;
+    this.state = 'idle';
+    this.stateUntil = this.now() + this.between(1500, 4000);
+    this.greeted = new Map(); // playerId → 마지막 인사 시각
+    this.acts = HUMAN_ACTS[char] || ['wave'];
+  }
+
+  get info() {
+    return { reaction: '🙂', speed: 0 };
+  }
+
+  snapshot() {
+    const s = super.snapshot();
+    s.species = this.char;
+    s.sheet = 'npcs';
+    s.char = this.char;
+    s.pettable = false;
+    return s;
+  }
+
+  /** greet 지점 안에 있는 손님 (가장 가까운) */
+  customer() {
+    const g = this.greetSpot;
+    if (!g) return null;
+    let best = null;
+    let bestD = g.range;
+    for (const p of this.players()) {
+      const d = Math.hypot(p.x - g.x, p.y - g.y);
+      if (d < bestD) { bestD = d; best = p; }
+    }
+    return best;
+  }
+
+  behave(now) {
+    const c = this.customer();
+    if (c && now - (this.greeted.get(c.id) || -Infinity) >= GREET_COOLDOWN_MS) {
+      this.greeted.set(c.id, now);
+      this.facing = this.baseFacing;
+      this.setState('greet', GREET_MS);
+      this.say(this.greeting, GREET_MS);
+      this.dirty = true;
+      return;
+    }
+    if (now < this.stateUntil) return;
+    if (this.state === 'idle' && this.random() < 0.6) {
+      const act = this.acts[Math.floor(this.random() * this.acts.length)];
+      this.setState(act, ACT_MS[act] || 2000);
+    } else this.setState('idle', this.between(2000, 6000));
+  }
+
+  /** 구매 뒤 한마디 (상태는 잠깐 greet 로) */
+  thank(text) {
+    this.setState('greet', GREET_MS);
+    this.dirty = true;
+    return this.say(text, GREET_MS);
+  }
+
+  pet() {
+    return { ok: false, error: 'not_pettable' };
+  }
+}
+
+module.exports = { BaseNpc, DogNpc, SharedPetNpc, FishNpc, FollowerNpc, HumanNpc, SPECIES, HUMAN_ACTS, ACT_MS, GREET_COOLDOWN_MS, GREET_MS, TICK_MS, NEAR_PX, PET_RANGE_PX, PET_COOLDOWN_MS, NAME_MAX, HOME, CUSHION, DEFAULT_NAME, FOLLOW_GAP_PX, FOLLOW_TELEPORT_PX, FOLLOW_SIT_MS };

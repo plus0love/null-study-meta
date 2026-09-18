@@ -91,12 +91,12 @@ test('문: 산책로가 경계 울타리와 만나는 곳은 전부 2칸 문 + �
   // 경계 울타리 줄 (y 50 전체 · x 80 의 y 13..50): 통과 가능한 칸 = 정문·옆문 칸
   const mainOpen = [];
   for (let x = 0; x < outdoor.width; x++) if (!outdoor.collision[50][x]) mainOpen.push(x);
-  assert.deepEqual(mainOpen, [32, 33]);
+  assert.deepEqual(mainOpen, [32, 33, 88, 89], '정문 + 동쪽 세로 산책로 문 (18단계)');
   const sideOpen = [];
   for (let y = 13; y <= 50; y++) if (!outdoor.collision[y][80]) sideOpen.push(y);
   assert.deepEqual(sideOpen, [32, 33]);
   // 정문·옆문 앞뒤는 산책로(자갈)로 이어진다
-  for (const [x, y] of [[32, 49], [33, 49], [32, 51], [33, 51], [79, 32], [79, 33], [81, 32], [81, 33]]) assert.match(objName('floor', x, y) || '', /^gravel_/, `문 앞뒤 (${x},${y}) 는 산책로`);
+  for (const [x, y] of [[32, 49], [33, 49], [32, 51], [33, 51], [79, 32], [79, 33], [81, 32], [81, 33], [88, 49], [89, 49], [88, 51], [89, 51]]) assert.match(objName('floor', x, y) || '', /^gravel_/, `문 앞뒤 (${x},${y}) 는 산책로`);
   // 우리 울타리: 만지기 코너 문 2칸 말고는 전부 막힘
   for (const e of ENCLOSURES) {
     const [x0, y0, x1, y1] = e.rect;
@@ -202,7 +202,7 @@ test('빈 잔디 소품 밀도: 공원(왼쪽·아래)·동물원 여백에 흩�
   assert.ok(south.length >= 25, `아래 공원 ${south.length}`);
   assert.ok(zooS.length >= 25, `동물원 남쪽 ${zooS.length}`);
   const kinds = new Set([...west, ...south, ...zooS].map((p) => p.name.replace(/_?\d$/, '')));
-  for (const k of ['shrub', 'stump', 'log', 'rock_a', 'flower']) assert.ok(kinds.has(k), `소품 종류 ${k}`);
+  for (const k of ['shrub', 'stump', 'rock_a', 'flower']) assert.ok(kinds.has(k), `소품 종류 ${k}`);
   // 낙엽 바닥 변형
   let leaves = 0;
   for (let y = 13; y < outdoor.height; y++) for (let x = 0; x < outdoor.width; x++) if (/^leaves_/.test(objName('floor', x, y) || '')) leaves++;

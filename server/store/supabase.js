@@ -6,6 +6,7 @@
  * 코인 증감(adjust_coins)은 잔액 확인·차감·원장 기록을 한 트랜잭션(plpgsql)으로 처리해 동시 요청에도 음수가 되지 않는다.
  * 11단계: studies / study_members / study_goal_rewards / study_access(기기 토큰 해시). room_layout · room_pets 는 study_id 로 스터디마다 나뉜다.
  * 15단계: notes(쪽지) · coffee_gifts(커피 배달) · ddays(D-day). 인터페이스는 memory.js 와 같다.
+ * 18단계: dog_affection(스터디별 강아지 애정도) · settings(서버 전역 설정, 매점 점원 이름).
  */
 const { DEFAULT_TZ } = require('./stats');
 
@@ -434,6 +435,24 @@ function createSupabaseStore({ url, key }) {
     async deleteDday(id, nickname) {
       const rows = check(await client.from('ddays').delete().eq('id', id).eq('nickname', nickname).select('id'));
       return Boolean(rows && rows.length);
+    },
+
+    // ── 강아지 애정도 · 전역 설정 (18단계) ───────────────────────────
+    async getDogAffection(studyId) {
+      const r = check(await client.from('dog_affection').select('*').eq('study_id', studyId).maybeSingle());
+      return r ? { studyId: r.study_id, level: Number(r.level) || 1, xp: Number(r.xp) || 0, updatedAt: ms(r.updated_at) } : null;
+    },
+    async setDogAffection(studyId, { level, xp }, now = Date.now()) {
+      const r = check(await client.from('dog_affection').upsert({ study_id: studyId, level: Number(level) || 1, xp: Number(xp) || 0, updated_at: iso(now) }, { onConflict: 'study_id' }).select().single());
+      return { studyId: r.study_id, level: Number(r.level) || 1, xp: Number(r.xp) || 0, updatedAt: ms(r.updated_at) };
+    },
+    async getSetting(key) {
+      const r = check(await client.from('settings').select('value').eq('key', key).maybeSingle());
+      return r ? r.value : null;
+    },
+    async setSetting(key, value) {
+      check(await client.from('settings').upsert({ key, value, updated_at: iso(Date.now()) }, { onConflict: 'key' }));
+      return value;
     },
 
     // ── 기록 초기화 (7단계) ───────────────────────────────────────────

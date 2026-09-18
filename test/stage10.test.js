@@ -285,7 +285,7 @@ test('월드: 공용 펫 풀기(3마리 제한·중복) · 회수/이름/꾸미�
   const w2 = makeWorld({ store });
   await w2.world.init();
   const ids = w2.world.npcSnapshots().map((n) => [n.id, n.species, n.name, n.cosmetics.head]);
-  assert.deepEqual(ids, [['dog', 'dog', '사랑', 'beanie'], [`s:${r1.roomPetId}`, 'cat', '치즈냥', 'straw_hat'], [`s:${r3.roomPetId}`, 'fish', '금붕', null]]);
+  assert.deepEqual(ids, [['dog', 'dog', '사랑', 'beanie'], ['barista', 'barista', '바리스타', null], [`s:${r1.roomPetId}`, 'cat', '치즈냥', 'straw_hat'], [`s:${r3.roomPetId}`, 'fish', '금붕', null]]); // 18단계: 바리스타 NPC
   assert.equal(w2.world.sharedPetCount(), 2);
   await w2.world.dispose();
 });

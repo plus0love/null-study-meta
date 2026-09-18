@@ -246,6 +246,25 @@ create table if not exists public.ddays (
 create index if not exists ddays_nickname on public.ddays (nickname);
 create index if not exists ddays_study_id on public.ddays (study_id);
 
+-- 18단계: 강아지 애정도 — 스터디마다 한 행. level 1..10, xp 는 현재 레벨 안에서 쌓인 값 (규칙은 server/game/affection.js: 산책 5분 +1 · 쓰다듬기 하루 첫 3번 +1)
+create table if not exists public.dog_affection (
+  study_id    bigint primary key references public.studies(id) on delete cascade,
+  level       integer not null default 1 check (level between 1 and 10),
+  xp          integer not null default 0 check (xp >= 0),
+  updated_at  timestamptz not null default now()
+);
+
+-- 18단계: 서버 전역 설정 (key → jsonb). 지금은 'clerk_name' (동물원 매점 점원 이름, 방장이 바꾼다) 하나
+create table if not exists public.settings (
+  key         text primary key,
+  value       jsonb not null,
+  updated_at  timestamptz not null default now()
+);
+
+-- 18단계: 바리스타 이름은 room_pets 의 item_id 'barista' 행(name, study_id)에 둔다 — 강아지 설정 행('dog')과 같은 방식. 새 테이블 없음.
+
+alter table public.dog_affection  enable row level security;
+alter table public.settings       enable row level security;
 alter table public.notes          enable row level security;
 alter table public.coffee_gifts   enable row level security;
 alter table public.ddays          enable row level security;

@@ -10,11 +10,14 @@
  *  - 전광판: board() — 오늘 상위 5 · 역대 상위 5 (닉네임·스터디 이름·차종). 스터디 이름은 studyNameOf(id) (Hub 가 준다).
  *  - 프로필: profile(viewer, targetId) — 닉네임·스터디 이름·이번 주 공부 시간(대상이 공개했을 때만).
  *  - 경적: horn(player) → 'horn' { player, horn } (탑승 중 + 경적 설정이 있을 때만).
+ *  - 18단계: 매점 점원 NPC(HumanNpc 'clerk', room.zoo.clerk 자리) — 창구 앞에 서면 "어서 오세요!", 구매하면 "맛있게 드세요 🍦". 이름은 서버 전역 설정 settings.clerk_name
+ *    (방장이 바꾼다, Hub.setClerkName). 매점은 상호작용 지점 하나('snack')에서 메뉴 4종(zoo.snacks) 중 고른다. 산책 강아지는 World.spawnWalkDog 가 이 월드에 만든다.
  */
 const { World } = require('./world');
 const { typeOf, colorOf } = require('./vehicles');
 const { newLapState, advance } = require('./track');
 const { createOutdoorAnimals } = require('./animals');
+const { HumanNpc } = require('./npc');
 const { interactableById } = require('../rooms/build');
 const { dateKey } = require('../store/stats');
 const Fishing = require('./fishing');
@@ -26,6 +29,7 @@ const FEED_PER_DAY = 3; // 14단계: 먹이 주기 하루 횟수 (사람마다, 
 const SNACK_MS = 5 * 60 * 1000; // 매점 간식을 손에 들고 있는 시간
 const PHOTO_COOLDOWN_MS = 20 * 1000; // 같은 두 사람의 포토존 플래시 간격
 const FISHING_TICK_MS = 100; // 낚시 세션 진행 주기
+const CLERK_DEFAULT = '사장님'; // 18단계
 
 class OutdoorWorld extends World {
   /** opts.studyNameOf(studyId) → 이름 | null (전광판·프로필) */
@@ -39,6 +43,14 @@ class OutdoorWorld extends World {
     this.feeds = new Map(); // `${nickname}|${date}` → 오늘 준 횟수
     this.photoAt = new Map(); // 두 사람 id 쌍 → 마지막 플래시 시각
     for (const n of createOutdoorAnimals(this.room, { now: this.now, random: this.npcOpts.random, tickMs: this.npcOpts.tickMs })) this.addAnimal(n);
+    // 18단계: 매점 점원 (창구 뒤). 이름은 저장소 설정에서 (비동기 — 로드 전엔 기본 이름)
+    this.clerk = null;
+    if (this.zoo && this.zoo.clerk) {
+      const c = this.zoo.clerk;
+      this.clerk = new HumanNpc(this.room, { ...this.npcOpts, id: 'clerk', char: 'clerk', name: CLERK_DEFAULT, x: c.x, y: c.y, facing: 'down', greet: c.greet, greeting: '어서 오세요!' });
+      this.addNpc(this.clerk);
+      this.clerkLoaded = this.store.getSetting('clerk_name').then((v) => { if (v && typeof v === 'string' && this.clerk) this.clerk.setName(v); }).catch((err) => this.log.warn(`[outdoor] 점원 이름 로드 실패: ${err.message}`));
+    }
     // 14단계 C: 낚시 세션 (playerId → session). npc.autoStart === false 면 테스트가 tickFishing(now) 를 직접 부른다
     this.fishing = new Map();
     this.random = this.npcOpts.random || Math.random;
@@ -202,19 +214,34 @@ class OutdoorWorld extends World {
   }
 
   /**
-   * 매점: 1코인에 아이스크림/츄러스 → 5분 동안 손에 든 아이콘.
-   * @returns {{ ok: true, snack, balance } | { ok: false, error: 'no_item' | 'too_far' | 'insufficient' }}
+   * 매점 (18단계: 창구 하나에서 메뉴 4종): 1코인에 아이스크림·츄러스·핫도그·레모네이드 → 5분 동안 손에 든 아이콘. 점원이 "맛있게 드세요".
+   * @returns {{ ok: true, snack, balance, menu } | { ok: false, error: 'no_item' | 'too_far' | 'insufficient' }}
    */
   async snack(player, item) {
     const def = this.zoo && this.zoo.snacks.find((s) => s.id === item);
-    const it = def && interactableById(this.room, `snack:${def.id}`);
+    const it = interactableById(this.room, 'snack');
     if (!def || !it) return { ok: false, error: 'no_item' };
     if (Math.hypot(it.x - player.x, it.y - player.y) > it.range) return { ok: false, error: 'too_far' };
     const r = await this.award(player.nickname, player.id, -def.price, `purchase:snack_${def.id}`);
     if (!r) return { ok: false, error: 'insufficient' };
     player.snack = { item: def.id, emoji: def.emoji, until: this.now() + SNACK_MS };
     this.emit('snack', { player });
-    return { ok: true, snack: this.publicSnack(player), balance: r.balance };
+    if (this.clerk) this.clerk.thank(`맛있게 드세요 ${def.emoji}`);
+    return { ok: true, snack: this.publicSnack(player), balance: r.balance, menu: this.zoo.snacks };
+  }
+
+  /** 매점 메뉴 (모달용) */
+  snackMenu() {
+    return { ok: true, menu: this.zoo ? this.zoo.snacks : [], clerk: this.clerk ? this.clerk.name : null };
+  }
+
+  /** 18단계: 점원 이름 (권한은 Hub 가 확인한다). settings.clerk_name */
+  async setClerkName(raw) {
+    if (!this.clerk) return { ok: false, error: 'no_npc' };
+    const res = this.clerk.setName(raw);
+    if (!res.ok) return res;
+    try { await this.store.setSetting('clerk_name', res.name); } catch (err) { this.log.warn(`[outdoor] 점원 이름 저장 실패: ${err.message}`); }
+    return res;
   }
 
   /** 포토존: 두 사람이 발자국 두 칸에 같이 서면 플래시 (같은 쌍은 PHOTO_COOLDOWN_MS 에 한 번) */
@@ -353,4 +380,4 @@ class OutdoorWorld extends World {
   }
 }
 
-module.exports = { OutdoorWorld, LAP_REWARD, LAP_MIN_MS, FEED_PER_DAY, SNACK_MS, PHOTO_COOLDOWN_MS, FISHING_TICK_MS };
+module.exports = { OutdoorWorld, LAP_REWARD, LAP_MIN_MS, FEED_PER_DAY, SNACK_MS, PHOTO_COOLDOWN_MS, FISHING_TICK_MS, CLERK_DEFAULT };

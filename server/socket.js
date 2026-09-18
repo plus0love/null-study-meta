@@ -109,6 +109,15 @@
  *   dday:add { title(12자), date(YYYY-MM-DD), kind: exam|anniversary|other, shared } → ack { ok, dday, ddays, board } | error invalid_title | invalid_date | invalid_kind
  *   dday:delete { id }                       → ack { ok, ddays, board } | not_found | forbidden(만든 사람만). 공용이 바뀌면 모두에게 dday:update
  *   입장 ack: seatItems · seatLast · profile.ddays { board, celebrate[] (오늘 D-day, 사람·날짜마다 1회) } · profile.unreadNotes[] · profile.pendingGifts[]
+ *   ── 18단계 NPC · 강아지 산책 ──
+ *   서버 → npc:say { id, text, ms, steam? } (점원 "어서 오세요!" · 바리스타 "뭐 드릴까요?" / 구매 뒤 "맛있게 드세요", steam 이면 커피머신 김 강해짐)
+ *   서버 → npc:trick { id, trick, ms } (앉아·손·빙글) · dog:walk { on, by, playerId, reason } (산책 시작/끝, 모두에게 + 시스템 chat)
+ *   서버 → dog:xp { id(산책 강아지 npc id), amount, affection } (강아지가 있는 방에 — 머리 위 "🐾 +1") · dog:level { level, unlocked, affection } (본인에게, 소속 방엔 시스템 chat)
+ *   zoo:snack { item: 'icecream'|'churros'|'hotdog'|'lemonade' } → ack { ok, snack, balance }. zoo:menu → ack { ok, menu[4], clerk } (매점 모달)
+ *   dog:walk { on }                          → ack { ok, walk } | error busy{by} | too_far | not_indoor | not_walking. 라운지 강아지 옆 E 메뉴 "산책 가기" / 어디서든 "산책 끝"
+ *   dog:trick { trick: 'sit'|'paw'|'spin' } → ack { ok, trick, ms, npc } | error locked{level} | too_far | no_npc. dog:info → ack { ok, name, walk, affection{ level, xp, need, unlocked, unlocks } }
+ *   npc:name { id: 'barista' | 'clerk', name } → 방장만 (바리스타는 스터디별 room_pets 'barista' 행, 점원은 서버 전역 settings.clerk_name)
+ *   커피 배달 시스템 chat: "바리스타 OO가 OO님이 보낸 라떼를 놓고 갔어요"
  */
 const { Server } = require('socket.io');
 const { Hub } = require('./game/hub');
@@ -170,6 +179,34 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, hub: hubOpts = 
     });
     world.on('npcRemoved', ({ id }) => to(world).emit('npc:remove', { id }));
     world.on('npcName', ({ npc, name }) => to(world).emit('npc:name', { id: npc, name }));
+    // 18단계: NPC 말풍선·재주 · 강아지 산책·애정도
+    world.on('npcSay', ({ npc, text, ms, steam }) => to(world).emit('npc:say', { id: npc, text, ms, ...(steam ? { steam: true } : {}) }));
+    world.on('npcTrick', ({ npc, trick, ms }) => to(world).emit('npc:trick', { id: npc, trick, ms }));
+    world.on('dogWalk', ({ player, on, reason, by, playerId }) => {
+      const name = player ? player.nickname : by;
+      const dog = world.dog ? world.dog.name : '강아지';
+      to(world).emit('dog:walk', { on, by: on ? name : null, playerId: on ? (player ? player.id : playerId) : null, reason });
+      chat(world, on ? `${name}님이 ${dog}와(과) 산책을 나가요 🐾` : reason === 'inside' ? `${dog}가(이) 산책을 마치고 쿠션으로 돌아왔어요 🐾` : `${dog}가(이) 쿠션으로 돌아왔어요 🐾`);
+      // 산책 중인 사람이 야외에 있으면 그쪽에도 (산책 끝 힌트 갱신)
+      const p = player || (playerId ? playerAnywhere(playerId) : null);
+      if (p && p.socketId) { const s = socketOf(p); if (s && !world.players.has(p.id)) s.emit('dog:walk', { on, by: on ? name : null, playerId: on ? p.id : null, reason }); }
+    });
+    world.on('dogXp', ({ player, amount, reason, affection }) => {
+      // 산책 강아지가 있는 방(야외일 수도)에 머리 위 "🐾 +1", 산책한 사람에겐 어디에 있든
+      const npcId = world.walker ? world.walker.id : 'dog';
+      const wherePlayer = player && player.id ? hub.allWorlds().find((w) => w.players.has(player.id)) : null;
+      const target = wherePlayer || world;
+      to(target).emit('dog:xp', { id: npcId, amount, reason, affection });
+      if (target !== world) to(world).emit('dog:xp', { id: 'dog', amount, reason, affection });
+    });
+    world.on('dogLevel', ({ player, level, unlocked, affection }) => {
+      const dog = world.dog ? world.dog.name : '강아지';
+      const names = unlocked.map((u) => `${u.emoji} ${u.name}`).join(' · ');
+      chat(world, `${dog} 애정도 Lv${level} ❤️${names ? ` — 해금: ${names}` : ''}`, { notify: true });
+      const p = player && player.id ? playerAnywhere(player.id) : null;
+      const s = socketOf(p);
+      if (s) { s.emit('dog:level', { level, unlocked, affection, dog }); if (!world.players.has(p.id)) s.emit('chat', { system: true, notify: true, text: `${dog} 애정도 Lv${level} ❤️${names ? ` — 해금: ${names}` : ''}`, ts: world.now() }); }
+    });
     world.on('sessionSaved', ({ nickname, seconds }) => to(world).emit('leaderboard:refresh', { nickname, seconds }));
     world.on('layout', (e) => to(world).emit('layout:update', e));
     world.on('desk', ({ player }) => to(world).emit('playerDesk', { id: player.id, deskItems: world.publicDeskItems(player) }));
@@ -220,7 +257,7 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, hub: hubOpts = 
       if (delivered && recipient) socketOf(recipient)?.emit('coffee:received', { gift, late: Boolean(late) });
       if (self) return;
       if (delivered && !late) chat(world, `${gift.from}님이 ${gift.to}님에게 ${gift.emoji} ${gift.menuName}를 건넸어요`, { notify: true });
-      else if (!delivered) chat(world, `${gift.from}님이 ${gift.to}님 자리에 ${gift.emoji} ${gift.menuName}를 놓고 갔어요`, { notify: true });
+      else if (!delivered) chat(world, `바리스타 ${world.baristaName ? world.baristaName() : '바리스타'}가 ${gift.from}님이 보낸 ${gift.menuName}를 놓고 갔어요 (${gift.to}님 자리 ${gift.emoji})`, { notify: true }); // 18단계
     });
     world.on('ddays', () => to(world).emit('dday:update', {}));
     world.on('weeklyGoal', (e) => {
@@ -382,6 +419,23 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, hub: hubOpts = 
     // ── 동물원 (14단계 B) ────────────────────────────────────────────────
     socket.on('zoo:feed', requirePlayer((payload, ack, player, world) => ack(world.outdoor ? world.feed(player, payload && payload.id) : { ok: false, error: 'not_outdoor' })));
     socket.on('zoo:snack', requirePlayer(safe(async (payload, player, world) => (world.outdoor ? world.snack(player, payload && payload.item) : { ok: false, error: 'not_outdoor' }))));
+    socket.on('zoo:menu', requirePlayer((_p, ack, _player, world) => ack(world.outdoor ? world.snackMenu() : { ok: false, error: 'not_outdoor' })));
+    // ── 18단계: 강아지 산책 · 재주 · 정보 ──────────────────────────────
+    socket.on('dog:walk', requirePlayer((payload, ack, player, world) => {
+      const on = !(payload && payload.on === false);
+      if (!on) return ack(hub.endDogWalk(player, world, 'end'));
+      if (world.outdoor) return ack({ ok: false, error: 'not_indoor' });
+      ack(world.startWalk(player));
+    }));
+    socket.on('dog:trick', requirePlayer((payload, ack, player, world) => {
+      const home = world.outdoor ? hub.homeWorldOf(player, world) : world;
+      if (!home) return ack({ ok: false, error: 'no_npc' });
+      ack(home.dogTrick(player, payload && payload.trick));
+    }));
+    socket.on('dog:info', requirePlayer((_p, ack, player, world) => {
+      const home = world.outdoor ? hub.homeWorldOf(player, world) : world;
+      ack(home ? home.dogInfo() : { ok: false, error: 'no_study' });
+    }));
     // ── 낚시 · 별자리 · 도감 (14단계 C) ─────────────────────────────────
     socket.on('fish:cast', requirePlayer(safe(async (payload, player, world) => (world.outdoor ? world.cast(player, payload && payload.id) : { ok: false, error: 'not_outdoor' }))));
     socket.on('fish:reel', requirePlayer(safe(async (_p, player, world) => (world.outdoor ? world.reel(player) : { ok: false, error: 'not_outdoor' }))));
@@ -507,7 +561,12 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, hub: hubOpts = 
       const all = await world.stats({ scope: 'all' });
       return { ...all, scope: 'study', rows: all.rows.filter((r) => names.has(r.nickname)) };
     })));
-    socket.on('npc:name', requirePlayer(safe((payload, player, world) => world.setNpcName(player, payload && payload.id, payload && payload.name))));
+    socket.on('npc:name', requirePlayer(safe(async (payload, player, world) => {
+      const id = payload && payload.id;
+      if (id === 'clerk') return hub.setClerkName(player, world, payload && payload.name); // 18단계: 매점 점원 (전역, 방장)
+      if (id === 'barista' && world.outdoor) { const home = hub.homeWorldOf(player, world); return home ? home.setBaristaName(player, payload && payload.name) : { ok: false, error: 'no_npc' }; }
+      return world.setNpcName(player, id, payload && payload.name);
+    })));
     // ── 펫 (10단계) ─────────────────────────────────────────────────
     socket.on('pet:config', requirePlayer(safe((payload, player, world) => world.setPetConfig(player, payload || {}))));
     socket.on('pet:release', requirePlayer(safe(async (payload, player, world) => {

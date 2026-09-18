@@ -73,10 +73,11 @@ test('유리문·입구는 통과 가능, 유리벽은 통과 불가', () => {
   assert.ok(room.doors.some((d) => d.id === 'study-l'));
   assert.ok(room.doors.some((d) => d.id === 'study-r'));
   assert.ok(room.doors.some((d) => d.id === 'entrance'));
-  // 2인 스터디룸의 좌우 유리벽
+  // 2인 스터디룸의 좌우 유리벽 (18단계: x 14 / 30, 가운데 y 16..17 은 문)
   for (let y = 12; y <= 20; y++) {
-    assert.ok(isBlocked(room, 12, y));
-    assert.ok(isBlocked(room, 33, y));
+    if (y === 16 || y === 17) { assert.ok(!isBlocked(room, 14, y) && !isBlocked(room, 30, y), `좌우 문 (${y})`); continue; }
+    assert.ok(isBlocked(room, 14, y));
+    assert.ok(isBlocked(room, 30, y));
   }
 });
 
@@ -91,7 +92,7 @@ test('스폰에서 모든 좌석·문·바깥까지 걸어서 도달 가능', ()
   assert.ok(reach.has('22,15'));
   assert.ok(reach.has('26,18'));
   assert.ok(reach.has('16,17'));
-  assert.ok(reach.has('13,20'));
+  assert.ok(reach.has('15,20'));
 });
 
 test('상단 레이어에 화분 윗부분·펜던트 등이 있고, 그 칸은 통과 가능', () => {
@@ -178,14 +179,18 @@ test('2인 유리 스터디룸: 프레임 기둥·유리 판·2타일 열린 문
   const { objects } = TILES;
   const at = (x, y) => room.layers.furniture[y][x];
   const idx = (name) => objects[name].tiles[0][0];
-  // 세로 유리벽 (x 12 / 33): 3타일마다 기둥
+  // 세로 유리벽 (x 14 / 30): 3타일마다 기둥. 18단계: 가운데 세로 슬라이딩 패널(y 14..15) + 열린 문 2칸(y 16..17)
   for (let y = 12; y <= 20; y++) {
-    const want = (y - 12) % 3 === 0 ? 'gpost_NS' : 'glass_NS';
-    assert.equal(at(12, y), idx(want), `(12,${y})`);
-    assert.equal(at(33, y), idx(want), `(33,${y})`);
+    for (const x of [14, 30]) {
+      if (y === 14) { assert.equal(at(x, y), objects.study_panel_v.tiles[0][0], `(${x},${y}) 세로 패널`); continue; }
+      if (y === 15) { assert.equal(at(x, y), objects.study_panel_v.tiles[1][0]); continue; }
+      if (y === 16 || y === 17) { assert.equal(at(x, y), idx('door_open_v')); assert.ok(!isBlocked(room, x, y)); continue; }
+      assert.equal(at(x, y), idx((y - 12) % 3 === 0 ? 'gpost_NS' : 'glass_NS'), `(${x},${y})`);
+    }
   }
-  assert.equal(at(12, 21), idx('gpost_NE'));
-  assert.equal(at(33, 21), idx('gpost_NW'));
+  for (const [x, id] of [[14, 'study-w-a'], [30, 'study-e-a']]) assert.ok(room.doors.some((d) => d.id === id && d.x === x && d.y === 16), id);
+  assert.equal(at(14, 21), idx('gpost_NE'));
+  assert.equal(at(30, 21), idx('gpost_NW'));
   // 슬라이딩 문 패널 2x4 (x 20..21, y 18..21), 통과 불가. 열린 문 2타일은 패널 바로 옆 (22..23), 그 옆은 기둥
   assert.equal(objects.study_panel_1.w, 2);
   assert.equal(objects.study_panel_1.h, 4);
@@ -198,11 +203,12 @@ test('2인 유리 스터디룸: 프레임 기둥·유리 판·2타일 열린 문
     assert.ok(room.doors.some((d) => d.id === id && d.x === x && d.y === 21), id);
   }
   assert.equal(at(24, 21), idx('gpost_W'));
-  for (const x of [13, 14, 15, 17, 18, 19, 25, 26, 27, 29, 30, 31, 32]) assert.equal(at(x, 21), idx('glass_EW'));
-  assert.equal(at(16, 21), idx('gpost_EW'));
-  assert.equal(at(28, 21), idx('gpost_EW'));
-  // 위쪽 벽(y 10..11)은 x 12..33 전부 벽면, 덩굴 없음
-  for (let x = 12; x <= 33; x++) {
+  for (const x of [15, 16, 18, 19, 25, 26, 28, 29]) assert.equal(at(x, 21), idx('glass_EW'));
+  assert.equal(at(17, 21), idx('gpost_EW'));
+  assert.equal(at(27, 21), idx('gpost_EW'));
+  // 위쪽 벽(y 10..11)은 x 14..30 전부 벽면, 덩굴 없음. 그 밖(12..13, 31..33)은 복도 바닥
+  for (const x of [12, 13, 31, 32, 33]) assert.equal(at(x, 10), -1, `복도 (${x},10)`);
+  for (let x = 14; x <= 30; x++) {
     assert.notEqual(at(x, 10), -1, `(${x},10)`);
     assert.notEqual(room.layers.top[10][x], idx('wall_vine'));
   }
@@ -216,21 +222,21 @@ test('2인 유리 스터디룸: 프레임 기둥·유리 판·2타일 열린 문
   assert.equal(at(26, 12), idx('nightstand_lamp'));
   assert.equal(at(25, 19), objects.sofa_love_n.tiles[0][0]);
   assert.equal(at(28, 20), objects.sofa_love_n.tiles[1][3]);
-  assert.equal(at(14, 13), objects.whiteboard_small.tiles[0][0]);
-  assert.equal(at(14, 16), objects.bookcase_2tier.tiles[0][0]);
+  assert.equal(at(16, 13), objects.bookcase_2tier.tiles[0][0]);
+  assert.equal(room.props.filter((p) => p.name === 'whiteboard_small' || p.name === 'mini_fridge' || p.name === 'low_table_study').length, 0, '18단계: 화이트보드·미니 냉장고·낮은 테이블 제거');
   assert.equal(room.layers.floor[14][19], objects.rug_study_grid.tiles[0][0]);
   assert.equal(room.layers.floor[17][25], objects.rug_study_grid.tiles[3][6]);
   assert.equal(at(21, 10), objects.corkboard.tiles[0][0]);
   // 유리벽 안쪽 커튼 (top 레이어, 통과 가능)
-  assert.equal(room.layers.top[12][13], idx('curtain_top'));
-  assert.equal(room.layers.top[15][13], idx('curtain_end'));
-  assert.equal(room.layers.top[18][13], idx('curtain_rail'));
-  assert.ok(!isBlocked(room, 13, 13));
+  assert.equal(room.layers.top[12][15], idx('curtain_top'));
+  assert.equal(room.layers.top[15][15], idx('curtain_end'));
+  assert.equal(room.layers.top[18][15], idx('curtain_rail'));
+  assert.ok(!isBlocked(room, 15, 13));
   // 통로 러너는 방 앞 가로
   assert.equal(room.layers.floor[22][18], objects.rug_runner_h.tiles[0][0]);
   assert.equal(room.layers.floor[23][27], objects.rug_runner_h.tiles[1][9]);
   assert.equal(room.zones.length, 1);
-  assert.deepEqual(room.zones[0], { id: 'study', kind: 'glass', x: 13 * 32, y: 12 * 32, w: 20 * 32, h: 9 * 32, bright: 0.6 });
+  assert.deepEqual(room.zones[0], { id: 'study', kind: 'glass', x: 15 * 32, y: 12 * 32, w: 15 * 32, h: 9 * 32, bright: 0.6 });
 });
 
 test('화면(모니터 2 + 노트북 1)은 좌석에 연결되고, 상호작용 지점(커피·음악)은 통과 가능한 칸 위', () => {
