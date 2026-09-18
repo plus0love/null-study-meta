@@ -2,7 +2,7 @@
 /**
  * 14단계: 야외 다듬기(A) + 동물원·자유 동물(B) + 낚시·별자리(C).
  *  - 단위: 100x70 맵(동물원 우리 8개 · 울타리 안은 사람이 못 들어가고 만지기 코너만 들어감 · 안내판/먹이/매점 지점 · 포토존 · 낚시 자리 · 망원경) ·
- *    동물 NPC(우리 안에 머묾 · 상태 순환 · 먹이 → 다가와 먹음 → 반응) · 오리는 물 위 · 비둘기는 사람이 오면 날아오름 · 나비/반딧불이 구역 ·
+ *    동물 NPC(우리 안에 머묾 · 상태 순환 · 먹이 → 다가와 먹음 → 반응) · 오리는 물 위 · 비둘기는 사람이 오면 날아오름 · 반딧불이 구역 (나비는 후속 수정에서 뺐다) ·
  *    OutdoorWorld 먹이 하루 3번 · 매점 1코인 · 포토존 쿨다운.
  *  - 소켓 E2E: zoo:feed → 채팅 + npc:pet 반응 · zoo:snack → playerSnack · 포토존 photo 방송 · 고양이 npc:pet.
  *  - 브라우저: 동물 시트 텍스처 + 동물 NPC 스프라이트 렌더 · 간식 아이콘 · 구름 그림자/별똥별 연출 객체.
@@ -12,7 +12,7 @@ const assert = require('node:assert/strict');
 const { getOutdoor, ENCLOSURES, ZOO_PHOTO } = require('../server/rooms/outdoor');
 const { canStand } = require('../server/game/movement');
 const { OutdoorWorld, FEED_PER_DAY, SNACK_MS, PHOTO_COOLDOWN_MS } = require('../server/game/outdoor');
-const { AnimalNpc, DuckNpc, PigeonNpc, ButterflyNpc, FireflyNpc, CatNpc, createOutdoorAnimals, WATER_TILES, FLEE_PX } = require('../server/game/animals');
+const { AnimalNpc, DuckNpc, PigeonNpc, FireflyNpc, CatNpc, createOutdoorAnimals, WATER_TILES, FLEE_PX } = require('../server/game/animals');
 const { createMemoryStore } = require('../server/store/memory');
 const { boot, connect, joinAs, ask, once, sleep, collect, CHROME, CHROME_ARGS } = require('./helpers');
 const { pathTo } = require('../tools/lib/walk');
@@ -80,10 +80,10 @@ test('야외 맵 14단계: 100x70 · 동물원 우리 8개(울타리 안은 사�
   assert.ok(outdoor.layers.windowDay.some((row) => row.some((i) => i !== -1)), '파사드 낮 창문 레이어');
   assert.ok(outdoor.seats.filter((s) => s.facing === 'down' && s.y <= 11).length >= 30, '언덕 관중석 2줄');
   assert.ok(outdoor.seats.every((s) => !outdoor.collision[s.y][s.x]));
-  // 자유 동물 정의: 오리 2 · 다람쥐 · 고양이 2 · 비둘기 떼 · 나비 · 반딧불이
+  // 자유 동물 정의: 오리 2 + 트랙 안쪽 연못 오리 1 · 다람쥐 · 고양이 2 · 비둘기 떼 · 반딧불이 (나비 없음)
   const kinds = outdoor.animals.map((a) => a.kind);
-  assert.deepEqual(kinds.filter((k) => k === 'duck').length, 2);
-  assert.ok(kinds.includes('squirrel') && kinds.filter((k) => k === 'cat').length === 2 && kinds.includes('pigeon') && kinds.includes('butterfly') && kinds.includes('firefly'));
+  assert.deepEqual(kinds.filter((k) => k === 'duck').length, 3);
+  assert.ok(kinds.includes('squirrel') && kinds.filter((k) => k === 'cat').length === 2 && kinds.includes('pigeon') && !kinds.includes('butterfly') && kinds.includes('firefly'));
 });
 
 // ── 단위: 동물 NPC ──────────────────────────────────────────────────
@@ -124,7 +124,7 @@ test('동물 NPC: 우리 안에 머물며 상태 순환(walk/idle/sit/eat/sleep)
   assert.equal(pet.reaction, '🥕');
 });
 
-test('자유 동물: 오리는 물 타일에서만 헤엄(swim) · 비둘기는 사람이 가까이 오면 날아올라(fly) 멀리 내려앉음 · 나비/반딧불이는 구역 안에서 떠다니고 반딧불이 glow · 고양이는 벤치 구역', () => {
+test('자유 동물: 오리는 물 타일에서만 헤엄(swim) · 비둘기는 사람이 가까이 오면 날아올라(fly) 멀리 내려앉음 · 반딧불이는 구역 안에서 떠다니고 glow · 고양이는 벤치 구역', () => {
   let t = 0;
   const defs = Object.fromEntries(outdoor.animals.map((a) => [a.id, a]));
   const duck = new DuckNpc(outdoor, { id: 'd', area: defs.duck1.area, now: () => t, random: seeded(2), tickMs: 150 });
@@ -151,19 +151,20 @@ test('자유 동물: 오리는 물 타일에서만 헤엄(swim) · 비둘기는 
   assert.notEqual(pg.state, 'fly', '내려앉는다');
   assert.ok(Math.hypot(pg.x - player.x, pg.y - player.y) > FLEE_PX, `멀리 내려앉음 ${Math.hypot(pg.x - from.x, pg.y - from.y)}`);
   assert.ok(inRect(tileOf(pg), defs.pigeon.area));
-  // 나비 · 반딧불이
-  const bf = new ButterflyNpc(outdoor, { id: 'b', area: defs.butterfly.area, now: () => t, random: seeded(4), tickMs: 150 });
+  // 반딧불이 (트랙 안쪽 꽃밭 구역 포함)
   const ff = new FireflyNpc(outdoor, { id: 'f', area: defs.firefly.area, now: () => t, random: seeded(6), tickMs: 150 });
+  const ft = new FireflyNpc(outdoor, { id: 'f2', area: defs.firefly_track.area, now: () => t, random: seeded(4), tickMs: 150 });
+  const states = new Set();
   for (let i = 0; i < 1500; i++) {
-    t += 150; bf.tick(); ff.tick();
-    assert.ok(inRect(tileOf(bf), defs.butterfly.area), '나비 구역');
+    t += 150; ff.tick(); ft.tick(); states.add(ff.state);
     assert.ok(inRect(tileOf(ff), defs.firefly.area), '반딧불이 구역');
+    assert.ok(inRect(tileOf(ft), defs.firefly_track.area), '트랙 꽃밭 반딧불이 구역');
   }
-  assert.equal(bf.snapshot().fly, true);
-  assert.equal(bf.snapshot().sheet, 'animals');
+  assert.ok(states.has('fly'), '떠다닌다');
+  assert.equal(ff.snapshot().fly, true);
   assert.equal(ff.snapshot().glow, true);
   assert.equal(ff.snapshot().sheet, undefined);
-  assert.equal(bf.snapshot().pettable, false);
+  assert.equal(ff.snapshot().pettable, false);
   // 고양이 (pets 시트, 쓰다듬기 가능, 자기 구역 안)
   const cat = new CatNpc(outdoor, { id: 'c', area: defs.cat1.area, spots: defs.cat1.spots, name: '나비', now: () => t, random: seeded(8) });
   for (let i = 0; i < 2000; i++) { t += 100; cat.tick(); assert.ok(inRect(tileOf(cat), { ...defs.cat1.area, x0: defs.cat1.area.x0 - 1, x1: defs.cat1.area.x1 + 1 }), '고양이 구역'); }
@@ -359,7 +360,7 @@ test('브라우저 14단계: 야외에서 동물 시트·동물 NPC 스프라이
   assert.equal(info.animalName, false, '우리 동물은 이름표 숨김');
   assert.equal(info.catName, true, '고양이는 이름표');
   assert.equal(info.glowBlend, 1, '반딧불이 ADD 블렌드');
-  assert.equal(info.clouds, 5);
+  assert.equal(info.clouds, 3, '구름 그림자 3개');
   assert.equal(info.spray, true);
   assert.equal(info.zoo, 8);
   // 서버에서 동물을 걷게 하고(오른쪽) flipX 확인
@@ -379,7 +380,7 @@ test('브라우저 14단계: 야외에서 동물 시트·동물 NPC 스프라이
   await sleep(300);
   const day = await page.evaluate(() => { const s = window.NSM.scene; const g = [...s.npcs.values()].find((n) => n.glow); return { alpha: g.sprite.alpha, cloud: s.clouds[0].g.alpha }; });
   assert.ok(day.alpha < 0.05, '낮엔 반딧불이 안 보임');
-  assert.ok(day.cloud > 0.3, '낮엔 구름 그림자');
+  assert.ok(day.cloud > 0.08 && day.cloud < 0.2, `낮엔 옅은 구름 그림자 ${day.cloud}`);
   // 간식: 서버에서 사면 손에 아이콘
   await srv.hub.store.adjustCoins('민수', 2, 'test');
   const me = out.players.get(await page.evaluate(() => window.NSM.scene.me.id));

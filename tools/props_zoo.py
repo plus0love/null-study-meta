@@ -25,50 +25,63 @@ ICE_HI = "#ffffff"
 
 
 # ── 울타리 ─────────────────────────────────────────────────────────────
+def _post(c, x=6, y=1, w=4, h=15):
+    """굵은 기둥 (갓 있음)."""
+    c.rect(x, y, w, h, FENCE_DK)
+    c.rect(x + 1, y, w - 2, h - 1, FENCE)
+    c.px(x + 1, y + 1, FENCE_HI)
+    c.rect(x - 1, y, w + 2, 2, FENCE_DK)
+    c.hline(x - 1, x + w, y, FENCE_HI)
+
+
+def _rails_h(c, x0=0, x1=15):
+    """두꺼운 가로대 2줄 (3px)."""
+    for y in (5, 10):
+        c.rect(x0, y, x1 - x0 + 1, 3, FENCE)
+        c.hline(x0, x1, y, FENCE_HI)
+        c.hline(x0, x1, y + 2, FENCE_DK)
+
+
+def _rails_v(c, y0=0, y1=15):
+    """두꺼운 세로대 2줄 (3px)."""
+    for x in (4, 9):
+        c.rect(x, y0, 3, y1 - y0 + 1, FENCE)
+        c.vline(x, y0, y1, FENCE_HI)
+        c.vline(x + 2, y0, y1, FENCE_DK)
+
+
 def fence_h():
+    """두꺼운 나무 울타리(가로): 가로대 2줄 + 가운데 기둥."""
     c = canvas(1, 1)
-    c.rect(0, 6, 16, 2, FENCE)
-    c.hline(0, 15, 6, FENCE_HI)
-    c.rect(0, 11, 16, 2, FENCE)
-    c.hline(0, 15, 11, FENCE_HI)
-    for x in (1, 9):
-        c.rect(x, 3, 3, 13, FENCE_DK)
-        c.px(x + 1, 3, FENCE_HI)
+    _rails_h(c)
+    _post(c)
+    c.hline(4, 11, 15, "#00000040")
     return c
 
 
 def fence_v():
+    """두꺼운 나무 울타리(세로): 세로대 2줄 + 가로 버팀."""
     c = canvas(1, 1)
-    c.rect(6, 0, 2, 16, FENCE)
-    c.vline(6, 0, 15, FENCE_HI)
-    c.rect(10, 0, 2, 16, FENCE)
-    c.vline(10, 0, 15, FENCE_HI)
-    for y in (2, 10):
-        c.rect(5, y, 8, 2, FENCE_DK)
+    _rails_v(c)
+    c.rect(3, 6, 10, 4, FENCE_DK)
+    c.rect(4, 6, 8, 3, FENCE)
+    c.hline(4, 11, 6, FENCE_HI)
     return c
 
 
 def fence_corner(kind):
-    """모서리: nw/ne/sw/se — 기둥 하나 + 두 방향 가로대."""
+    """모서리: nw/ne/sw/se — 굵은 기둥 하나 + 두 방향 가로대."""
     c = canvas(1, 1)
     if kind in ("nw", "ne"):
-        c.rect(6, 8, 2, 8, FENCE) if False else None
-    # 가로대 (남/북 방향으로 이어지는 세로 판자)
-    if kind in ("nw", "ne"):
-        c.rect(6, 8, 2, 8, FENCE)
-        c.rect(10, 8, 2, 8, FENCE)
+        _rails_v(c, 8, 15)
     else:
-        c.rect(6, 0, 2, 8, FENCE)
-        c.rect(10, 0, 2, 8, FENCE)
+        _rails_v(c, 0, 8)
     if kind in ("nw", "sw"):
-        c.rect(8, 6, 8, 2, FENCE)
-        c.rect(8, 11, 8, 2, FENCE)
+        _rails_h(c, 8, 15)
     else:
-        c.rect(0, 6, 8, 2, FENCE)
-        c.rect(0, 11, 8, 2, FENCE)
-    c.rect(6, 3, 5, 13, FENCE_DK)
-    c.px(7, 3, FENCE_HI)
-    c.px(8, 3, FENCE_HI)
+        _rails_h(c, 0, 8)
+    _post(c, 5, 1, 6, 15)
+    c.hline(3, 12, 15, "#00000040")
     return c
 
 
@@ -95,11 +108,14 @@ def glass_fence_v():
 
 
 def gate_post():
+    """문 기둥: 울타리 기둥보다 굵고 높다 (출입구 양쪽)."""
     c = canvas(1, 1)
-    c.rect(5, 0, 6, 16, FENCE_DK)
-    c.rect(6, 0, 4, 15, FENCE)
-    c.px(7, 1, FENCE_HI)
-    c.rect(4, 0, 8, 2, FENCE_DK)
+    c.rect(4, 0, 8, 16, FENCE_DK)
+    c.rect(5, 0, 6, 15, FENCE)
+    c.rect(6, 1, 2, 12, FENCE_HI)
+    c.rect(3, 0, 10, 2, FENCE_DK)
+    c.hline(3, 12, 0, FENCE_HI)
+    c.rect(3, 14, 10, 2, FENCE_DK)
     return c
 
 

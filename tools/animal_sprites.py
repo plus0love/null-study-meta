@@ -1,11 +1,11 @@
 """14단계 동물 스프라이트 시트 (오리지널, 32x32 논리 → 2배 = 64px 프레임).
 
 출력:
-  public/assets/animals.png / animals.json  12종 x 6프레임. 프레임 = species.index * 6 + f
-      f 0 walk_a · 1 walk_b · 2 idle · 3 eat · 4 sleep · 5 sit (새·나비는 fly)
+  public/assets/animals.png / animals.json  11종 x 6프레임. 프레임 = species.index * 6 + f
+      f 0 walk_a · 1 walk_b · 2 idle · 3 eat · 4 sleep · 5 sit (비둘기는 fly)
       전부 왼쪽을 본다 — 오른쪽은 클라이언트가 flipX. 위/아래도 옆모습으로 그린다 (종별 2~3프레임 규격).
-  tools/out/s14_animals_row.png  12종 한 줄 (검수용 · README)
-동물원: panda lion giraffe penguin guinea_pig flamingo monkey elephant / 자유 동물: duck squirrel pigeon butterfly
+  tools/out/s14_animals_row.png  11종 한 줄 (검수용 · README)
+동물원: panda lion giraffe penguin guinea_pig flamingo monkey elephant / 자유 동물: duck squirrel pigeon (나비는 후속 수정에서 뺐다)
 (토끼·고양이는 10단계 펫 시트(pets.png)의 것을 그대로 쓴다)
 실행: python tools/animal_sprites.py
 """
@@ -28,9 +28,9 @@ EYE = "#2b2530"
 Z = "#f1e6d2"
 GROUND = 30  # 발바닥 y
 
-SPECIES = ["panda", "lion", "giraffe", "penguin", "guinea_pig", "flamingo", "monkey", "elephant", "duck", "squirrel", "pigeon", "butterfly"]
+SPECIES = ["panda", "lion", "giraffe", "penguin", "guinea_pig", "flamingo", "monkey", "elephant", "duck", "squirrel", "pigeon"]
 NAMES = {"panda": "판다", "lion": "사자", "giraffe": "기린", "penguin": "펭귄", "guinea_pig": "기니피그", "flamingo": "플라밍고", "monkey": "원숭이",
-         "elephant": "코끼리", "duck": "오리", "squirrel": "다람쥐", "pigeon": "비둘기", "butterfly": "나비"}
+         "elephant": "코끼리", "duck": "오리", "squirrel": "다람쥐", "pigeon": "비둘기"}
 
 
 def canvas():
@@ -474,38 +474,9 @@ def pigeon(f):
     return c
 
 
-def butterfly(f):
-    W1, W2, B = "#f4c37a", "#f08aa0", "#3b3540"
-    c = canvas()
-    # 날개 각도: walk_a/idle 펼침, walk_b/fly 접음
-    fold = f in (1, 5)
-    if fold:
-        c.ellipse(11, 8, 6, 12, W1)
-        c.ellipse(16, 8, 6, 12, W1)
-        c.ellipse(12, 10, 4, 6, W2)
-        c.ellipse(17, 10, 4, 6, W2)
-    else:
-        c.ellipse(4, 6, 12, 11, W1)
-        c.ellipse(17, 6, 12, 11, W1)
-        c.ellipse(6, 14, 9, 8, W2)
-        c.ellipse(18, 14, 9, 8, W2)
-        c.px(8, 9, W2)
-        c.px(23, 9, W2)
-        c.px(9, 17, W1)
-        c.px(21, 17, W1)
-    c.rect(15, 8, 3, 13, B)
-    c.px(14, 6, B)
-    c.px(18, 6, B)
-    c.px(13, 5, B)
-    c.px(19, 5, B)
-    if f == 4:  # 꽃 위에서 쉬기 (날개 접고 아래에 꽃)
-        c.rect(12, 22, 9, 3, "#5f8a5c")
-        c.ellipse(11, 19, 11, 5, "#f2a0b0")
-    return c
-
 
 DRAW = {"panda": panda, "lion": lion, "giraffe": giraffe, "penguin": penguin, "guinea_pig": guinea_pig, "flamingo": flamingo, "monkey": monkey,
-        "elephant": elephant, "duck": duck, "squirrel": squirrel, "pigeon": pigeon, "butterfly": butterfly}
+        "elephant": elephant, "duck": duck, "squirrel": squirrel, "pigeon": pigeon}
 
 
 def build():
@@ -520,7 +491,7 @@ def build():
     big.save(os.path.join(OUT, "animals.png"), optimize=True)
     meta = {
         "frameWidth": S * SCALE, "frameHeight": S * SCALE, "framesPerSpecies": cols, "frames": {n: i for i, n in enumerate(FRAMES)},
-        "species": {sp: {"index": i, "name": NAMES[sp], "fly": sp in ("pigeon", "butterfly")} for i, sp in enumerate(SPECIES)},
+        "species": {sp: {"index": i, "name": NAMES[sp], "fly": sp == "pigeon"} for i, sp in enumerate(SPECIES)},
     }
     with open(os.path.join(OUT, "animals.json"), "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, separators=(",", ":"))

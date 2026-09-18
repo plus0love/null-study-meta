@@ -86,7 +86,7 @@
       stars: w.night,
       sunsetTint: 0.35 * w.sunset,
       tone: 0.12 * w.day, // 낮 따뜻한 톤(비네팅과 함께)
-      clouds: 0.38 * w.day, // 구름 그림자 진하기
+      clouds: 0.13 * w.day, // 구름 그림자 진하기 (후속 수정: 이전의 1/3, 밤·노을엔 0)
     };
   }
 

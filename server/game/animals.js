@@ -8,8 +8,7 @@
  *  - DuckNpc: 연못 안쪽 물 타일에서만 헤엄친다(walkable 을 물 타일로 제한). 상태 swim(=walk)·idle·sleep.
  *  - SquirrelNpc: 나무 사이 지점(spots)을 빠르게 오가고, 앉아서 도토리를 먹는다. 쓰다듬기 가능.
  *  - PigeonNpc: 광장을 걸으며 모이를 쫀다. 플레이어가 FLEE_PX 안에 오면 날아올라(fly, 충돌 무시 직선 이동) 멀리 내려앉는다.
- *  - ButterflyNpc: 꽃밭 위를 하늘하늘 (fly, 충돌 무시 직선 이동, 목표를 자주 바꾼다).
- *  - FireflyNpc: 밤 반딧불이 — 항상 천천히 떠다니고(glow: true), 클라이언트가 밤에만 보여 준다.
+ *  - FireflyNpc: 밤 반딧불이 — 꽃밭·공원 위를 항상 천천히 떠다니고(fly, 충돌 무시, glow: true) 클라이언트가 밤에만 보여 준다. (나비는 후속 수정에서 뺐다)
  * 이벤트: BaseNpc 와 같은 'update' · 'pet' · 'name' + 'react' { reaction } (먹이를 먹었을 때)
  */
 const { BaseNpc, SharedPetNpc, SPECIES: PET_SPECIES } = require('./npc');
@@ -18,11 +17,11 @@ const { isBlocked, TILES } = require('../rooms/build');
 const ANIMAL_TICK_MS = 150; // 동물은 조금 느리게 (트래픽)
 const EAT_MS = 4500;
 const FLEE_PX = 64; // 비둘기가 날아오르는 거리
-const SPEED = { panda: 26, lion: 40, giraffe: 34, penguin: 30, guinea_pig: 32, rabbit: 44, flamingo: 30, monkey: 55, elephant: 24, duck: 28, squirrel: 120, pigeon: 40, butterfly: 34, firefly: 18, cat: 45 };
+const SPEED = { panda: 26, lion: 40, giraffe: 34, penguin: 30, guinea_pig: 32, rabbit: 44, flamingo: 30, monkey: 55, elephant: 24, duck: 28, squirrel: 120, pigeon: 40, firefly: 18, cat: 45 };
 const PETTABLE = new Set(['rabbit', 'guinea_pig', 'squirrel', 'cat']);
 const REACTION = { panda: '🎋', lion: '🍖', giraffe: '🌿', penguin: '🐟', guinea_pig: '🥬', rabbit: '🥕', flamingo: '🦐', monkey: '🍌', elephant: '🍉', squirrel: '🌰', cat: '😻', duck: '🍞' };
-const SHEET_SPECIES = new Set(['panda', 'lion', 'giraffe', 'penguin', 'guinea_pig', 'flamingo', 'monkey', 'elephant', 'duck', 'squirrel', 'pigeon', 'butterfly']);
-const NAMES = { panda: '판다', lion: '사자', giraffe: '기린', penguin: '펭귄', guinea_pig: '기니피그', flamingo: '플라밍고', monkey: '원숭이', elephant: '코끼리', duck: '오리', squirrel: '다람쥐', pigeon: '비둘기', butterfly: '나비', rabbit: '토끼', cat: '고양이', firefly: '반딧불이' };
+const SHEET_SPECIES = new Set(['panda', 'lion', 'giraffe', 'penguin', 'guinea_pig', 'flamingo', 'monkey', 'elephant', 'duck', 'squirrel', 'pigeon']);
+const NAMES = { panda: '판다', lion: '사자', giraffe: '기린', penguin: '펭귄', guinea_pig: '기니피그', flamingo: '플라밍고', monkey: '원숭이', elephant: '코끼리', duck: '오리', squirrel: '다람쥐', pigeon: '비둘기', rabbit: '토끼', cat: '고양이', firefly: '반딧불이' };
 
 /** 바닥 타일 인덱스 집합 (이름 접두어) */
 function floorSet(prefixes) {
@@ -292,10 +291,10 @@ class PigeonNpc extends FlyerNpc {
   }
 }
 
-/** 나비: 꽃밭 위를 하늘하늘 (항상 fly, 목표를 자주 바꾼다) */
-class ButterflyNpc extends FlyerNpc {
+/** 반딧불이: 밤에만 보이는 작은 불빛 (glow). 꽃밭·공원 위를 항상 천천히 떠다닌다 (fly, 충돌 무시, 목표를 자주 바꾼다) */
+class FireflyNpc extends FlyerNpc {
   constructor(room, opts = {}) {
-    super(room, { species: 'butterfly', kind: 'butterfly', pettable: false, ...opts });
+    super(room, { ...opts, species: 'firefly', kind: 'firefly', pettable: false });
     this.state = 'idle';
   }
 
@@ -315,20 +314,8 @@ class ButterflyNpc extends FlyerNpc {
   }
 
   snapshot() {
-    return { ...super.snapshot(), fly: true };
-  }
-}
-
-/** 반딧불이: 밤에만 보이는 작은 불빛 (glow). 항상 천천히 떠다닌다 */
-class FireflyNpc extends ButterflyNpc {
-  constructor(room, opts = {}) {
-    super(room, { ...opts, species: 'firefly', kind: 'firefly' });
-  }
-
-  snapshot() {
-    const s = super.snapshot();
+    const s = { ...super.snapshot(), fly: true, glow: true };
     delete s.sheet;
-    s.glow = true;
     return s;
   }
 }
@@ -366,7 +353,6 @@ function createOutdoorAnimals(room, base = {}) {
       else if (a.kind === 'squirrel') npc = new SquirrelNpc(room, opts);
       else if (a.kind === 'cat') npc = new CatNpc(room, opts);
       else if (a.kind === 'pigeon') npc = new PigeonNpc(room, opts);
-      else if (a.kind === 'butterfly') npc = new ButterflyNpc(room, opts);
       else if (a.kind === 'firefly') npc = new FireflyNpc(room, opts);
       else npc = new AnimalNpc(room, { ...opts, species: a.species, kind: a.kind });
       out.push(npc);
@@ -375,4 +361,4 @@ function createOutdoorAnimals(room, base = {}) {
   return out;
 }
 
-module.exports = { AnimalNpc, DuckNpc, SquirrelNpc, FlyerNpc, PigeonNpc, ButterflyNpc, FireflyNpc, CatNpc, createOutdoorAnimals, ANIMAL_TICK_MS, EAT_MS, FLEE_PX, SPEED, REACTION, PETTABLE, WATER_TILES, POOL_TILES };
+module.exports = { AnimalNpc, DuckNpc, SquirrelNpc, FlyerNpc, PigeonNpc, FireflyNpc, CatNpc, createOutdoorAnimals, ANIMAL_TICK_MS, EAT_MS, FLEE_PX, SPEED, REACTION, PETTABLE, WATER_TILES, POOL_TILES };

@@ -60,7 +60,7 @@ test('스폰 위치는 통과 가능', () => {
 
 test('의자/푸프/소파 좌석 20개 (2인 스터디룸 의자 2 + 2인 소파 2), 모두 통과 가능, 옛 좌석 id 별칭', () => {
   assert.equal(room.seats.length, 20);
-  assert.deepEqual(room.seats.filter((s) => s.id.startsWith('study')).map((s) => [s.id, s.x, s.y, s.kind]), [['study-a', 21, 14, 'chair_n'], ['study-b', 23, 14, 'chair_n'], ['study-sofa-a', 29, 18, 'sofa_love'], ['study-sofa-b', 30, 18, 'sofa_love']]);
+  assert.deepEqual(room.seats.filter((s) => s.id.startsWith('study')).map((s) => [s.id, s.x, s.y, s.kind]), [['study-a', 21, 14, 'chair_n'], ['study-b', 23, 14, 'chair_n'], ['study-sofa-a', 26, 19, 'sofa_love_n'], ['study-sofa-b', 27, 19, 'sofa_love_n']]); // 17단계: 위를 보는 소파가 아래 벽
   assert.deepEqual(room.seatAliases, { 'study1-l': 'study-l', 'seat-8': 'study-a', 'seat-9': 'study-b' }, '옛 방 A/B 의자 id 는 별칭으로 남는다');
   assert.deepEqual(room.seats.find((s) => s.id === 'study-a').slots, [{ tx: 20, ty: 12 }, { tx: 20, ty: 13 }, { tx: 19, ty: 13 }]);
   for (const s of room.seats) assert.ok(!isBlocked(room, s.x, s.y), `좌석 ${s.id} (${s.x},${s.y})`);
@@ -87,10 +87,11 @@ test('스폰에서 모든 좌석·문·바깥까지 걸어서 도달 가능', ()
   for (const s of room.seats) assert.ok(reach.has(`${s.x},${s.y}`), `좌석 ${s.kind} (${s.x},${s.y}) 도달 불가`);
   for (const d of room.doors) assert.ok(reach.has(`${d.x},${d.y}`), `문 ${d.id} 도달 불가`);
   assert.ok(reach.has('22,28'), '입구 밖 매트 도달 불가');
-  // 스터디룸 안쪽 (책상 앞 · 소파 앞 · 왼쪽 구석)
+  // 스터디룸 안쪽 (책상 앞 · 소파 앞 · 왼쪽 구석 · 커튼 옆 통로)
   assert.ok(reach.has('22,15'));
-  assert.ok(reach.has('30,19'));
+  assert.ok(reach.has('26,18'));
   assert.ok(reach.has('16,17'));
+  assert.ok(reach.has('13,20'));
 });
 
 test('상단 레이어에 화분 윗부분·펜던트 등이 있고, 그 칸은 통과 가능', () => {
@@ -205,7 +206,7 @@ test('2인 유리 스터디룸: 프레임 기둥·유리 판·2타일 열린 문
     assert.notEqual(at(x, 10), -1, `(${x},10)`);
     assert.notEqual(room.layers.top[10][x], idx('wall_vine'));
   }
-  // 긴 책상 7x2 · 의자 2 (사이 1타일) · 협탁 2 · 2인 소파 · 작은 책장 · 코르크보드
+  // 긴 책상 7x2 · 의자 2 (사이 1타일) · 협탁 2 · 위를 보는 2인 소파(아래 벽) · 왼쪽 벽 화이트보드·2단 책장 · 코르크보드 (17단계)
   assert.equal(at(19, 12), objects.desk_long.tiles[0][0]);
   assert.equal(at(25, 13), objects.desk_long.tiles[1][6]);
   assert.equal(at(21, 14), idx('chair_n'));
@@ -213,8 +214,12 @@ test('2인 유리 스터디룸: 프레임 기둥·유리 판·2타일 열린 문
   assert.equal(at(22, 14), -1, '의자 사이 1타일');
   assert.equal(at(18, 12), idx('nightstand_books'));
   assert.equal(at(26, 12), idx('nightstand_lamp'));
-  assert.equal(at(28, 17), objects.sofa_love.tiles[0][0]);
-  assert.equal(at(15, 12), objects.bookcase_small.tiles[0][0]);
+  assert.equal(at(25, 19), objects.sofa_love_n.tiles[0][0]);
+  assert.equal(at(28, 20), objects.sofa_love_n.tiles[1][3]);
+  assert.equal(at(14, 13), objects.whiteboard_small.tiles[0][0]);
+  assert.equal(at(14, 16), objects.bookcase_2tier.tiles[0][0]);
+  assert.equal(room.layers.floor[14][19], objects.rug_study_grid.tiles[0][0]);
+  assert.equal(room.layers.floor[17][25], objects.rug_study_grid.tiles[3][6]);
   assert.equal(at(21, 10), objects.corkboard.tiles[0][0]);
   // 유리벽 안쪽 커튼 (top 레이어, 통과 가능)
   assert.equal(room.layers.top[12][13], idx('curtain_top'));

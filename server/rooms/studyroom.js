@@ -12,6 +12,8 @@
  * 3단계: 식물은 창가 양끝·스터디룸 각 1·커피 코너 1·입구 양옆·회의 구역 모서리만 남기고 액자/선반/수납장/러그로 채웠다.
  * 15단계: 유리 스터디룸 2개를 넓은 2인 스터디룸 하나로(x 12..33). 통로 러너는 방 앞 가로. 좌석 id 고정(study-a/b) + 옛 id 별칭.
  *         클라이언트가 동적으로 그리는 위치는 anchors (문 명패·코르크보드 목표 팻말·D-day 칠판·커피머신 김).
+ * 17단계: 2인 스터디룸 안쪽 정리 — 러그는 책상 앞 4타일만(격자), 아래 벽에 위를 보는 2인 소파 코너, 왼쪽 벽 화이트보드·2단 책장, 오른쪽 벽 옷걸이·수납장·미니 냉장고.
+ *         걸을 수 있는 모든 칸이 스폰에서 닿아야 하고(가구 사이 막힌 틈은 setSolid), 상점 가구도 고립 칸을 만들면 서버가 거부한다 (layout.js isolates).
  */
 const { RoomBuilder } = require('./build');
 
@@ -196,9 +198,14 @@ function buildStudyRoom() {
   b.place('curtain_body', 13, 14);
   b.place('curtain_end', 13, 15);
   for (let y = 16; y <= 19; y++) b.place('curtain_rail', 13, y);
-  // 가구: 러그(책상 앞까지) · 긴 책상(모니터 2·스탠드 2·공유 화분/시계) · 의자 2 (사이 1타일) · 협탁 2 · 옷걸이(가디건) · 작은 책장 · 2인 소파+러그 · 슬리퍼 · 화분 2
-  b.place('rug_study_wide', 18, 14);
-  b.place('rug_sofa', 28, 17);
+  // 가구 (17단계 정리): 격자 러그는 책상 폭·4타일 깊이(x 19..25, y 14..17)만 — 러그 밖 바닥이 보인다.
+  //   긴 책상(모니터 2·스탠드 2·공유 화분/시계) · 의자 2 (사이 1타일) · 협탁 2
+  //   왼쪽 벽(x 14..15): 야자 · 작은 화이트보드(이젤) · 2단 책장 — 커튼 옆 x 13 은 세로 통로
+  //   오른쪽 벽(x 31..32): 옷걸이(가디건) · 작은 수납장 · 미니 냉장고 · 잡지 더미
+  //   아래 벽: 위를 보는 2인 소파(등받이가 유리벽, 문 오른쪽 x 25..28) + 앞 낮은 테이블(책·머그, 러그 옆 y 17, 소파 앞 y 18 은 통로) +
+  //            양옆 스탠드 램프(y 18..19)·작은 사이드 테이블(y 20) · 바닥 슬리퍼 2·쿠션 2(통과 가능)
+  //   통행: 문(22..23, y 21) → 문 패널(20..21)과 왼쪽 램프(24) 사이 2칸 폭 통로 → 러그 → 두 의자. 모든 바닥 칸이 스폰에서 닿는다 (test/stage17.test.js BFS).
+  b.place('rug_study_grid', 19, 14);
   b.place('desk_long', 19, 12);
   b.place('nightstand_books', 18, 12);
   b.place('nightstand_lamp', 26, 12);
@@ -212,15 +219,30 @@ function buildStudyRoom() {
   b.alias('seat-9', 'study-b');
   b.screen(21, 14, { x: 19 * 16 + 32, y: 12 * 16 + 2, w: 16, h: 8, kind: 'monitor' });
   b.screen(23, 14, { x: 19 * 16 + 64, y: 12 * 16 + 2, w: 16, h: 8, kind: 'monitor' });
-  b.place('coat_rack_cardigan', 14, 11);
-  b.place('bookcase_small', 15, 12);
-  b.place('plant_palm_1', 32, 11);
+  // 왼쪽 벽
+  b.place('plant_palm_1', 14, 11);
+  b.place('whiteboard_small', 14, 13);
+  b.place('bookcase_2tier', 14, 16);
   b.place('plant_palm_0', 14, 19);
-  b.place('sofa_love', 28, 17, { seatIds: ['study-sofa-a', 'study-sofa-b'] });
-  b.light(30, 17.6, 2.6, 0xffc46a, 0.35);
-  b.place('slippers_a', 27, 19);
-  b.place('slippers_b', 32, 19);
-  b.place('magazines', 32, 16);
+  // 오른쪽 벽
+  b.place('coat_rack_cardigan', 32, 11);
+  b.place('cabinet_small', 31, 13);
+  b.place('mini_fridge', 32, 15);
+  b.place('magazines', 32, 18);
+  // 아래 벽: 소파 코너 (좌석 study-sofa-a/b = (26,19)·(27,19), 위를 본다)
+  b.place('standing_lamp', 24, 18);
+  b.light(24.5, 18.6, 2.6, 0xffc46a, 0.4);
+  b.place('side_table_small', 24, 20);
+  b.place('sofa_love_n', 25, 19, { seatIds: ['study-sofa-a', 'study-sofa-b'] });
+  b.place('low_table_study', 26, 17);
+  b.place('standing_lamp', 29, 18);
+  b.light(29.5, 18.6, 2.6, 0xffc46a, 0.4);
+  b.place('side_table_small', 29, 20);
+  // 바닥 소품 (전부 통과 가능)
+  b.place('slippers_a', 19, 20);
+  b.place('slippers_b', 30, 20);
+  b.place('cushion_floor_a', 16, 19);
+  b.place('cushion_floor_b', 17, 20);
   // 방 앞 가로 러너 (통로)
   b.place('rug_runner_h', 18, 22);
   b.light(18.5, 22.8, 2.6, 0xffc46a, 0.22);
@@ -283,6 +305,12 @@ function buildStudyRoom() {
   b.label(2.5, 28.1, 'Same\nPlace\nBrighter\nUs\n♡', { ...SANS, size: 9, color: '#efe6d6', lineHeight: 1.25 });
   b.place('sign_right', 42, 26);
   b.label(43.5, 28.1, 'Good\nIdeas\nStart\nHere\n→', { ...SANS, size: 9, color: '#efe6d6', lineHeight: 1.25 });
+
+  // 17단계: 가구 사이 막힌 틈(어디서도 못 들어가는 칸)은 막아 둔다 — 통행 검증(스폰에서 BFS)이 고립 칸으로 잡지 않게
+  b.setSolid(3, 3, 3, 6); // 좁은 책장 ↔ 칠판 사이
+  b.setSolid(12, 3, 13, 4); // 좁은 책장 ↔ 창가 화분 사이
+  b.setSolid(23, 9, 23, 9); // 라운지 사이드 램프 ↔ 강아지 쿠션 사이
+  b.setSolid(7, 13, 8, 13); // 커피머신 뒤
 
   b.setSpawn(22, 23);
   return b.build();

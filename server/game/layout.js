@@ -13,9 +13,11 @@
  *  - 러그(layer 'floor')는 다른 가구와 겹쳐도 된다 (아래에 깔린다). 그 외 가구끼리는 셀이 겹치면 안 된다.
  *  - 통과 불가 가구(passable=false)의 셀은 충돌 맵에 들어간다. seat 셀은 예외(앉으러 들어가야 하니까).
  *    사람(발 위치)·강아지가 서 있는 셀에는 통과 불가 가구를 놓을 수 없다.
+ *  - 17단계 통행: 통과 불가 가구를 놓아서(또는 옮겨서) 스폰에서 닿던 칸이 못 가는 곳이 되면 거부한다 ('isolates').
+ *    기준은 "놓기 전 스폰에서 BFS 로 닿던 칸" — 원래부터 못 가던 틈은 상관없다. 새 가구의 좌석 칸도 닿아야 한다. opts.connectivity = false 로 끌 수 있다.
  */
 const WALL_NAMES = new Set(['wall_face']);
-const ERRORS = ['no_item', 'invalid_rotation', 'out_of_bounds', 'wall_only', 'needs_base', 'blocked', 'overlap', 'player_in_way'];
+const ERRORS = ['no_item', 'invalid_rotation', 'out_of_bounds', 'wall_only', 'needs_base', 'blocked', 'overlap', 'player_in_way', 'isolates'];
 const ROT_FACING = { up: 'right', right: 'down', down: 'left', left: 'up' }; // 시계 90° 마다
 
 function footprint(sprite, rotation = 0) {
@@ -153,7 +155,51 @@ function validatePlacement(room, item, placement, others = [], itemOf = () => nu
   if (opts.occupied && opts.occupied.size) {
     for (const c of solid) if (opts.occupied.has(`${c.tx},${c.ty}`)) return { ok: false, error: 'player_in_way' };
   }
+  if (opts.connectivity !== false && isolates(room, others, itemOf, solid, placement.id)) return { ok: false, error: 'isolates' };
   return { ok: true, cells, seat: seatOf(sprite, x, y, rotation), solid };
+}
+
+/** 스폰 타일 좌표 (isSpawn 과 같은 규칙) */
+function spawnTile(room) {
+  return { tx: Math.floor(room.spawn.x / room.tileSize), ty: Math.floor((room.spawn.y - 1) / room.tileSize) };
+}
+
+/** 충돌 격자에서 (sx, sy) 로부터 4방향으로 닿는 칸 — Uint8Array(width * height), 1 = 닿음. 시작 칸이 막혀 있으면 전부 0 */
+function reachable(grid, width, height, sx, sy) {
+  const seen = new Uint8Array(width * height);
+  if (sx < 0 || sy < 0 || sx >= width || sy >= height || grid[sy][sx]) return seen;
+  const q = [sx, sy];
+  seen[sy * width + sx] = 1;
+  for (let i = 0; i < q.length; i += 2) {
+    const x = q[i];
+    const y = q[i + 1];
+    if (x > 0 && !grid[y][x - 1] && !seen[y * width + x - 1]) { seen[y * width + x - 1] = 1; q.push(x - 1, y); }
+    if (x < width - 1 && !grid[y][x + 1] && !seen[y * width + x + 1]) { seen[y * width + x + 1] = 1; q.push(x + 1, y); }
+    if (y > 0 && !grid[y - 1][x] && !seen[(y - 1) * width + x]) { seen[(y - 1) * width + x] = 1; q.push(x, y - 1); }
+    if (y < height - 1 && !grid[y + 1][x] && !seen[(y + 1) * width + x]) { seen[(y + 1) * width + x] = 1; q.push(x, y + 1); }
+  }
+  return seen;
+}
+
+/**
+ * 통과 불가 셀(solid)을 더하면 고립되는 칸이 생기는가 (17단계).
+ * 놓기 전 스폰에서 닿던 칸 중, 놓은 뒤에도 걸을 수 있는데(가구 셀이 아닌데) 닿지 않게 되는 칸이 하나라도 있으면 true.
+ * @param entries 다른 배치 항목 (skipId 가 있으면 그 항목은 제외 — 이동 중인 가구)
+ */
+function isolates(room, entries, itemOf, solid, skipId) {
+  if (!solid.length || !room.spawn || !room.collision) return false;
+  const grid = buildCollision(room, entries.filter((e) => skipId === undefined || e.id !== skipId), itemOf);
+  const { tx, ty } = spawnTile(room);
+  const before = reachable(grid, room.width, room.height, tx, ty);
+  for (const c of solid) if (inBounds(room, c.tx, c.ty)) grid[c.ty][c.tx] = true;
+  const after = reachable(grid, room.width, room.height, tx, ty);
+  for (let i = 0; i < before.length; i++) {
+    if (!before[i] || after[i]) continue;
+    const x = i % room.width;
+    const y = (i - x) / room.width;
+    if (!grid[y][x]) return true;
+  }
+  return false;
 }
 
 /** 방의 기본 충돌 맵 사본에 배치 가구의 통과 불가 셀을 더한 2D 배열 */
@@ -193,6 +239,6 @@ function deskSlots(room, seat) {
   return out;
 }
 
-const api = { footprint, rotateCell, rotateFacing, cellsOf, seatOf, solidCells, validatePlacement, buildCollision, deskSlots, isFreeFloor, occupantAt, WALL_NAMES, ERRORS, DESK_NAMES };
+const api = { footprint, rotateCell, rotateFacing, cellsOf, seatOf, solidCells, validatePlacement, buildCollision, deskSlots, isFreeFloor, occupantAt, spawnTile, reachable, isolates, WALL_NAMES, ERRORS, DESK_NAMES };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else window.Layout = api;

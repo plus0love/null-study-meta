@@ -11,8 +11,11 @@
  *   y 26..36  광장 x 14..47 (분수 3x3 애니 + 원형 포석 띠 2겹 · 가로등 · 벤치 · 화단 4색 · 전광판 x 42..46 · 카트 차고 x 44..46)
  *   좌측/하단 공원 (이음새 없는 잔디 4톤 + 잔디 결·클로버·작은 꽃·돌 · 나무 군락 6종 · 연못 x 3..10 y 39..45 (갈대·돌·수련) · 자갈 산책로 · 피크닉 테이블·담요)
  *   우측 트랙 x 48..78 · y 13..48: 폭 3 둥근 사각 흙길(모서리 반지름 8), 양옆 흰/빨강 연석 · 코너 안쪽 스키드 자국 · 바깥 타이어 배리어 · 코너 번호 표지판,
- *     출발선 (48..50, 31) 위 아치 배너 + 깃발, 시계 방향(왼쪽 직선에서 위로), 체크포인트 3개. 안쪽 섬은 잔디 + 꽃밭 + 피트 박스. 한 바퀴 중심선 약 120타일.
- *   x 80..99 · y 50..69: 14단계 B 동물원 (buildZoo)
+ *     출발선 (48..50, 31) 위 아치 배너 + 깃발, 시계 방향(왼쪽 직선에서 위로), 체크포인트 3개. 한 바퀴 중심선 약 120타일.
+ *     안쪽 섬: 가운데 작은 연못(오리 1) + 자연스러운 꽃 군락 6곳(꽃 패치·작은 꽃·꽃 핀 잔디, 전부 통과 가능) + 벤치 2 주변 피크닉 담요·나무 군락 + 응원 깃발 8 + 피트 박스.
+ *   x 80..99 · y 50..69: 14단계 B 동물원 (buildZoo). 우리마다 서식지 소품 5~8개 · 바닥 종별(잔디·모래·얼음·흙·마른 풀·진흙) · 두꺼운 나무 울타리 + 큰 안내판(2x2).
+ *   빈 잔디는 Ctx.scatter 로 소품(꽃 군락·돌·통나무·낙엽·관목·그루터기)을 결정적으로 흩뿌린다 — 통과 불가 소품은 둘레가 비었을 때만 놓아 고립 구역을 만들지 않는다.
+ * 통행 규칙: 산책로가 울타리와 만나는 곳은 전부 문(2칸 + 양쪽 기둥, ZOO_GATES). 걸을 수 있는 모든 바닥은 스폰에서 닿아야 한다 (우리 안쪽 제외, 만지기 코너만 문) — test/stage16.test.js 가 BFS 로 검증.
  * 문(doors[].to): 'studyroom' 이면 자기 스터디로 복귀. spawn 은 이중문 앞 보도.
  * room.track: 랩 판정 정의 (server/game/track.js). room.outdoor = true.
  */
@@ -23,6 +26,9 @@ const H = 70;
 const TRACK = { x0: 48, x1: 78, y0: 13, y1: 48, width: 3, radius: 8 };
 const SANS = { font: 'sans' };
 const FOUNTAIN = { x: 32.5, y: 30.5 }; // 분수 중심 (타일)
+const WALKABLE_KINDS = new Set(['grass', 'hill', 'path', 'track', 'plaza', 'paver', 'deck']); // 사람이 걷는 바닥 종류 (scatter 의 둘레 검사)
+const INFIELD_POND = { x0: 61, y0: 28, x1: 65, y1: 32 }; // 트랙 안쪽 작은 연못 (물가 포함). 물은 안쪽 3x3
+const FLOWER_COLORS = ['pink', 'yellow', 'purple', 'white', 'red']; // 꽃 패치(flower_patch_*) 색
 
 /** 둥근 사각형 부호 거리 (셀 중심 기준, 안쪽이 음수) */
 function sdRoundRect(px, py, cx, cy, hw, hh, r) {
@@ -99,6 +105,62 @@ class Ctx {
   /** 자갈 산책로 셀 (테두리 마스크는 나중에 finishPaths 가 계산) */
   path(x, y) {
     this.kind[y][x] = 'path';
+  }
+
+  /**
+   * 소품 footprint 둘레(8방)가 전부 걸을 수 있는 빈 칸인지 — 통과 불가 소품은 이 조건일 때만 흩뿌려서
+   * 다른 장애물과 붙어 고립 구역을 만들지 않게 한다 (맵 가장자리도 장애물로 본다).
+   */
+  clearAround(x, y, w, h) {
+    for (let ty = y - 1; ty <= y + h; ty++) {
+      for (let tx = x - 1; tx <= x + w; tx++) {
+        if (tx >= x && tx < x + w && ty >= y && ty < y + h) continue;
+        if (tx < 0 || ty < 0 || tx >= W || ty >= H) return false;
+        if (!WALKABLE_KINDS.has(this.kind[ty][tx])) return false;
+        const occ = this.b.occupant[ty][tx];
+        if (occ !== -1 && this.b.obj(this.b.props[occ].name).solid) return false;
+      }
+    }
+    return true;
+  }
+
+  /** 꽃 군락: 가운데 + 이웃 2~4칸에 작은 꽃 (통과 가능). 놓은 개수를 돌려준다 */
+  flowerCluster(x, y, salt) {
+    let n = 0;
+    const cells = [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]];
+    const want = 3 + (hash(x, y, salt) % 3);
+    const col = FLOWER_COLORS[hash(x, y, salt + 3) % FLOWER_COLORS.length];
+    for (let i = 0; i < cells.length && n < want; i++) {
+      const [dx, dy] = cells[i];
+      if (i > 0 && hash(x + dx, y + dy, salt + 1) % 3 === 0) continue;
+      if (this.free(x + dx, y + dy, 1, 1, ['grass'])) { this.put(i === 0 ? `flower_patch_${col}` : `flower_${hash(x + dx, y + dy, salt + 2) % 3}`, x + dx, y + dy); n++; }
+    }
+    return n;
+  }
+
+  /**
+   * 빈 잔디에 소품을 결정적으로 흩뿌린다 (밀도 density = 셀당 시도 확률).
+   * items: [[name | 'flower_cluster', weight], ...]. 통과 불가 소품은 clearAround 를 만족할 때만.
+   */
+  scatter(x0, y0, x1, y1, salt, density, items, kinds = ['grass']) {
+    const total = items.reduce((s, [, w]) => s + w, 0);
+    let placed = 0;
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const h = hash(x, y, salt);
+        if ((h % 1000) / 1000 >= density) continue;
+        let r = (h >>> 10) % total;
+        let name = items[0][0];
+        for (const [n, w] of items) { if (r < w) { name = n; break; } r -= w; }
+        if (name === 'flower_cluster') { placed += this.flowerCluster(x, y, salt + 7) > 0 ? 1 : 0; continue; }
+        const o = this.b.obj(name);
+        if (!this.free(x, y, o.w, o.h, kinds)) continue;
+        if (o.solid && !this.clearAround(x, y, o.w, o.h)) continue;
+        this.put(name, x, y);
+        placed++;
+      }
+    }
+    return placed;
   }
 
   /** 산책로 타일 확정: 잔디와 닿는 쪽에 흙 테두리 */
@@ -221,30 +283,58 @@ function buildTrack(b, c) {
   c.put('pit_box', 52, 33);
   c.put('tire_stack', 52, 36);
   c.put('tire_stack', 55, 33);
-  // 안쪽 섬: 꽃밭 (동심원) + 나무 + 가로등
-  const colors = ['pink', 'yellow', 'purple', 'white', 'red'];
-  for (let y = 26; y <= 35; y++) {
-    for (let x = 59; x <= 68; x++) {
-      const d = Math.hypot(x + 0.5 - 63.5, y + 0.5 - 30.5);
-      if (d >= 1.6 && d < 2.7) c.put(`flowerbed_${colors[hash(x, y, 4) % colors.length]}`, x, y);
-      else if (d < 1.6) b.place(`grass_flowers_${hash(x, y, 5) % 3}`, x, y);
-      else if (d < 3.8 && hash(x, y, 6) % 3 === 0) c.put(`flower_${hash(x, y, 7) % 3}`, x, y);
+  // 안쪽 섬 — 가운데 작은 연못(오리 1마리) + 자연스러운 꽃 군락 + 벤치 주변 피크닉 담요·나무 군락 + 관중 응원 깃발
+  const P = INFIELD_POND;
+  for (let y = P.y0; y <= P.y1; y++) {
+    for (let x = P.x0; x <= P.x1; x++) {
+      const n = y === P.y0 ? 'N' : y === P.y1 ? 'S' : '';
+      const e = x === P.x1 ? 'E' : x === P.x0 ? 'W' : '';
+      if (n + e) b.place(`shore_${n + e}`, x, y);
+      else if (x === 63 && y === 30) b.place('water_lily_f0', x, y);
+      else b.place((x + y) % 2 ? 'water_f1' : 'water_f0', x, y);
     }
   }
+  c.setKind(P.x0, P.y0, P.x1, P.y1, 'water');
+  b.place('reed', 62, P.y0);
+  b.place('reed', P.x1, 31);
+  c.put('pond_rock', 60, 29);
+  c.put('pond_rock', 66, 32);
   c.put('lamp_post', 57, 30);
   b.light(57.5, 30.3, 4.0, 0xffd48a, 0.7);
   c.put('lamp_post', 70, 30);
   b.light(70.5, 30.3, 4.0, 0xffd48a, 0.7);
-  c.put('tree_round', 58, 19);
-  c.put('tree_birch', 68, 19);
-  c.put('tree_olive', 57, 39);
-  c.put('tree_round', 69, 39);
+  // 벤치 2 + 피크닉 담요 + 나무 군락 (위·아래)
+  c.put('bench_park', 64, 24);
+  c.put('blanket', 66, 24);
+  c.put('tree_round', 60, 20);
+  c.put('tree_birch', 66, 20);
+  c.put('tree_small', 63, 19);
   c.put('bush_0', 62, 22);
-  c.put('bush_1', 65, 42);
+  c.put('bench_park', 62, 37);
+  c.put('blanket', 64, 36);
+  c.put('tree_olive', 57, 38);
+  c.put('tree_round', 66, 39);
+  c.put('tree_small', 60, 40);
+  c.put('bush_1', 69, 42);
   c.put('rock_a', 73, 25);
   c.put('rock_a', 55, 43);
-  c.put('bench_park', 62, 37);
-  c.put('bench_park', 64, 24);
+  c.put('rock_b', 72, 37);
+  c.put('stump', 56, 22);
+  // 꽃 군락: 중심·반지름·색. 중심 가까이는 테두리 없는 촘촘한 꽃 패치(통과 가능), 둘레는 작은 꽃, 바깥은 꽃 핀 잔디 바닥 — 격자 화단 대신 자연스러운 덩어리
+  const clusters = [[57, 26, 3, 'pink'], [69, 26, 3, 'yellow'], [57, 35, 2.6, 'purple'], [70, 35, 2.6, 'white'], [63, 26, 1.7, 'red'], [63, 35, 1.7, 'pink']];
+  for (const [cx, cy, r, col] of clusters) {
+    for (let y = Math.floor(cy - r * 1.5); y <= Math.ceil(cy + r * 1.5); y++) {
+      for (let x = Math.floor(cx - r * 1.5); x <= Math.ceil(cx + r * 1.5); x++) {
+        const d = Math.hypot(x - cx, y - cy) + ((hash(x, y, 4) % 100) / 100 - 0.5) * 0.9; // 가장자리를 울퉁불퉁하게
+        if (!c.free(x, y, 1, 1, ['grass'])) continue;
+        if (d < r * 0.55) c.put(`flower_patch_${col}`, x, y);
+        else if (d < r) { if (hash(x, y, 5) % 10 < 7) c.put(hash(x, y, 9) % 3 === 0 ? `flower_patch_${col}` : `flower_${hash(x, y, 6) % 3}`, x, y); }
+        else if (d < r * 1.5 && hash(x, y, 7) % 2 === 0) b.place(`grass_flowers_${hash(x, y, 8) % 3}`, x, y);
+      }
+    }
+  }
+  // 관중 응원 깃발: 안쪽 섬 가장자리 (기둥 칸은 y+1)
+  [[54, 17], [72, 17], [60, 16], [66, 16], [54, 43], [72, 43], [60, 44], [66, 44]].forEach(([x, y], i) => { if (c.free(x, y, 1, 2, ['grass'])) c.put(`cheer_flag_${i % 3}`, x, y); });
 }
 
 // ── 건물 파사드 ──────────────────────────────────────────────────────────
@@ -340,7 +430,7 @@ function buildPark(b, c) {
   // 자갈 산책로: 광장 서쪽 → 연못, 광장 남쪽 → 동물원 입구(y 49), 연못 동쪽 → 아래 공원
   for (let x = 5; x <= 13; x++) c.path(x, 31);
   for (let y = 32; y <= 38; y++) c.path(5, y);
-  for (let y = 37; y <= 49; y++) c.path(32, y);
+  for (let y = 37; y <= 49; y++) for (let x = 32; x <= 33; x++) c.path(x, y); // 동물원 정문까지 2칸 폭 (문 32..33)
   for (let x = 12; x <= 17; x++) c.path(x, 40);
   for (let y = 41; y <= 44; y++) c.path(12, y);
   // 연못 x 3..10, y 39..45 (물가 8방향 + 안쪽 물 2프레임 체크 + 수련)
@@ -415,7 +505,13 @@ function buildPark(b, c) {
   for (const [x, y] of [[4, 24], [7, 25], [13, 33], [2, 30], [18, 43], [25, 39], [30, 42], [38, 42], [41, 43], [17, 48], [7, 48], [45, 48], [22, 48], [35, 48], [1, 47]]) if (c.free(x, y)) c.put(`flower_${(x + y) % 3}`, x, y);
   for (const [x, y] of [[11, 24], [3, 35], [28, 48], [46, 49]]) if (c.free(x, y)) c.put('rock_a', x, y);
   if (c.free(14, 48, 2, 1)) c.put('rock_b', 14, 48);
+  // 빈 잔디 소품 밀도 ↑: 꽃 군락·돌·통나무·낙엽·작은 관목·그루터기 (왼쪽 공원 + 아래 공원)
+  c.scatter(0, 13, 13, 49, 21, 0.09, PARK_SCATTER);
+  c.scatter(14, 37, 47, 49, 22, 0.09, PARK_SCATTER);
 }
+
+/** 흩뿌리는 소품과 가중치 (꽃 군락은 통과 가능 꽃 3~5칸) */
+const PARK_SCATTER = [['flower_cluster', 6], ['leaves_0', 2], ['leaves_1', 2], ['leaves_2', 2], ['rock_a', 3], ['rock_b', 1], ['log', 1], ['shrub_0', 3], ['shrub_1', 3], ['stump', 1], ['bush_0', 1]];
 
 // ── 언덕: 전망대 · 망원경 · 침엽수 · 돌 ───────────────────────────────────
 function buildHill(b, c) {
@@ -429,6 +525,7 @@ function buildHill(b, c) {
   for (const [x, y] of [[28, 9], [48, 10], [12, 10], [66, 8], [88, 10]]) if (c.free(x, y)) c.put('rock_a', x, y);
   if (c.free(43, 9, 2, 1)) c.put('rock_b', 43, 9);
   b.label(38, 9.6, 'OBSERVATORY', { ...SANS, size: 8, weight: 600, color: '#efe6d6', spacing: 1 });
+  c.scatter(0, 3, W - 1, 8, 23, 0.04, [['rock_a', 2], ['shrub_0', 2], ['shrub_1', 1], ['dry_grass', 3], ['stump', 1]], ['hill']);
 }
 
 // ── 동물원 (14단계 B) — 아래 띠 y 50..69 + 우측 띠 x 80..99 (L 자) ──────────────
@@ -436,23 +533,37 @@ function buildHill(b, c) {
  * 우리 정의: id · 이름 · 한 줄 설명 · 종(animals.png 또는 pets.png) · 마릿수 · 사각형(울타리 포함) · 바닥 · 유리 펜스 쪽(front) · 소품
  * 방 데이터 room.zoo = { enclosures: [{ id, name, desc, species, count, area(안쪽), feedTile, sign }], photo: 사각형, snacks: [...] }
  */
+/**
+ * floor: grass(잔디) · sand(모래) · ice(얼음) · soil(흙) · savanna(마른 풀). mud: 물웅덩이 둘레 진흙 사각형. lilies: 우리 물 위 수련 칸.
+ * props: 우리마다 서식지 소품 5~8개 (울타리 안쪽에만, 서로 겹치지 않게 — buildZoo 가 검증).
+ */
 const ENCLOSURES = [
-  { id: 'panda', name: '판다', desc: '대나무를 하루 종일 씹어요. 먹이를 주면 느긋하게 다가와요.', species: 'panda', count: 2, rect: [4, 51, 15, 56], floor: 'grass', front: 'S', props: [['bamboo', 5, 52], ['bamboo', 13, 52], ['bamboo', 9, 53], ['rock_a', 12, 55]] },
-  { id: 'penguin', name: '펭귄', desc: '얼음 위를 뒤뚱뒤뚱, 물에 들어가면 날쌔요.', species: 'penguin', count: 3, rect: [18, 51, 29, 56], floor: 'ice', front: 'S', pool: [24, 52, 27, 54], props: [['snow_mound', 20, 52], ['snow_mound', 21, 55]] },
-  { id: 'flamingo', name: '플라밍고', desc: '한 다리로 서서 쉬는 분홍 새. 연못가에서 우아하게 걸어요.', species: 'flamingo', count: 3, rect: [36, 51, 47, 56], floor: 'grass', front: 'S', pool: [38, 52, 41, 54], props: [['reed', 38, 51], ['reed', 42, 52], ['rock_a', 45, 55]] },
-  { id: 'petting', name: '토끼·기니피그', desc: '들어가서 만져 볼 수 있어요. 살살, 조심조심.', species: 'rabbit', count: 2, extra: [['guinea_pig', 2]], rect: [50, 51, 61, 56], floor: 'grass', front: 'S', gate: [55, 56, 56, 56], props: [['hay', 52, 52], ['trough', 57, 52], ['hay', 60, 55]] },
-  { id: 'giraffe', name: '기린', desc: '키가 커서 나무 꼭대기 잎을 먹어요. 혀가 아주 길답니다.', species: 'giraffe', count: 2, rect: [81, 18, 86, 31], floor: 'sand', front: 'E', props: [['acacia', 82, 19], ['acacia', 84, 25], ['rock_a', 82, 30]] },
-  { id: 'elephant', name: '코끼리', desc: '물웅덩이에서 코로 물을 뿌리며 놀아요.', species: 'elephant', count: 2, rect: [91, 18, 98, 31], floor: 'sand', front: 'W', pool: [94, 27, 96, 29], props: [['log', 95, 20], ['rock_b', 92, 24]] },
-  { id: 'lion', name: '사자', desc: '바위 위에서 낮잠 자는 걸 제일 좋아해요. 갈기가 멋져요.', species: 'lion', count: 2, rect: [81, 35, 86, 48], floor: 'sand', front: 'E', props: [['rock_b', 82, 37], ['tree_small', 84, 43], ['rock_a', 82, 46]] },
-  { id: 'monkey', name: '원숭이', desc: '나무와 밧줄 사이를 오가며 장난쳐요. 바나나를 좋아해요.', species: 'monkey', count: 3, rect: [91, 35, 98, 48], floor: 'grass', front: 'W', props: [['tree_round', 93, 36], ['rope_post', 92, 38], ['rope_post', 96, 38], ['rope', 93, 38], ['rope', 94, 38], ['rope', 95, 38], ['platform', 94, 45], ['tree_small', 97, 45]] },
+  { id: 'panda', name: '판다', desc: '대나무를 하루 종일 씹어요. 먹이를 주면 느긋하게 다가와요.', species: 'panda', count: 2, rect: [4, 51, 15, 56], floor: 'grass', front: 'S',
+    props: [['bamboo_dense', 5, 52], ['bamboo_dense', 6, 52], ['bamboo', 9, 52], ['bamboo', 14, 52], ['bamboo_dense', 13, 53], ['bamboo_dense', 5, 54], ['rock_b', 11, 55], ['rock_a', 7, 55]] },
+  { id: 'penguin', name: '펭귄', desc: '얼음 위를 뒤뚱뒤뚱, 물에 들어가면 날쌔요.', species: 'penguin', count: 3, rect: [18, 51, 29, 56], floor: 'ice', front: 'S', pool: [24, 52, 27, 54],
+    props: [['ice_slide', 19, 52], ['snow_mound', 21, 52], ['ice_block', 28, 52], ['ice_block', 19, 54], ['snow_mound', 21, 55], ['ice_block', 28, 55], ['snow_mound', 23, 55]] },
+  { id: 'flamingo', name: '플라밍고', desc: '한 다리로 서서 쉬는 분홍 새. 연못가에서 우아하게 걸어요.', species: 'flamingo', count: 3, rect: [36, 51, 47, 56], floor: 'grass', front: 'S', pool: [38, 52, 41, 54], lilies: [[39, 53], [40, 53]],
+    props: [['reed', 37, 52], ['reed', 42, 52], ['reed', 37, 54], ['reed', 43, 55], ['rock_a', 45, 55], ['rock_b', 44, 52], ['dry_grass', 46, 54]] },
+  { id: 'petting', name: '토끼·기니피그', desc: '들어가서 만져 볼 수 있어요. 살살, 조심조심.', species: 'rabbit', count: 2, extra: [['guinea_pig', 2]], rect: [50, 51, 61, 56], floor: 'grass', front: 'S', gate: [55, 56, 56, 56],
+    props: [['hay', 52, 52], ['hay', 60, 52], ['trough', 57, 52], ['burrow', 51, 54], ['burrow', 60, 55], ['carrot_plate', 54, 53], ['carrot_plate', 58, 55], ['hay', 51, 52]] },
+  { id: 'giraffe', name: '기린', desc: '키가 커서 나무 꼭대기 잎을 먹어요. 혀가 아주 길답니다.', species: 'giraffe', count: 2, rect: [81, 18, 86, 31], floor: 'savanna', front: 'E',
+    props: [['acacia', 82, 19], ['acacia', 84, 24], ['feeder_tall', 82, 29], ['dry_grass', 83, 24], ['dry_grass', 85, 30], ['rock_a', 82, 25], ['dry_grass', 84, 21]] },
+  { id: 'elephant', name: '코끼리', desc: '물웅덩이에서 코로 물을 뿌리며 놀아요.', species: 'elephant', count: 2, rect: [91, 18, 98, 31], floor: 'sand', front: 'W', pool: [93, 25, 96, 29], mud: [92, 24, 97, 30],
+    props: [['log', 92, 20], ['log', 95, 21], ['rock_b', 96, 19], ['rock_a', 92, 22], ['dry_grass', 94, 20], ['dry_grass', 97, 23], ['rock_a', 97, 30]] },
+  { id: 'lion', name: '사자', desc: '바위 위에서 낮잠 자는 걸 제일 좋아해요. 갈기가 멋져요.', species: 'lion', count: 2, rect: [81, 35, 86, 48], floor: 'sand', front: 'E',
+    props: [['rock_big', 82, 36], ['tree_flat', 84, 38], ['dry_grass', 82, 39], ['dry_grass', 85, 42], ['dry_grass', 83, 45], ['rock_a', 82, 47], ['rock_b', 84, 46]] },
+  { id: 'monkey', name: '원숭이', desc: '나무와 밧줄 사이를 오가며 장난쳐요. 바나나를 좋아해요.', species: 'monkey', count: 3, rect: [91, 35, 98, 48], floor: 'soil', front: 'W',
+    props: [['tree_round', 93, 36], ['rope_post', 92, 40], ['rope_post', 96, 40], ['rope', 93, 40], ['rope', 94, 40], ['rope', 95, 40], ['tire_swing', 97, 43], ['platform', 93, 45], ['tree_small', 96, 46], ['log', 92, 47]] },
 ];
+const FLOOR_TILE = { sand: 'sand_', ice: 'ice_', soil: 'soil_', savanna: 'savanna_' }; // grass 는 기본 잔디 그대로
 const ZOO_PHOTO = { x0: 74, y0: 61, x1: 75, y1: 61 }; // 포토존 발자국 두 칸 (둘이 서면 플래시)
 
 function buildZoo(b, c) {
-  // ── 경계 울타리 (아래 띠 위쪽 y 50 · 우측 띠 왼쪽 x 80) + 정문(31..33, 50) 아치 + 옆문(80, 32..33) ──
+  // ── 경계 울타리 (아래 띠 위쪽 y 50 · 우측 띠 왼쪽 x 80) + 정문(32..33, 50: 2칸 + 양쪽 기둥) 아치 + 옆문(80, 32..33: 2칸 + 양쪽 기둥) ──
+  // 산책로가 울타리와 만나는 곳은 전부 이런 문이다 (ZOO_GATES — 통행 테스트가 검증)
   for (let x = 0; x < W; x++) {
-    if (x >= 31 && x <= 33) continue;
-    if (x === 30 || x === 34) { b.place('gate_post', x, 50); continue; }
+    if (x >= 32 && x <= 33) continue;
+    if (x === 31 || x === 34) { b.place('gate_post', x, 50); continue; }
     b.place(x === 79 ? 'fence_ne' : 'fence_h', x, 50);
   }
   for (let y = 13; y < 50; y++) {
@@ -465,14 +576,14 @@ function buildZoo(b, c) {
   b.label(82.5, 32.9, 'ZOO →', { ...SANS, size: 7, weight: 700, color: '#fff0cc', spacing: 1 });
   c.setKind(0, 50, W - 1, 50, 'fence');
   c.setKind(80, 13, 80, 50, 'fence');
-  for (let x = 31; x <= 33; x++) c.kind[50][x] = 'grass';
+  for (let x = 32; x <= 33; x++) c.kind[50][x] = 'grass';
   for (let y = 32; y <= 33; y++) c.kind[y][80] = 'grass';
 
   // ── 산책로: 정문 → y 58..59 가로 → x 88..89 세로(우측 띠) → 전망 데크. 옆문 → 세로 길 ──
-  for (let y = 50; y <= 57; y++) for (let x = 31; x <= 33; x++) c.path(x, y);
+  for (let y = 50; y <= 57; y++) for (let x = 32; x <= 33; x++) c.path(x, y);
   for (let y = 58; y <= 59; y++) for (let x = 3; x <= 96; x++) c.path(x, y);
   for (let y = 18; y <= 59; y++) for (let x = 88; x <= 89; x++) c.path(x, y);
-  for (let y = 32; y <= 33; y++) for (let x = 80; x <= 89; x++) c.path(x, y);
+  for (let y = 32; y <= 33; y++) for (let x = 79; x <= 89; x++) c.path(x, y); // 옆문: 트랙 옆 잔디 띠(79)부터 자갈
   // 입구 광장 화단
   for (const [x, y, col] of [[29, 52, 'pink'], [35, 52, 'yellow'], [29, 55, 'purple'], [35, 55, 'white']]) if (c.free(x, y)) c.put(`flowerbed_${col}`, x, y);
 
@@ -481,34 +592,41 @@ function buildZoo(b, c) {
   for (const e of ENCLOSURES) {
     const [x0, y0, x1, y1] = e.rect;
     const gate = e.gate || null;
-    // 바닥 (안쪽)
+    // 바닥 (안쪽): 종별로 다르게 (잔디는 기본 잔디 그대로)
     for (let y = y0 + 1; y < y1; y++) {
       for (let x = x0 + 1; x < x1; x++) {
-        if (e.floor === 'sand') b.place(`sand_${hash(x, y, 11) % 2}`, x, y);
-        else if (e.floor === 'ice') b.place(`ice_${hash(x, y, 12) % 2}`, x, y);
+        if (FLOOR_TILE[e.floor]) b.place(`${FLOOR_TILE[e.floor]}${hash(x, y, 11) % 2}`, x, y);
         c.kind[y][x] = 'pen';
       }
     }
-    // 물 (우리 안, 동물만 지나감)
+    const inPool = (x, y) => e.pool && x >= e.pool[0] && x <= e.pool[2] && y >= e.pool[1] && y <= e.pool[3];
+    // 진흙 (물웅덩이 둘레)
+    if (e.mud) {
+      for (let y = e.mud[1]; y <= e.mud[3]; y++) for (let x = e.mud[0]; x <= e.mud[2]; x++) if (!inPool(x, y)) b.place(`mud_${hash(x, y, 13) % 2}`, x, y);
+    }
+    // 물 (우리 안, 동물만 지나감) + 수련
     if (e.pool) {
       const [px0, py0, px1, py1] = e.pool;
+      const lilies = new Set((e.lilies || []).map(([x, y]) => `${x},${y}`));
       for (let y = py0; y <= py1; y++) {
         for (let x = px0; x <= px1; x++) {
           const n = y === py0 ? 'N' : y === py1 ? 'S' : '';
           const ew = x === px1 ? 'E' : x === px0 ? 'W' : '';
-          b.place(n + ew ? `pool_edge_${n + ew}` : (x + y) % 2 ? 'pool_f1' : 'pool_f0', x, y);
+          const inner = (x + y) % 2 ? 'f1' : 'f0';
+          b.place(n + ew ? `pool_edge_${n + ew}` : lilies.has(`${x},${y}`) ? `pool_lily_${inner}` : `pool_${inner}`, x, y);
           c.kind[y][x] = 'pen_pool';
         }
       }
     }
-    // 울타리: 앞쪽(front)은 유리, 나머지는 나무. 문(gate)은 비운다
+    // 울타리: 앞쪽(front)은 유리, 나머지는 나무. 문(gate)은 비우고 양쪽에 기둥
     for (let y = y0; y <= y1; y++) {
       for (let x = x0; x <= x1; x++) {
         const edge = x === x0 || x === x1 || y === y0 || y === y1;
         if (!edge) continue;
         if (gate && x >= gate[0] && x <= gate[2] && y >= gate[1] && y <= gate[3]) { c.kind[y][x] = 'pen'; continue; }
         let name;
-        if (x === x0 && y === y0) name = 'fence_nw';
+        if (gate && ((y >= gate[1] && y <= gate[3] && (x === gate[0] - 1 || x === gate[2] + 1)) || (x >= gate[0] && x <= gate[2] && (y === gate[1] - 1 || y === gate[3] + 1)))) name = 'gate_post';
+        else if (x === x0 && y === y0) name = 'fence_nw';
         else if (x === x1 && y === y0) name = 'fence_ne';
         else if (x === x0 && y === y1) name = 'fence_sw';
         else if (x === x1 && y === y1) name = 'fence_se';
@@ -520,22 +638,37 @@ function buildZoo(b, c) {
         c.kind[y][x] = 'fence';
       }
     }
-    for (const [name, x, y] of e.props || []) b.place(name, x, y);
-    // 안내판 + 먹이 주기 지점: 앞쪽 울타리 가운데 바깥
+    // 서식지 소품: 울타리 안쪽에만, 서로 겹치지 않게 (겹치면 예외 — 배치 실수를 바로 알 수 있게)
+    for (const [name, x, y] of e.props || []) {
+      const o = b.obj(name);
+      for (let dy = 0; dy < o.h; dy++) {
+        for (let dx = 0; dx < o.w; dx++) {
+          const tx = x + dx;
+          const ty = y + dy;
+          const isTop = dy < (o.top || 0) || o.layer === 'top';
+          if (tx <= x0 || tx >= x1 || ty <= y0 || ty >= y1) throw new Error(`[zoo] ${e.id} ${name} 이(가) 울타리 밖: (${tx},${ty})`);
+          if (!isTop && (b.occupant[ty][tx] !== -1 || inPool(tx, ty))) throw new Error(`[zoo] ${e.id} ${name} 자리가 겹침: (${tx},${ty})`);
+        }
+      }
+      b.place(name, x, y);
+    }
+    // 큰 안내판(2x2: 위 줄 = 판, 아래 줄 = 기둥 한 칸 + 빈 칸) — 앞쪽 울타리에 걸쳐 세운다 (판은 울타리 줄 위 top 레이어, 기둥은 울타리 바로 앞/울타리 칸)
+    // + 먹이 주기 지점: 앞쪽 울타리 가운데 바깥
     const cx = Math.floor((x0 + x1) / 2);
     const cy = Math.floor((y0 + y1) / 2);
-    let sign;
+    let sign; // { name, x, y, post: [x, y], at: { x, y } (E 위치, 발 기준 타일 소수) }
     let feed;
     let feedTile;
-    if (e.front === 'S') { sign = { x: cx - 1, y: y1 + 1 }; feed = { x: cx + 1.5, y: y1 + 2 }; feedTile = { x: cx + 1, y: y1 - 1 }; }
-    else if (e.front === 'N') { sign = { x: cx - 1, y: y0 - 1 }; feed = { x: cx + 1.5, y: y0 }; feedTile = { x: cx + 1, y: y0 + 1 }; }
-    else if (e.front === 'E') { sign = { x: x1 + 1, y: cy - 1 }; feed = { x: x1 + 1.5, y: cy + 2 }; feedTile = { x: x1 - 1, y: cy + 1 }; }
-    else { sign = { x: x0 - 1, y: cy - 1 }; feed = { x: x0 - 0.5, y: cy + 2 }; feedTile = { x: x0 + 1, y: cy + 1 }; }
-    if (e.gate) { sign = { x: x0 + 2, y: y1 + 1 }; feed = null; }
-    b.place('zoo_sign', sign.x, sign.y);
-    b.interactable(`sign:${e.id}`, 'sign', sign.x + 0.5, sign.y + 2, { hint: '안내판 보기', range: 48 });
+    if (e.front === 'S') { sign = { name: 'zoo_sign_l', x: cx - 1, y: y1, post: [cx - 1, y1 + 1], at: { x: cx - 0.5, y: y1 + 3 } }; feed = { x: cx + 1.5, y: y1 + 2 }; feedTile = { x: cx + 1, y: y1 - 1 }; }
+    else if (e.front === 'N') { sign = { name: 'zoo_sign_l', x: cx - 1, y: y0 - 1, post: [cx - 1, y0], at: { x: cx + 0.5, y: y0 } }; feed = { x: cx + 1.5, y: y0 }; feedTile = { x: cx + 1, y: y0 + 1 }; }
+    else if (e.front === 'E') { sign = { name: 'zoo_sign_l', x: x1, y: cy - 1, post: [x1, cy], at: { x: x1 + 1.5, y: cy + 1 } }; feed = { x: x1 + 1.5, y: cy + 2 }; feedTile = { x: x1 - 1, y: cy + 1 }; }
+    else { sign = { name: 'zoo_sign_r', x: x0 - 1, y: cy - 1, post: [x0, cy], at: { x: x0 - 0.5, y: cy + 1 } }; feed = { x: x0 - 0.5, y: cy + 2 }; feedTile = { x: x0 + 1, y: cy + 1 }; }
+    if (e.gate) { sign = { name: 'zoo_sign_l', x: x0 + 2, y: y1, post: [x0 + 2, y1 + 1], at: { x: x0 + 2.5, y: y1 + 3 } }; feed = null; }
+    b.place(sign.name, sign.x, sign.y); // 아래 줄 두 칸의 충돌을 false 로 쓴다 → 기둥 칸(울타리 칸일 수도)만 다시 막는다
+    b.setSolid(sign.post[0], sign.post[1], sign.post[0], sign.post[1], true);
+    b.interactable(`sign:${e.id}`, 'sign', sign.at.x, sign.at.y, { hint: '안내판 보기', range: 48 });
     if (feed) b.interactable(`feed:${e.id}`, 'feed', feed.x, feed.y, { hint: '먹이 주기', range: 48 });
-    zoo.enclosures.push({ id: e.id, name: e.name, desc: e.desc, species: e.species, count: e.count, extra: e.extra || [], area: { x0: x0 + 1, y0: y0 + 1, x1: x1 - 1, y1: y1 - 1 }, floor: e.floor, pool: e.pool ? { x0: e.pool[0], y0: e.pool[1], x1: e.pool[2], y1: e.pool[3] } : null, feedTile, sign, enterable: Boolean(e.gate) });
+    zoo.enclosures.push({ id: e.id, name: e.name, desc: e.desc, species: e.species, count: e.count, extra: e.extra || [], area: { x0: x0 + 1, y0: y0 + 1, x1: x1 - 1, y1: y1 - 1 }, floor: e.floor, pool: e.pool ? { x0: e.pool[0], y0: e.pool[1], x1: e.pool[2], y1: e.pool[3] } : null, feedTile, sign: { x: sign.x, y: sign.y }, enterable: Boolean(e.gate) });
   }
 
   // ── 매점 · 포토존 · 벤치 · 전망 데크 (산책로 남쪽 y 61..) ──────────────
@@ -565,8 +698,19 @@ function buildZoo(b, c) {
   for (const [x, y] of [[2, 62], [22, 67], [38, 67], [50, 67], [70, 66], [86, 63], [98, 67]]) if (c.free(x, y)) c.put(`flower_${(x + y) % 3}`, x, y);
   // 우측 띠 나머지: 잔디 + 나무
   for (const [x, y, n] of [[82, 6, 'tree_pine'], [96, 8, 'tree_pine'], [97, 33, 'bush_0'], [82, 33, 'flower_1']]) if (c.free(x, y, b.obj(n).w, b.obj(n).h)) c.put(n, x, y);
+  // 동물원 안 빈 잔디 소품 밀도 ↑ (우리 사이 · 산책로 남쪽 · 우측 띠)
+  c.scatter(0, 51, 79, 57, 24, 0.08, PARK_SCATTER);
+  c.scatter(0, 60, W - 1, H - 1, 25, 0.08, PARK_SCATTER);
+  c.scatter(81, 19, 99, 57, 26, 0.07, PARK_SCATTER);
   b.zoo = zoo;
 }
+
+/** 산책로가 경계 울타리와 만나는 문 (2칸 + 양쪽 기둥). 통행 테스트가 기둥·통과 가능을 검증한다 */
+const ZOO_GATES = [
+  { id: 'main', cells: [[32, 50], [33, 50]], posts: [[31, 50], [34, 50]] },
+  { id: 'side', cells: [[80, 32], [80, 33]], posts: [[80, 31], [80, 34]] },
+  { id: 'petting', cells: [[55, 56], [56, 56]], posts: [[54, 56], [57, 56]] },
+];
 
 /** 자유 동물 (14단계 B): 우리 밖 서버 NPC. area 는 타일 사각형, spots 는 특별 지점 */
 const FREE_ANIMALS = [
@@ -576,9 +720,10 @@ const FREE_ANIMALS = [
   { id: 'cat1', species: 'cat', kind: 'cat', name: '나비', area: { x0: 14, y0: 26, x1: 47, y1: 36 }, spots: [{ x: 26, y: 30 }, { x: 37, y: 30 }, { x: 20, y: 33 }, { x: 44, y: 34 }] },
   { id: 'cat2', species: 'cat', kind: 'cat', name: '치즈', area: { x0: 12, y0: 36, x1: 47, y1: 49 }, spots: [{ x: 12, y: 36 }, { x: 13, y: 46 }, { x: 34, y: 37 }, { x: 41, y: 47 }] },
   { id: 'pigeon', species: 'pigeon', kind: 'pigeon', count: 5, area: { x0: 15, y0: 27, x1: 46, y1: 36 } },
-  { id: 'butterfly', species: 'butterfly', kind: 'butterfly', count: 3, area: { x0: 59, y0: 26, x1: 68, y1: 35 } },
-  { id: 'butterfly_park', species: 'butterfly', kind: 'butterfly', count: 2, area: { x0: 14, y0: 38, x1: 30, y1: 48 } },
+  { id: 'duck_track', species: 'duck', kind: 'duck', area: { x0: INFIELD_POND.x0 + 1, y0: INFIELD_POND.y0 + 1, x1: INFIELD_POND.x1 - 1, y1: INFIELD_POND.y1 - 1 } },
+  // 꽃밭 주변엔 밤 반딧불이만 (나비는 뺐다)
   { id: 'firefly', species: 'firefly', kind: 'firefly', count: 6, area: { x0: 0, y0: 33, x1: 30, y1: 49 } },
+  { id: 'firefly_track', species: 'firefly', kind: 'firefly', count: 4, area: { x0: 56, y0: 24, x1: 71, y1: 37 } },
   { id: 'firefly_zoo', species: 'firefly', kind: 'firefly', count: 4, area: { x0: 40, y0: 60, x1: 70, y1: 68 } },
 ];
 
@@ -588,4 +733,4 @@ function getOutdoor() {
   return cached;
 }
 
-module.exports = { buildOutdoor, getOutdoor, isTrackCell, isTrackCorner, trackDistance, TRACK, W, H, ENCLOSURES, FREE_ANIMALS, ZOO_PHOTO };
+module.exports = { buildOutdoor, getOutdoor, isTrackCell, isTrackCorner, trackDistance, TRACK, W, H, ENCLOSURES, FREE_ANIMALS, ZOO_PHOTO, ZOO_GATES, INFIELD_POND };

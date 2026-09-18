@@ -408,10 +408,12 @@ test('소켓 E2E: 탑승/해제 — 활성 탈것 없음 · 스터디 안 불가
   await sleep(40);
   assert.equal(c2.length, 1, '200px 순간이동은 거부');
   assert.equal(c2[0].reason, 'too_fast');
-  // 충돌: 나무(섬 안 58,19 둥근 나무 줄기 58..59, 21) 안으로는 못 들어간다
-  const tree = { x: 58.5 * T, y: 22 * T };
+  // 충돌: 트랙 안쪽 섬의 둥근 나무 줄기(맨 아래 줄) 안으로는 못 들어간다 (나무 위치는 방 데이터에서 찾는다 — 야외 후속 수정으로 옮겨질 수 있다)
+  const tr = srv.hub.outdoor.room.props.find((q) => q.name === 'tree_round' && q.x > 50 && q.x < 76 && q.y > 15 && q.y < 30);
+  const tree = { x: (tr.x + 0.5) * T, y: (tr.y + tr.h) * T };
   assert.equal(canStand(srv.hub.outdoor.room, tree.x, tree.y), false);
-  p.x = 58.5 * T; p.y = 24 * T; p.budget = 10000;
+  p.x = tree.x; p.y = tree.y + 2 * T; p.budget = 10000;
+  assert.equal(canStand(srv.hub.outdoor.room, p.x, p.y), true, '나무 아래 두 칸은 설 수 있다');
   const c3 = once(a, 'move:correct');
   a.emit('move', { x: tree.x, y: tree.y, facing: 'up', moving: true, vehicle: { type: 'kart', angle: -Math.PI / 2, speed: 100 } });
   assert.equal((await c3).reason, 'blocked');

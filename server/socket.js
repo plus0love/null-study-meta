@@ -41,7 +41,7 @@
  *   ── 9단계 가구 ──
  *   desk:equip { slots: [inventoryId|null x3] } → ack { ok, deskItems } | error invalid|no_item|not_desk|duplicate. 모두에게 playerDesk { id, deskItems }
  *   edit:mode { on }                         → ack { ok, editing } | forbidden(방장만 편집인 스터디), 모두에게 playerEdit { id, editing } (머리 위 🛠)
- *   layout:place { inventoryId, x, y, rotation } → ack { ok, entry } | error no_item|not_placeable|already_placed|blocked|overlap|wall_only|needs_base|out_of_bounds|invalid_rotation|player_in_way
+ *   layout:place { inventoryId, x, y, rotation } → ack { ok, entry } | error no_item|not_placeable|already_placed|blocked|overlap|wall_only|needs_base|out_of_bounds|invalid_rotation|player_in_way|isolates(놓으면 못 가는 칸이 생김, 17단계)
  *   layout:grab { id } / layout:release { id } → ack { ok } | error not_found|forbidden|locked{by}|occupied|not_holder (먼저 잡은 사람 우선, 30초 잠금)
  *   layout:move { id, x, y, rotation }       → ack { ok, entry } | 위 오류들.  layout:remove { id } → ack { ok, id } (놓은 사람 인벤토리로 회수)
  *   layout:lock { on }                       → ack { ok, layoutLock } — "내가 놓은 것만 이동·회수" 설정 (users.layout_lock)

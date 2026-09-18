@@ -27,7 +27,9 @@ import props_v3 as G  # noqa: E402
 import props_outdoor as O  # noqa: E402
 import props_outdoor2 as O2  # noqa: E402
 import props_zoo as Z  # noqa: E402
+import props_zoo2 as Z2  # noqa: E402
 import props_v4 as S  # noqa: E402
+import props_v5 as S2  # noqa: E402
 from pixel import Canvas  # noqa: E402
 from recolor import recolor  # noqa: E402
 
@@ -384,6 +386,47 @@ def build_objects():
     add("note_icon", S.note_icon(), solid=False)
     for kind in ("americano", "latte", "cocoa"):
         add(f"mug_{kind}", S.mug_icon(kind), solid=False)
+
+    # ── 야외 후속: 동물원 서식지 · 트랙 안쪽 · 공원 밀도 (항상 맨 뒤에 추가) ──
+    for v in range(2):
+        add(f"soil_{v}", Z2.soil(v), "floor", False)
+        add(f"savanna_{v}", Z2.savanna(v), "floor", False)
+        add(f"mud_{v}", Z2.mud(v), "floor", False)
+    for v in range(3):
+        add(f"leaves_{v}", Z2.leaves(v), "floor", False)
+    add("pool_lily_f0", Z2.pool_lily(0), "floor", False, anim="pool_lily_f1", cycle=True)
+    add("pool_lily_f1", Z2.pool_lily(1), "floor", False, anim="pool_lily_f0", cycle=True)
+    add("rock_big", Z2.rock_big())
+    add("dry_grass", Z2.dry_grass(), solid=False)
+    add("tree_flat", Z2.tree_flat(), top=2)
+    add("feeder_tall", Z2.feeder_tall(), top=1)
+    add("ice_block", Z2.ice_block())
+    add("ice_slide", Z2.ice_slide())
+    add("burrow", Z2.burrow())
+    add("carrot_plate", Z2.carrot_plate(), solid=False)
+    add("tire_swing", Z2.tire_swing(), top=1)
+    add("bamboo_dense", Z2.bamboo_dense(), top=1)
+    for v in range(2):
+        add(f"shrub_{v}", Z2.shrub(v))
+    add("stump", Z2.stump())
+    for v in range(3):
+        add(f"cheer_flag_{v}", Z2.cheer_flag(v), top=1)
+    # 큰 안내판: 위 줄(판)은 top, 아래 줄은 기둥 칸만 서버가 setSolid 로 막는다 (나머지 칸은 비어 통과 가능)
+    add("zoo_sign_l", Z2.zoo_sign_big("l"), solid=False, top=1)
+    add("zoo_sign_r", Z2.zoo_sign_big("r"), solid=False, top=1)
+    for col in ("pink", "yellow", "purple", "white", "red"):
+        add(f"flower_patch_{col}", Z2.flower_patch(col), solid=False)
+
+    # ── 17단계 2인 스터디룸 안쪽 정리 (항상 맨 뒤에 추가) ──
+    add("rug_study_grid", S2.rug_grid(7, 4, "cream"), "floor", False)  # 책상 폭(7)만큼, 4타일 깊이
+    add("sofa_love_n", S2.sofa_love_n(), seats=[(1, 0, "up"), (2, 0, "up")])  # 등받이가 아래(벽 쪽), 좌석은 윗줄 가운데 두 칸
+    add("low_table_study", S2.low_table_study())
+    add("side_table_small", S2.side_table_small())
+    add("whiteboard_small", S2.whiteboard_small())
+    add("bookcase_2tier", S2.bookcase_2tier())
+    add("mini_fridge", S2.mini_fridge(), top=1)
+    add("cushion_floor_a", S2.cushion_floor(0), solid=False)
+    add("cushion_floor_b", S2.cushion_floor(1), solid=False)
 
 
 # ── 아틀라스 패킹 ──────────────────────────────────────────────────────

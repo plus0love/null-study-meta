@@ -31,12 +31,12 @@
   const STATUS_LABEL = { study: '공부 중', rest: '휴식 중', coffee: '☕ 휴식 중' };
   const STATUS_ICON = { study: 'i-book', rest: 'i-leaf', coffee: 'i-coffee' };
   const HINT_LABEL = { sit: '앉기', stand: '일어나기', seatChoice: '앉기 · 쪽지 남기기', read: '쪽지 읽기', coffee: '커피 코너', pet: '쓰다듬기', music: '음악 듣기', lie: '눕기', massage: '안마의자에 앉기', board: '기록 보기', shop: '탈것 상점', sign: '안내판 보기', feed: '먹이 주기', snack_icecream: '아이스크림 사기 (1🪙)', snack_churros: '츄러스 사기 (1🪙)', fish: '낚시하기', reel: '지금! 낚아채기', telescope: '망원경 보기' };
-  const ANIMAL_LABEL = { panda: '판다', lion: '사자', giraffe: '기린', penguin: '펭귄', guinea_pig: '기니피그', flamingo: '플라밍고', monkey: '원숭이', elephant: '코끼리', duck: '오리', squirrel: '다람쥐', pigeon: '비둘기', butterfly: '나비', rabbit: '토끼', cat: '고양이' };
+  const ANIMAL_LABEL = { panda: '판다', lion: '사자', giraffe: '기린', penguin: '펭귄', guinea_pig: '기니피그', flamingo: '플라밍고', monkey: '원숭이', elephant: '코끼리', duck: '오리', squirrel: '다람쥐', pigeon: '비둘기', rabbit: '토끼', cat: '고양이' };
   const VEHICLE_LABEL = { rickshaw: '🛒 낡은 인력거', bicycle: '🚲 자전거', kickboard: '🛴 킥보드', kart: '🏎 기본 카트', sport: '🏎 스포츠 카트' };
   // 9단계: 편집 거부 사유 → 안내
   const EDIT_ERR = {
     blocked: '여기엔 놓을 수 없어요', overlap: '다른 가구와 겹쳐요', wall_only: '벽 타일에만 놓을 수 있어요', needs_base: '놓을 수 있는 자리가 아니에요 (소파·책장·커피머신 위 등)',
-    out_of_bounds: '맵 밖이에요', invalid_rotation: '회전할 수 없어요', player_in_way: '누가 서 있어요', locked: '다른 사람이 잡고 있어요', forbidden: '놓은 사람만 옮길 수 있어요',
+    out_of_bounds: '맵 밖이에요', invalid_rotation: '회전할 수 없어요', player_in_way: '누가 서 있어요', isolates: '통로가 막혀요 (못 가는 곳이 생겨요)', locked: '다른 사람이 잡고 있어요', forbidden: '놓은 사람만 옮길 수 있어요',
     occupied: '누가 앉아 있어요', already_placed: '이미 놓은 아이템이에요', no_item: '없는 아이템이에요', not_found: '이미 없어진 가구예요', not_placeable: '방에 놓는 가구가 아니에요',
   };
   const COIN_REASON = { study: '공부 10분마다', focus: '집중 완주 보너스', weekly_goal: '그룹 목표 보너스', lap: '트랙 첫 완주' }; // 원장 reason → 표시. purchase:<id> 는 "구매 · <id>"
@@ -51,7 +51,7 @@
   const POMO = { focus: { min: 20, max: 90, def: 25 }, break: { min: 5, max: 20, def: 5 } };
   const LS_RECENT = 'nsm.music.recent';
   const MINIMAP_W = 322; // 미니맵 폭(px) — 타일당 px 는 맵 폭에 맞춰 정한다 (46타일 → 7, 80타일 → 4)
-  const PET_COLORS = { dog: '#c48c52', hamster: '#d9a066', chick: '#f4d35e', turtle: '#6f8567', rabbit: '#efe6d6', cat: '#e0964f', maltese: '#ffffff', poodle_black: '#524b58', shiba: '#e0964f', parrot: '#5f9e5c', slime: '#7fd0b8', fish: '#f2a04a', panda: '#f2eee6', lion: '#d9a35e', giraffe: '#e8c27a', penguin: '#2b2d3a', guinea_pig: '#c98a55', flamingo: '#f08aa0', monkey: '#8a5a3a', elephant: '#9a9fb0', duck: '#f4d35e', squirrel: '#b8743a', pigeon: '#8c8f9c', butterfly: '#f08aa0', firefly: '#fff0a0' };
+  const PET_COLORS = { dog: '#c48c52', hamster: '#d9a066', chick: '#f4d35e', turtle: '#6f8567', rabbit: '#efe6d6', cat: '#e0964f', maltese: '#ffffff', poodle_black: '#524b58', shiba: '#e0964f', parrot: '#5f9e5c', slime: '#7fd0b8', fish: '#f2a04a', panda: '#f2eee6', lion: '#d9a35e', giraffe: '#e8c27a', penguin: '#2b2d3a', guinea_pig: '#c98a55', flamingo: '#f08aa0', monkey: '#8a5a3a', elephant: '#9a9fb0', duck: '#f4d35e', squirrel: '#b8743a', pigeon: '#8c8f9c', firefly: '#fff0a0' };
   const PET_SLOT_LABEL = { head: '머리', neck: '목', back: '등' };
   const SKILL_ICON = { skill_come: '📣', skill_sleep: '💤', skill_high_five: '🖐' };
   const YT_API = 'https://www.youtube.com/iframe_api';
@@ -2194,8 +2194,8 @@
           if (room.outdoor) {
             // 12단계 야외: 바닥 종류별 색 (잔디·언덕·흙길·돌길·광장·물·데크·하늘)
             const name = objects[floor] || '';
-            c = /^grass/.test(name) ? '#4f6b45' : /^hill/.test(name) ? '#45603d' : /^(dirt|start)/.test(name) ? '#8c7458' : /^(stone|gravel|zoo_path)/.test(name) ? '#7d766c' : /^plaza/.test(name) ? '#8f8471' : /^(water|shore|ice)/.test(name) ? '#4f7ea6' : /^(deck|blanket)/.test(name) ? '#7a5c44' : /^(paver|kerb)/.test(name) ? '#5a5560' : /^(facade|brick)/.test(name) ? '#3a3741' : /^(sand|pen_)/.test(name) ? '#a08c62' : name === 'sky' ? '#1b2442' : '#4f6b45';
-            if (furn !== -1 && room.collision[y][x]) c = /^(tree|hedge|plant|bush|flowerbed|planter|bamboo)/.test(objects[furn] || '') ? '#2f4a2d' : /^(fence|glass_fence|pen_fence)/.test(objects[furn] || '') ? '#8a7a5a' : '#5a4638';
+            c = /^grass/.test(name) ? '#4f6b45' : /^hill/.test(name) ? '#45603d' : /^(dirt|start)/.test(name) ? '#8c7458' : /^(stone|gravel|zoo_path)/.test(name) ? '#7d766c' : /^plaza/.test(name) ? '#8f8471' : /^(water|shore|ice|pool)/.test(name) ? '#4f7ea6' : /^(deck|blanket)/.test(name) ? '#7a5c44' : /^(paver|kerb)/.test(name) ? '#5a5560' : /^(facade|brick)/.test(name) ? '#3a3741' : /^(sand|pen_|savanna)/.test(name) ? '#a08c62' : /^(soil|mud)/.test(name) ? '#7a6248' : name === 'sky' ? '#1b2442' : '#4f6b45';
+            if (furn !== -1 && room.collision[y][x]) c = /^(tree|hedge|plant|bush|shrub|flowerbed|planter|bamboo|acacia)/.test(objects[furn] || '') ? '#2f4a2d' : /^(fence|glass_fence|pen_fence|gate_post)/.test(objects[furn] || '') ? '#8a7a5a' : '#5a4638';
           } else {
             if (floor !== -1) c = y >= 26 ? '#2a2630' : '#3a2c26';
             if (room.collision[y][x]) c = floor !== -1 && y >= 26 ? '#1e1b24' : '#241b1e';

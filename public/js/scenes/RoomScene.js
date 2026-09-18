@@ -48,6 +48,7 @@
   const POMO_EMOJI = { focus: '🍅', break: '☕' };
   const POMO_TICK = 1000; // ms — 머리 위 타이머 글자 갱신 주기
 
+  const ZOO_ANIMAL_SCALE = 1.4; // 후속 수정: 우리 안 동물 크기
   const DEPTH = { sky: 0.5, stars: 0.6, fireworks: 0.7, windowDay: 1.5, zone: 2, screen: 2.5, shadow: 9, avatar: 10, label: 25, bubble: 26, darkness: 30, glow: 31 };
   const FIREWORK_COLORS = [0xffb85c, 0xff8a7a, 0x9fd39a, 0xcfe8f5, 0xffd08a, 0xf2a0d6];
   const HINT_KIND = { bed: 'lie', massage: 'massage' }; // 가구 좌석 종류 → E 힌트
@@ -59,7 +60,7 @@
   const RAIN_CHANCE = 0.1; // 15단계: 방에 들어올 때 이 확률로 창밖에 비
   const CLOCK_TICK = 1000;
   // 가구 밑 그림자를 그리지 않는 오브젝트 (벽·유리·창·바닥에 붙은 것·의자·작은 소품)
-  const NO_SHADOW = /^(wall_|gpost_|glass_|door_open|window_|study_panel|entrance_wide|chalkboard|board_|music_panel|bookshelf_big|cabinet_printer|menu_board|whiteboard|sign_|hedge|bollard|bench$|corkboard|curtain_|cup_shelf|counter_|display_case|shelf_narrow|coffee_machine|cushion$|slippers|magazines|dog_bowl|dog_toy|cable_box|milk_crate|fire_ext|chair_|pouf_|note_icon|mug_|bean_shelf|projector|facade|kerb|grass|paver)/;
+  const NO_SHADOW = /^(wall_|gpost_|glass_|door_open|window_|study_panel|entrance_wide|chalkboard|board_|music_panel|bookshelf_big|cabinet_printer|menu_board|whiteboard|sign_|hedge|bollard|bench$|corkboard|curtain_|cup_shelf|counter_|display_case|shelf_narrow|coffee_machine|cushion$|cushion_floor|slippers|magazines|dog_bowl|dog_toy|cable_box|milk_crate|fire_ext|chair_|pouf_|note_icon|mug_|bean_shelf|projector|facade|kerb|grass|paver)/;
 
   // ── 아바타 (내 것/원격 공용 표시 요소) ────────────────────────────────
   class Avatar {
@@ -660,14 +661,17 @@
         this.animalBase = (am.species[this.species] || am.species.panda).index * am.framesPerSpecies;
         this.sprite = scene.add.sprite(snap.x, snap.y, 'animals', this.animalBase + am.frames.idle).setOrigin(0.5, 1);
       } else this.sprite = scene.add.sprite(snap.x, snap.y, 'pets', this.frameIndex('sit', 0)).setOrigin(0.5, 1);
+      // 우리 안 동물은 1.4배 (후속 수정) — 그림자도 같이
+      this.zooScale = snap.kind === 'animal' ? ZOO_ANIMAL_SCALE : 1;
+      if (this.zooScale !== 1) this.sprite.setScale(this.zooScale);
       const small = this.glow || this.fly;
-      this.shadow = scene.add.ellipse(snap.x, snap.y - 2, this.sheet === 'animals' && !small ? 24 : 18, small ? 4 : 6, 0x000000, small ? 0.12 : 0.25).setDepth(DEPTH.shadow);
+      this.shadow = scene.add.ellipse(snap.x, snap.y - 2, (this.sheet === 'animals' && !small ? 24 : 18) * this.zooScale, (small ? 4 : 6) * this.zooScale, 0x000000, small ? 0.12 : 0.25).setDepth(DEPTH.shadow);
       if (this.glow) this.shadow.setVisible(false);
       this.nameText = scene.add.text(snap.x, snap.y + 2, snap.name, {
         fontFamily: FONTS.sans, fontSize: this.ownerId ? '9px' : '10px', fontStyle: 'bold', color: this.ownerId ? '#d9eeff' : '#ffd9a8',
         stroke: '#14111a', strokeThickness: 3, resolution: ZOOM,
       }).setOrigin(0.5, 0).setDepth(DEPTH.label);
-      // 우리 안 동물·새·나비·반딧불이는 이름표를 숨긴다 (쓰다듬을 수 있는 자유 동물만 표시)
+      // 우리 안 동물·새·반딧불이는 이름표를 숨긴다 (쓰다듬을 수 있는 자유 동물만 표시)
       if ((this.sheet === 'animals' || this.glow || snap.kind === 'animal') && !this.pettable) this.nameText.setVisible(false);
       this.deco = { head: null, neck: null, back: null }; // 슬롯 → { key, sprite }
       this.cosmetics = {};
@@ -1210,23 +1214,45 @@
       this.shootingStars = 0; // 지금까지 떨어진 별똥별 수 (테스트용)
     }
 
-    /** 낮에 천천히 지나가는 구름 그림자 (MULTIPLY 타원 5개, 맵을 돌며 순환) */
+    /**
+     * 낮에 아주 천천히 지나가는 구름 그림자 3개 (후속 수정): 화면 폭의 40~60% 크기, 가장자리가 부드러운 방사형 그라데이션 덩어리(MULTIPLY).
+     * 진하기는 Daylight.outdoorAmbient().clouds (낮 0.13, 노을·밤 0 → 밤엔 없음). 맵을 돌며 순환한다.
+     */
     buildClouds() {
       this.clouds = [];
       let seed = 99;
       const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
-      for (let i = 0; i < 5; i++) {
-        const w = 260 + rnd() * 260;
-        const h = w * (0.45 + rnd() * 0.2);
-        const g = this.add.graphics().setDepth(DEPTH.darkness - 0.7).setBlendMode(Phaser.BlendModes.MULTIPLY).setAlpha(0);
-        g.fillStyle(0x9aa6bf, 1);
-        g.fillEllipse(w / 2, h / 2, w, h);
-        g.fillEllipse(w * 0.3, h * 0.42, w * 0.6, h * 0.7);
-        g.fillEllipse(w * 0.72, h * 0.55, w * 0.55, h * 0.66);
-        const c = { g, w, h, x: rnd() * this.mapW, y: 2 * this.T + rnd() * (this.mapH - 6 * this.T), vx: 5 + rnd() * 6, vy: 0.8 + rnd() * 1.6 };
+      const viewW = this.scale.width / (ZOOM || 2); // 화면 폭 (월드 px, 설정 줌 기준 — 씬 생성 시점의 카메라 줌은 아직 1일 수 있다)
+      for (let i = 0; i < 3; i++) {
+        const w = Math.round(viewW * (0.4 + rnd() * 0.2));
+        const h = Math.round(w * (0.5 + rnd() * 0.15));
+        const key = `cloud-${i}-${w}x${h}`;
+        if (!this.textures.exists(key)) this.makeCloudTexture(key, w, h, rnd);
+        const g = this.add.image(0, 0, key).setOrigin(0, 0).setDepth(DEPTH.darkness - 0.7).setBlendMode(Phaser.BlendModes.MULTIPLY).setAlpha(0);
+        const c = { g, w, h, x: rnd() * this.mapW, y: 2 * this.T + rnd() * (this.mapH - 6 * this.T), vx: 2 + rnd() * 2.5, vy: 0.3 + rnd() * 0.6 };
         g.setPosition(c.x, c.y);
         this.clouds.push(c);
       }
+    }
+
+    /** 구름 그림자 텍스처: 방사형 그라데이션 덩어리 여러 개를 겹쳐 가운데는 진하고 가장자리는 알파 0 으로 흩어진다 */
+    makeCloudTexture(key, w, h, rnd) {
+      const tex = this.textures.createCanvas(key, w, h);
+      const ctx = tex.getContext();
+      const blobs = [[0.5, 0.5, 0.5], [0.3, 0.46, 0.36], [0.7, 0.56, 0.34], [0.48, 0.3, 0.3], [0.4, 0.7, 0.28], [0.62, 0.72, 0.26]];
+      for (const [bx, by, br] of blobs) {
+        const cx = bx * w + (rnd() - 0.5) * w * 0.08;
+        const cy = by * h + (rnd() - 0.5) * h * 0.08;
+        const r = br * w;
+        const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+        grad.addColorStop(0, 'rgba(154,166,191,0.85)');
+        grad.addColorStop(0.45, 'rgba(154,166,191,0.5)');
+        grad.addColorStop(0.8, 'rgba(154,166,191,0.12)');
+        grad.addColorStop(1, 'rgba(154,166,191,0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, w, h);
+      }
+      tex.refresh();
     }
 
     tickClouds(dt) {
@@ -1650,7 +1676,7 @@
       let best = null;
       let bestD = SIT_RANGE;
       for (const n of this.npcs.values()) {
-        if (!n.pettable) continue; // 14단계: 우리 안 동물·새·나비는 쓰다듬기 대상이 아니다
+        if (!n.pettable) continue; // 14단계: 우리 안 동물·새는 쓰다듬기 대상이 아니다
         const d = Math.hypot(n.x - this.me.x, n.y - this.me.y);
         if (d < bestD) {
           bestD = d;
@@ -1710,7 +1736,7 @@
         };
         mk(`animal-${name}-walk`, ['walk_a', 'walk_b'], name === 'squirrel' ? 8 : 4);
         mk(`animal-${name}-eat`, ['eat', 'idle'], 2);
-        mk(`animal-${name}-fly`, ['sit', 'idle'], name === 'butterfly' ? 5 : 9);
+        mk(`animal-${name}-fly`, ['sit', 'idle'], 9);
         mk(`animal-${name}-swim`, ['sit', 'sit'], 1);
       }
     }
