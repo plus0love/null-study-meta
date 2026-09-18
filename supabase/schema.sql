@@ -127,6 +127,8 @@ create table if not exists public.studies (
   last_active_at       timestamptz not null default now()
 );
 create index if not exists studies_last_active_at on public.studies (last_active_at);
+-- 15단계: 스터디룸 문 명패 (방장 설정, 12자. null 이면 스터디 이름)
+alter table public.studies add column if not exists room_label text;
 
 -- 소속: 한 번이라도 입장한 멤버. 로비 '내 스터디' 카드·멤버 목록 표시용이며 입장 권한과는 무관하다 (권한은 study_access).
 create table if not exists public.study_members (
@@ -203,6 +205,50 @@ create table if not exists public.constellation_views (
 -- 14단계: 공용 펫 어항에 넣은 물고기 [{ fishId, by, at }] (최대 3, 서버가 검증)
 alter table public.room_pets add column if not exists tank jsonb not null default '[]'::jsonb;
 
+-- 15단계: 쪽지 — 상대 자리 앞에서 남긴 한 줄(60자). seat_id: 놓인 좌석(받는 사람이 그 자리에 앉으면 아이콘·토스트). read_at null = 안 읽음
+create table if not exists public.notes (
+  id             bigint generated always as identity primary key,
+  study_id       bigint references public.studies(id) on delete cascade,
+  from_nickname  text not null references public.users(nickname) on delete cascade,
+  to_nickname    text not null references public.users(nickname) on delete cascade,
+  seat_id        text,
+  text           text not null,
+  created_at     timestamptz not null default now(),
+  read_at        timestamptz
+);
+create index if not exists notes_to_unread on public.notes (to_nickname, study_id) where read_at is null;
+create index if not exists notes_from_created_at on public.notes (from_nickname, created_at);
+create index if not exists notes_to_created_at on public.notes (to_nickname, created_at);
+
+-- 15단계: 커피 배달 — 커피 코너에서 1코인으로 멤버에게 (menu: americano | latte | cocoa). received_at null = 아직 자리에 놓여 있음 (앉으면 받는다)
+create table if not exists public.coffee_gifts (
+  id             bigint generated always as identity primary key,
+  study_id       bigint references public.studies(id) on delete cascade,
+  from_nickname  text not null references public.users(nickname) on delete cascade,
+  to_nickname    text not null references public.users(nickname) on delete cascade,
+  seat_id        text,
+  menu           text not null,
+  created_at     timestamptz not null default now(),
+  received_at    timestamptz
+);
+create index if not exists coffee_gifts_pending on public.coffee_gifts (study_id, to_nickname) where received_at is null;
+
+-- 15단계: D-day — study_id null 이면 개인(nickname 것), 있으면 그 스터디 공용. kind: exam | anniversary | other. 지난 D-day 는 서버가 7일 뒤 숨긴다
+create table if not exists public.ddays (
+  id          bigint generated always as identity primary key,
+  study_id    bigint references public.studies(id) on delete cascade,
+  nickname    text not null references public.users(nickname) on delete cascade,
+  title       text not null,
+  date        date not null,
+  kind        text not null default 'other',
+  created_at  timestamptz not null default now()
+);
+create index if not exists ddays_nickname on public.ddays (nickname);
+create index if not exists ddays_study_id on public.ddays (study_id);
+
+alter table public.notes          enable row level security;
+alter table public.coffee_gifts   enable row level security;
+alter table public.ddays          enable row level security;
 alter table public.users          enable row level security;
 alter table public.track_records  enable row level security;
 alter table public.fish_catches   enable row level security;

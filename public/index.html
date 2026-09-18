@@ -81,6 +81,8 @@
               <label>정원 <select id="study-edit-max"></select></label>
               <label>주간 목표 <input id="study-edit-goal" type="number" min="5" max="100" step="1" /> 시간</label>
             </div>
+            <label for="study-edit-label">스터디룸 문 명패 <span class="muted">12자 · 비우면 스터디 이름</span></label>
+            <input id="study-edit-label" type="text" maxlength="12" placeholder="예: 새벽팀 ROOM" />
             <label class="opt"><input type="checkbox" id="study-edit-owner-only" /><span class="emoji-icon">🛠</span><span>가구 편집은 방장만</span></label>
             <div class="row modal-actions"><button class="btn small" type="submit">저장</button></div>
             <p class="error" id="study-edit-error" hidden></p>
@@ -129,6 +131,23 @@
         <div class="field" id="shared-pets-field">
           <label>공용 펫 <span class="muted" id="shared-pets-count"></span></label>
           <ul class="list shared-pets" id="shared-pets"></ul>
+        </div>
+        <!-- 15단계: 쪽지함 · D-day -->
+        <div class="field">
+          <label>쪽지 <span class="muted" id="notebox-count"></span></label>
+          <button class="btn small ghost" id="btn-notebox" type="button">📮 쪽지함 (받은 · 보낸)</button>
+        </div>
+        <div class="field" id="dday-field">
+          <label>D-day <span class="muted">칠판에 최대 3개 · 지난 것은 7일 뒤 숨김</span></label>
+          <ul class="list dday-list" id="dday-list"></ul>
+          <form id="dday-form" class="dday-form" autocomplete="off">
+            <input id="dday-title" type="text" maxlength="12" placeholder="제목 (12자)" required />
+            <input id="dday-date" type="date" required />
+            <select id="dday-kind" title="종류"><option value="exam">시험</option><option value="anniversary">기념일</option><option value="other">기타</option></select>
+            <label class="opt"><input type="checkbox" id="dday-shared" /><span>스터디 공용</span></label>
+            <button class="btn small" type="submit">등록</button>
+          </form>
+          <p class="error" id="dday-error" hidden></p>
         </div>
         <div class="field">
           <label>화면</label>
@@ -454,6 +473,51 @@
       <header class="row"><h1 id="sign-name">동물</h1><button class="icon-btn small ghost" id="sign-close" type="button" title="닫기"><svg class="icon"><use href="#i-x"/></svg></button></header>
       <p id="sign-desc"></p>
       <p class="hint" id="sign-hint"></p>
+    </div>
+  </div>
+
+  <!-- 15단계: 쪽지 남기기 · 쪽지 읽기 · 쪽지함 · 커피 코너 · 자리 선택 -->
+  <div id="note-modal" class="modal" hidden>
+    <form class="modal-box" id="note-form" autocomplete="off">
+      <h1>✉️ 쪽지 남기기</h1>
+      <p class="muted"><b id="note-to"></b> 님 자리에 한 줄을 남겨요. 그 자리에 앉으면 책상 위에 나타나요.</p>
+      <input id="note-text" type="text" maxlength="60" placeholder="한 줄 (60자)" required />
+      <p class="error" id="note-error" hidden></p>
+      <div class="row modal-actions"><button class="btn ghost" type="button" id="note-cancel">취소</button><button class="btn primary" type="submit" id="note-submit">남기기</button></div>
+    </form>
+  </div>
+  <div id="note-read-modal" class="modal" hidden>
+    <div class="modal-box">
+      <header class="row"><h1>📩 쪽지</h1><button class="icon-btn small ghost" id="note-read-close" type="button" title="닫기"><svg class="icon"><use href="#i-x"/></svg></button></header>
+      <ul class="list note-list" id="note-read-list"></ul>
+    </div>
+  </div>
+  <div id="notebox-modal" class="modal" hidden>
+    <div class="modal-box">
+      <header class="row"><h1>📮 쪽지함</h1><div class="tabs" id="notebox-tabs"><button type="button" data-tab="received" class="active">받은</button><button type="button" data-tab="sent">보낸</button></div><button class="icon-btn small ghost" id="notebox-close" type="button" title="닫기"><svg class="icon"><use href="#i-x"/></svg></button></header>
+      <ul class="list note-list" id="notebox-list"></ul>
+      <p class="hint">최근 20개 · 안 읽은 쪽지는 상대가 자리에 앉으면 책상 위에 보여요</p>
+    </div>
+  </div>
+  <div id="coffee-modal" class="modal" hidden>
+    <div class="modal-box">
+      <header class="row"><h1>☕ 커피 코너</h1><span class="muted" id="coffee-balance"></span><button class="icon-btn small ghost" id="coffee-close" type="button" title="닫기"><svg class="icon"><use href="#i-x"/></svg></button></header>
+      <button class="btn" id="coffee-drink" type="button"><svg class="icon"><use href="#i-coffee"/></svg><span>한 잔 마시기 (☕ 휴식 전환)</span></button>
+      <div class="field">
+        <label>배달 <span class="muted">한 잔 1코인 · 상대 자리에 놓여요 · 나에게도</span></label>
+        <div class="coffee-menu" id="coffee-menu"></div>
+        <select id="coffee-to" title="누구에게"></select>
+        <p class="hint" id="coffee-hint"></p>
+      </div>
+      <p class="error" id="coffee-error" hidden></p>
+      <div class="row modal-actions"><button class="btn primary" id="coffee-send" type="button">배달하기</button></div>
+    </div>
+  </div>
+  <div id="seat-choice-modal" class="modal" hidden>
+    <div class="modal-box">
+      <h1 id="seat-choice-title">자리</h1>
+      <p class="muted" id="seat-choice-desc"></p>
+      <div class="row modal-actions"><button class="btn ghost" type="button" id="seat-choice-cancel">취소</button><button class="btn" type="button" id="seat-choice-sit">앉기</button><button class="btn primary" type="button" id="seat-choice-note">✉️ 쪽지 남기기</button></div>
     </div>
   </div>
 

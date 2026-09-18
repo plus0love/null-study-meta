@@ -24,6 +24,7 @@
     'studyGoal', 'study:update', 'kicked', 'study:deleted',
     'playerVehicle', 'playerHorn', 'lap:progress', 'lap', 'track:board',
     'playerSnack', 'photo', 'playerFishing', 'fish:caught',
+    'note:waiting', 'note:new', 'seatItems', 'coffee:received', 'playerBuff', 'dday:update',
   ];
 
   class Net {
@@ -295,6 +296,15 @@
     skyView() { return this.ask('sky:view', {}); }
     codex() { return this.ask('codex', {}); }
     fishTank(fishId, on = true) { return this.ask('fish:tank', { fishId, on }); }
+    // 15단계 쪽지 · 커피 배달 · D-day
+    noteLeave(to, text) { return this.ask('note:leave', { to, text }); }
+    noteRead() { return this.ask('note:read', {}); }
+    noteBox() { return this.ask('note:box', {}); }
+    coffeeTargets() { return this.ask('coffee:targets', {}); }
+    coffeeGift(menu, to) { return this.ask('coffee:gift', { menu, to }); }
+    ddayList() { return this.ask('dday:list', {}); }
+    ddayAdd(d) { return this.ask('dday:add', d); }
+    ddayDelete(id) { return this.ask('dday:delete', { id }); }
     setStatsPublic(on) { return this.ask('profile:visibility', { public: Boolean(on) }); }
     /** 내 기록 초기화: 서버가 세션 토큰 + 닉네임을 확인한다 */
     resetProfile(nickname) { return this.ask('profile:reset', { nickname, token: Net.saved().token }); }

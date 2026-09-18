@@ -41,6 +41,7 @@ const GOAL_MIN = 5 * 60; // 분 (5시간)
 const GOAL_MAX = 100 * 60; // 분 (100시간)
 const GOAL_DEFAULT = 1200; // 분 (20시간)
 const EDIT_POLICIES = ['anyone', 'owner'];
+const ROOM_LABEL_MAX = 12; // 15단계: 스터디룸 문 명패 (방장 설정, 비우면 스터디 이름)
 const RELEASE_MS = 5 * 60 * 1000; // 비면 이만큼 뒤 월드 해제
 const INACTIVE_MS = 60 * 24 * 60 * 60 * 1000; // 60일
 const GOAL_CHECK_MS = 30 * 1000;
@@ -172,7 +173,7 @@ class Hub extends EventEmitter {
 
   /** 클라이언트에 보내는 스터디 정보 (해시는 절대 안 나간다) */
   publicStudy(s, extra = {}) {
-    return { id: s.id, code: s.code, name: s.name, locked: Boolean(s.passwordHash), ownerNickname: s.ownerNickname || null, maxPlayers: s.maxPlayers, weeklyGoalMinutes: s.weeklyGoalMinutes, editPolicy: s.editPolicy || 'anyone', online: this.onlineCount(s.id), createdAt: s.createdAt, ...extra };
+    return { id: s.id, code: s.code, name: s.name, locked: Boolean(s.passwordHash), ownerNickname: s.ownerNickname || null, maxPlayers: s.maxPlayers, weeklyGoalMinutes: s.weeklyGoalMinutes, editPolicy: s.editPolicy || 'anyone', roomLabel: s.roomLabel || null, online: this.onlineCount(s.id), createdAt: s.createdAt, ...extra };
   }
 
   onlineCount(id) {
@@ -331,8 +332,15 @@ class Hub extends EventEmitter {
    * 입력 검증. partial 이면 준 값만. @returns {{ ok: true, values } | { ok: false, error }}
    * error: invalid_name | invalid_password | invalid_max_players | invalid_goal | invalid_policy
    */
-  validate({ name, password, maxPlayers, weeklyGoalMinutes, editPolicy } = {}, { partial = false } = {}) {
+  validate({ name, password, maxPlayers, weeklyGoalMinutes, editPolicy, roomLabel } = {}, { partial = false } = {}) {
     const v = {};
+    if (roomLabel !== undefined) {
+      // 명패: 제어문자 제거·trim, 12자 이내. 비우면 null (= 스터디 이름 표시)
+      if (roomLabel !== null && typeof roomLabel !== 'string') return { ok: false, error: 'invalid_label' };
+      const l = String(roomLabel ?? '').replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim();
+      if ([...l].length > ROOM_LABEL_MAX) return { ok: false, error: 'invalid_label' };
+      v.roomLabel = l || null;
+    }
     if (name !== undefined || !partial) {
       v.name = normalizeName(name);
       if (!v.name) return { ok: false, error: 'invalid_name' };
@@ -614,4 +622,4 @@ class Hub extends EventEmitter {
   }
 }
 
-module.exports = { Hub, randomCode, normalizeCode, normalizeName, CODE_LEN, CODE_CHARS, NAME_MAX, PASSWORD_MIN, PASSWORD_MAX, PLAYERS_MIN, PLAYERS_MAX, PLAYERS_DEFAULT, GOAL_MIN, GOAL_MAX, GOAL_DEFAULT, EDIT_POLICIES, RELEASE_MS, INACTIVE_MS, DEFAULT_NAME };
+module.exports = { Hub, randomCode, normalizeCode, normalizeName, CODE_LEN, CODE_CHARS, NAME_MAX, ROOM_LABEL_MAX, PASSWORD_MIN, PASSWORD_MAX, PLAYERS_MIN, PLAYERS_MAX, PLAYERS_DEFAULT, GOAL_MIN, GOAL_MAX, GOAL_DEFAULT, EDIT_POLICIES, RELEASE_MS, INACTIVE_MS, DEFAULT_NAME };

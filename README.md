@@ -2,7 +2,7 @@
 
 2D 탑뷰 멀티플레이 **스터디 메타버스**. 밤의 아늑한 스터디 카페 "우리의 스터디룸"에서 같이 공부하는 공간을 만듭니다.
 
-> **현재 단계: 14단계 — 야외 다듬기 + 동물원·자유 동물 + 낚시·별자리.** (12단계 야외 · 13단계 실시간 코인 위에 얹음) 5단계까지의 요약: 닉네임으로 입장해 다른 접속자와 같은 방을 걸어다니고(서버 이동 검증),
+> **현재 단계: 15단계 — 실내 개편: 2인 스터디룸 + 밀도 올리기 + 쪽지·커피 배달·D-day.** (14단계 야외·동물원·낚시 위에 얹음) 5단계까지의 요약: 닉네임으로 입장해 다른 접속자와 같은 방을 걸어다니고(서버 이동 검증),
 > 의자·푸프·소파에 앉고(E), 채팅·이모지·공부/휴식 상태를 공유하고 각자 뽀모도로를 돌립니다. 끊겨도 30초 안에 같은 세션으로 이어집니다.
 > 라운지의 갈색 푸들 "사랑" 은 서버가 움직이는 NPC 로, 가까이 가면 쳐다보고 E 로 쓰다듬을 수 있습니다.
 > 3단계에서는 목업처럼 두께감 있는 유리 스터디룸·슬라이딩 문으로 맵을 정리하고, 책상에 앉으면 모니터가 켜지고,
@@ -17,6 +17,13 @@
 > 9단계에서는 **가구 상점**이 열렸습니다. 코인으로 책상 소품 12종(내 자리 책상 위에 3개 장착)과 공용 가구 11종(🛠 편집 모드로 방 안 어디든 배치,
 > 모두가 봄)을 삽니다. 침대에 누우면 💤, 안마의자는 흔들리고, 스탠드 조명은 주변을 밝힙니다. 배치는 `room_layout` 에 저장돼 서버를 재시작해도 남습니다.
 
+> **15단계**에서는 실내가 바뀌었습니다. **A.** 유리 스터디룸 2개가 넓은 **2인 스터디룸** 하나(x 12..33)로 합쳐졌습니다 — 긴 책상에 모니터 2대·의자 2개(사이 1타일)·스탠드 2개·공유 화분/시계,
+> 뒤쪽 2인 소파+러그, 벽 코르크보드(두 사람의 목표 팻말이 나란히), 작은 책장, 슬라이딩 문 하나(명패는 방장 설정 `roomLabel`, 기본은 스터디 이름). 좌석 id 는 `study-a`/`study-b` 로 고정하고
+> 옛 id(`seat-8`/`seat-9`)는 별칭으로 계속 받으며, 새 가구 자리에 있던 `room_layout` 항목은 서버 시작 때 회수됩니다(놓은 사람 인벤토리로). **B.** 러그는 전부 무늬(테두리 2겹 + 중앙 패턴, 크림·세이지·버건디),
+> 바닥 널빤지 결 변주 + 가구 밑 타원 그림자 + 펜던트 아래 빛 웅덩이, 통로 러너(술)는 방 앞 가로로. 라운지·회의·커피·푸프·복도·벽마다 소품이 채워졌고 창밖 비(10%)·커피머신 김·벽시계 초침·어항 물결이 돕니다.
+> **C.** 상대 자리 앞에서 E → **쪽지**(60자, 상대가 앉으면 책상 위 아이콘 + 토스트, 앉은 채 E 로 읽기, 설정의 쪽지함). 커피 코너 E → **커피 배달**(아메리카노·라떼·코코아 1코인, 앉아 있으면 바로·비어 있으면 자리에 머그, 10분 ❤️☕).
+> 설정에서 **D-day** 등록(시험/기념일/기타, 스터디 공용) → 칠판 오른쪽 아래 최대 3개 카운트다운(D-7 이하 강조), 당일 입장 시 토스트 + 창밖 불꽃놀이(기념일은 하트, 시험은 응원 문구).
+>
 > **14단계**에서는 야외가 100×70 타일로 넓어지고(오른쪽·아래 20타일) 전체가 다듬어졌습니다.
 > **A. 비주얼** — 잔디는 이음새 없는 4톤 + 잔디 결·클로버·작은 꽃·돌 소품, 산책로는 흙 테두리가 있는 자갈길(16방향 마스크). 건물은 검은 상자 대신 벽돌 파사드에 큰 창문 4개
 > (밤엔 실내 불빛이 새어 나오고 낮엔 하늘이 비침 — `windowDay` 레이어), 입구 캐노피·간판 조명·덩굴·자전거 거치대·플랜터. 트랙은 흰/빨강 연석·코너 안쪽 스키드 자국·바깥 타이어 배리어·
@@ -149,6 +156,7 @@ null-study-meta/
 │   │   ├── animals.js        # 14단계: 동물 NPC — AnimalNpc(우리 안 자율 행동·먹이) · DuckNpc(물 위) · SquirrelNpc · PigeonNpc(날아오름) · ButterflyNpc · FireflyNpc(glow) · CatNpc · createOutdoorAnimals
 │   │   ├── fishing.js        # 14단계: 물고기 10종·등급 확률(roll)·낚시 세션 타이밍(5~10초 입질 → 1.2초 창) — 순수 함수
 │   │   ├── constellations.js # 14단계: 별자리 365개(실제 88 + 상상 277, 별 좌표·연결선) · 날짜 인덱스(tz) · 밤 판정
+│   │   ├── dday.js           # 15단계: D-day 순수 함수 — daysLeft(tz 자정 경계)·7일 뒤 숨김·칠판 정렬(최대 3)·검증·당일 연출 문구
 │   │   ├── vehicles.js       # 12단계: 탈것 종류(최고 속도·가속·회전·마찰)·색·데칼·경적, 방향키 물리(step)·8방향·페이로드 검증 — /js/vehicles.js 로 브라우저에도 그대로
 │   │   ├── track.js          # 12단계: 랩 판정 (출발선 선분 교차 방향 · 체크포인트 순서 · 역주행 reset · 쇼트컷 불인정)
 │   │   ├── hub.js            # 11단계: 스터디 허브 — 스터디 목록·소속·비밀번호·정원, 스터디마다 World 지연 생성/비면 5분 뒤 해제, 로비 데이터, 60일 비활성 삭제, 옛 데이터 마이그레이션, 그룹 목표 타이머
@@ -177,7 +185,7 @@ null-study-meta/
 │   ├── js/daylight.js        # 시간대 가중치(낮/노을/밤, 경계 30분) + 하늘 팔레트 + 실내 연출 강도 (순수 함수, 테스트 공용)
 │   ├── js/music.js           # 유튜브 URL 파싱 · 최근 5개 (순수 함수, 테스트 공용)
 │   ├── js/fx.js              # Web Audio 합성 알림음(뽀모도로·목표·코인, 각각 끌 수 있음) + 브라우저 알림 도우미
-│   ├── js/scenes/RoomScene.js# 타일맵(floor/furniture/windowDay/top), 아바타, 하늘 그라데이션·별, 유리 구역 틴트·밝기, 화면 on/off, 상호작용 지점, 조명·플래시. 12단계: 맵 전환(restart)·문·탈것 물리·랩 HUD 훅·전광판 글자·야외 어둠/노을 틴트·물/분수 순환. 14단계: 구름 그림자·분수 물보라·별똥별·낮 톤, 동물 시트 NPC(flipX·fly/swim/eat)·반딧불이 글로우·어항 물고기, 간식 아이콘·낚싯대·"!"·포토 플래시
+│   ├── js/scenes/RoomScene.js# 타일맵(floor/furniture/windowDay/top), 아바타, 하늘 그라데이션·별, 유리 구역 틴트·밝기, 화면 on/off, 상호작용 지점, 조명·플래시. 12단계: 맵 전환(restart)·문·탈것 물리·랩 HUD 훅·전광판 글자·야외 어둠/노을 틴트·물/분수 순환. 14단계: 구름 그림자·분수 물보라·별똥별·낮 톤, 동물 시트 NPC(flipX·fly/swim/eat)·반딧불이 글로우·어항 물고기, 간식 아이콘·낚싯대·"!"·포토 플래시. 15단계: 가구 그림자·빛 웅덩이·비·김·시계 초침·어항 물결·명패·코르크보드 팻말·책상 위 쪽지/머그·D-day 칠판·하트 폭죽·자리 선택(E)
 │   ├── js/scenes/vehicles.js # 12단계: VehicleView — 8방향 탈것 프레임 + 데칼, 아바타가 앉는 위치(vehicles.json meta)
 │   └── assets/               # tiles.png / tiles.json (아틀라스), dog.png / dog.json, avatar/ (catalog.json + 레이어별 PNG), player.png / player.json(옛 단일 시트, 빌드 산출물), CREDITS.txt
 ├── tools/
@@ -194,6 +202,8 @@ null-study-meta/
 │   ├── screenshot_stage11.js # 11단계: 로비·스터디 만들기·잠긴 스터디 입장·목표 달성 연출 (서버를 스스로 띄운다)
 │   ├── screenshot_stage12.js # 12단계: 야외 전체 맵·트랙 확대·탑승 화면·전광판 (서버를 스스로 띄운다)
 │   ├── screenshot_stage14.js # 14단계: 야외 낮/밤·트랙·동물원·낚시·별자리 오버레이 (서버를 스스로 띄운다, --only=map,zoo,…)
+│   ├── screenshot_stage15.js # 15단계: 실내 전체·스터디룸/라운지 확대·쪽지·커피·D-day 화면 (--only=map,study,lounge,note,coffee,dday)
+│   ├── props_v4.py           # 15단계: 2인 스터디룸 소품·무늬 러그 3종·라운지/회의/커피/푸프/복도/벽 소품·쪽지/머그 아이콘
 │   ├── props_outdoor2.py     # 14단계 A: 잔디 v2·자갈길 16방향·연석 흙길·스키드·출발 아치·관중석·코너 표지판·피트·벽돌/창문/캐노피·나무 3종·갈대·수련·담요·화단·차고·언덕 경사 띠
 │   ├── props_zoo.py          # 14단계 B: 울타리·유리 펜스·모래/얼음/우리 물·대나무·아카시아·건초·여물통·통나무·밧줄·안내판·ZOO 배너·매점·포토존 보드
 │   ├── animal_sprites.py     # 14단계 B: 동물 12종 × 6프레임 시트 (public/assets/animals.png/json + tools/out/s14_animals_row.png)
@@ -582,6 +592,7 @@ node tools/screenshot_stage12.js                                     # 12단계:
 python tools/animal_sprites.py && python tools/fish_sprites.py      # 14단계 동물·물고기 시트 (+ 검수용 한 줄 미리보기)
 python tools/preview_stage14.py                                      # 14단계 새 타일 미리보기 (tools/out/s14_tiles_preview.png)
 node tools/screenshot_stage14.js                                     # 14단계: 야외 낮/밤·트랙·동물원·낚시·별자리 (--only=map,track,zoo,fishing,constellation)
+node tools/screenshot_stage15.js                                     # 15단계: 실내 전체·스터디룸/라운지 확대·쪽지·커피·D-day (--only=map,study,lounge,note,coffee,dday)
 python tools/compare_mockup.py                                        # screenshots/compare_mockup.png
 ```
 
@@ -595,6 +606,20 @@ python tools/compare_mockup.py                                        # screensh
 - **별자리** (`server/game/constellations.js`): 실제 별자리 88개(잘 알려진 30개는 손으로 넣은 별 좌표·연결선, 나머지는 이름 씨앗 결정적 패턴) + 단어표로 만든 상상 별자리 277개를 결정적으로 섞어 365개.
   `sky:view` 는 망원경 앞 + 밤(19~06시, `STATS_TZ`)일 때만 오늘(그 해 몇 번째 날 − 1) 것을 돌려주고 `constellation_views` 에 첫 관측을 기록합니다. 오버레이는 클라이언트 캔버스(별이 120ms 간격으로 켜지고 선이 320ms 마다 이어짐).
 - **Supabase**: `supabase/schema.sql` 을 다시 실행하면 `fish_catches`·`constellation_views` 테이블과 `room_pets.tank` 컬럼이 추가됩니다 (여러 번 실행 안전).
+
+## 2인 스터디룸 · 쪽지 · 커피 배달 · D-day (15단계)
+
+- **맵** (`server/rooms/studyroom.js`): 방 데이터에 `seatAliases`(옛 좌석 id → 새 id, `World.seat()` 가 `canonicalSeatId` 로 정규화), `anchors`(클라이언트가 동적으로 그리는 위치 — `nameplate`·`corkboard`·`dday`·`steam`·`tank`),
+  좌석의 `slots`(2인 책상의 책상 소품 슬롯을 명시 — `Layout.deskSlots` 가 우선 사용, 두 사람이 겹치지 않음), 조명의 `pool`(펜던트 아래 빛 웅덩이 y). `World.loadLayout()` 은 새 맵에서 놓을 수 없는 `room_layout` 행을 회수합니다.
+- **명패**: `studies.room_label`(12자) — `study:update { roomLabel }`(방장), `publicStudy.roomLabel`. 비우면 스터디 이름.
+- **쪽지** (`notes`): 상대의 자리 = 마지막에 앉았던 좌석(`World.seatLast`) → 지금 앉은 좌석 → 2인 스터디룸 의자. 자리 중심 64px 안에서 `note:leave { to, text }`(60자). 받는 사람이 그 자리에 앉으면(또는 앉아 있으면)
+  `note:waiting` + 모두에게 `seatItems`(책상 위 접힌 쪽지 아이콘), 앉은 채 E → `note:read`. `note:box` 는 받은/보낸 최근 20개. 접속 중이지만 자리에 없으면 `note:new` 로 알림 벨에만. 입장 ack `profile.unreadNotes`.
+- **커피 배달** (`coffee_gifts`): 커피 코너 앞에서 `coffee:targets` → `coffee:gift { menu, to }` — `adjust_coins(-1, 'coffee:<menu>')`(같은 사람 코인 큐). 상대가 앉아 있으면(또는 본인) 바로 `coffee:received` + `playerBuff`(10분 `coffeeBuffUntil`,
+  휴식/☕ 상태일 때 머리 위 ❤️☕), 비어 있으면 `received_at null` 로 자리에 머그(`seatItems.mugs`, 서버 재시작 후에도 로드) → 앉을 때 받습니다. 시스템 채팅 + 알림 벨. 커피 E 모달의 "마시기" 는 기존 `interact` 그대로.
+- **D-day** (`ddays`, `server/game/dday.js`): `dday:add { title(12자), date, kind: exam|anniversary|other, shared }` — 개인(`study_id null`) 또는 스터디 공용. `dday:list` 는 보이는 것(지난 지 7일 이내) + 칠판용 `board`(오늘 → 가까운 미래 → 최근 지난 것, 3개).
+  당일 연출은 입장 ack `profile.ddays.celebrate` 로 사람·D-day·날짜마다 1회(서버 메모리). 공용이 바뀌면 `dday:update`.
+- **Supabase**: `supabase/schema.sql` 을 다시 실행하면 `studies.room_label` 컬럼과 `notes`·`coffee_gifts`·`ddays` 테이블이 추가됩니다 (여러 번 실행 안전).
+- 테스트: `test/stage15.test.js`(좌석 별칭·가구 회수·명패·책상 슬롯), `test/stage15c.test.js`(D-day 자정 경계·쪽지·커피 잔액/전달/10분·소켓 E2E·브라우저).
 
 ## 다음 단계
 

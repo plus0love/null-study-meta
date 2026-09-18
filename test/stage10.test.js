@@ -102,7 +102,7 @@ function mkFollower(o, species = 'cat', skills = []) {
 }
 
 test('FollowerNpc: 주인 뒤 1.5타일을 따라오고(궤적), 벽·가구에 들어가지 않으며, 멈추면 1초 뒤 앉는다', () => {
-  const o = owner(22.5 * T, 21 * T);
+  const o = owner(34.5 * T, 24 * T); // 스터디룸 오른쪽 통로 (x 34) 를 따라 위로
   const { npc, tick } = mkFollower(o);
   assert.deepEqual(npc.snapshot().ownerId, 'p1');
   assert.equal(npc.state, 'sit');
@@ -317,7 +317,7 @@ test('월드: 스킬 — 대상 필수·펫별 1회, 이름 부르면 달려옴(
   assert.deepEqual(world.roomPets.get(rel.roomPetId).row.skills, ['come']);
   // 이름 부르면 달려옴: 강아지(누구나 부를 수 있음) · 공용 고양이 · 개인 펫은 주인만
   at(a, 22, 20);
-  at(b, 30, 20);
+  at(b, 30, 23);
   const called = world.onChat(b, '사랑아 이리와');
   assert.deepEqual(called, ['dog']);
   assert.equal(world.dog.state, 'walk');

@@ -175,6 +175,8 @@ const DESK_NAMES = new Set(['desk_wide', 'desk_return', 'big_table_v', 'round_ta
 const DELTA = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
 function deskSlots(room, seat) {
   if (!seat) return [];
+  // 15단계: 방 데이터가 좌석에 슬롯을 명시하면 그대로 (2인 책상은 두 사람의 슬롯이 겹치지 않게 지정)
+  if (Array.isArray(seat.slots) && seat.slots.length) return seat.slots.slice(0, 3).map((s) => ({ tx: s.tx, ty: s.ty }));
   const [fx, fy] = DELTA[seat.facing] || [0, 1];
   const px = fy !== 0 ? 1 : 0; // 수직 방향(perp)
   const py = fx !== 0 ? 1 : 0;

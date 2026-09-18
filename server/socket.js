@@ -16,7 +16,8 @@
  *             (클라이언트가 localStorage 에 보관). 살아 있는 token 재접속은 아무것도 묻지 않는다.
  *   ── 스터디 안 (11단계) ──
  *   study:info                               → ack { ok, study{ ..., isOwner }, members[{ nickname, online, weekSeconds, lastSeenAt, isOwner }], week{ totalSeconds, targetSeconds, reached }, streak }
- *   study:update { name?, password?, maxPlayers?, weeklyGoalMinutes?, editPolicy? } → ack { ok, study, studyAccess? } (방장만). 모두에게 study:update { study, passwordChanged }
+ *   study:update { name?, password?, maxPlayers?, weeklyGoalMinutes?, editPolicy?, roomLabel? } → ack { ok, study, studyAccess? } (방장만). 모두에게 study:update { study, passwordChanged }
+ *             15단계: roomLabel = 스터디룸 문 명패(12자, 비우면 스터디 이름) — publicStudy.roomLabel. 클라이언트가 문 위에 그린다
  *             비밀번호를 바꾸면 그 스터디의 기기 토큰이 전부 무효가 되고 방장 기기만 ack.studyAccess 로 새 토큰을 받는다.
  *   study:kick { nickname }                  → ack { ok } (방장만). 내보내진 사람에게 kicked { by }
  *   study:delete                             → ack { ok } | not_empty (방장만, 다른 사람이 있으면 불가)
@@ -96,6 +97,18 @@
  *   sky:view                                 → ack { ok, constellation{ id, name, desc, real, stars, lines }, index, first } | error too_far | daytime{ hour } (망원경 앞, 밤 19~06시 tz)
  *   codex                                    → ack { ok, fish[10]{ count, firstAt, ... }, caughtSpecies, catchesToday, catchLimit, constellations[{ id, name, desc, real, seenAt }], constellationsTotal, tank{ available, fish[], max } }
  *   fish:tank { fishId, on }                 → ack { ok, tank } | error no_study | no_tank | no_fish | not_caught | already | tank_full | not_in_tank | forbidden. 어항 물고기(FishNpc) 스냅샷에 tank: [fishId]
+ *   ── 15단계 쪽지 · 커피 배달 · D-day (스터디 안) ──
+ *   note:leave { to, text }                  → ack { ok, note, seatId, delivered } | error invalid_target | not_member | empty | too_long(60자) | no_seat | too_far. 상대 자리(마지막에 앉은 자리 / 스터디룸 의자) 앞 64px
+ *             받는 사람이 그 자리에 앉아 있으면(또는 앉으면) 본인에게 note:waiting { seatId, notes[] } + 모두에게 seatItems. 접속 중이면 note:new { from, seatId } (알림 벨)
+ *   note:read                                → ack { ok, notes[] } (앉은 채 E — 안 읽은 쪽지 전부 읽음 처리) | not_seated.  note:box → ack { ok, received[≤20], sent[≤20], unread }
+ *   coffee:targets                           → ack { ok, price, menu[{ id, name, emoji }], members[{ nickname, self, online, seated, hasSeat }] }
+ *   coffee:gift { menu, to }                 → ack { ok, gift, delivered, balance } | error too_far | invalid_menu | not_member | no_seat | insufficient{balance}. 1코인 차감(coins 이벤트)
+ *             앉아 있는 상대(또는 본인)는 바로: 본인에게 coffee:received { gift, late }, 모두에게 playerBuff { id, coffeeBuffUntil }(10분 ❤️☕) + 시스템 chat(notify).
+ *             비어 있으면 자리에 머그: 모두에게 seatItems { mugs: { seatId: [{ menu, from, to }] }, notes: { seatId: n } } + chat. 앉으면 받는다.
+ *   dday:list                                → ack { ok, ddays[{ id, title, date, kind, daysLeft, label, soon, today, mine, shared }], board[≤3] }
+ *   dday:add { title(12자), date(YYYY-MM-DD), kind: exam|anniversary|other, shared } → ack { ok, dday, ddays, board } | error invalid_title | invalid_date | invalid_kind
+ *   dday:delete { id }                       → ack { ok, ddays, board } | not_found | forbidden(만든 사람만). 공용이 바뀌면 모두에게 dday:update
+ *   입장 ack: seatItems · seatLast · profile.ddays { board, celebrate[] (오늘 D-day, 사람·날짜마다 1회) } · profile.unreadNotes[] · profile.pendingGifts[]
  */
 const { Server } = require('socket.io');
 const { Hub } = require('./game/hub');
@@ -195,6 +208,21 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, hub: hubOpts = 
       chat(world, `${player.nickname}님이 ${fish.name}을(를) 낚았어요 🎣`);
       if (rare) io.emit('chat', { system: true, notify: true, text: `✨ ${player.nickname}님이 희귀한 ${fish.name}을(를) 낚았어요! 🎣`, ts: world.now() });
     });
+    // 15단계: 쪽지 · 커피 · D-day
+    world.on('notesWaiting', ({ player, seatId, notes }) => socketOf(player)?.emit('note:waiting', { seatId, notes }));
+    world.on('note', ({ note, seatId, by, recipient }) => {
+      const s = socketOf(recipient);
+      if (s && recipient.seatId !== seatId) s.emit('note:new', { from: by.nickname, seatId }); // 접속 중이지만 자리에 없으면 알림 벨로만
+    });
+    world.on('seatItems', (items) => to(world).emit('seatItems', items));
+    world.on('buff', ({ player }) => to(world).emit('playerBuff', { id: player.id, coffeeBuffUntil: world.coffeeBuffOf(player) }));
+    world.on('coffee', ({ gift, recipient, delivered, self, late }) => {
+      if (delivered && recipient) socketOf(recipient)?.emit('coffee:received', { gift, late: Boolean(late) });
+      if (self) return;
+      if (delivered && !late) chat(world, `${gift.from}님이 ${gift.to}님에게 ${gift.emoji} ${gift.menuName}를 건넸어요`, { notify: true });
+      else if (!delivered) chat(world, `${gift.from}님이 ${gift.to}님 자리에 ${gift.emoji} ${gift.menuName}를 놓고 갔어요`, { notify: true });
+    });
+    world.on('ddays', () => to(world).emit('dday:update', {}));
     world.on('weeklyGoal', (e) => {
       const info = world.studyInfo();
       to(world).emit('studyGoal', { weekStart: e.weekStart, totalSeconds: e.totalSeconds, targetSeconds: e.targetSeconds, bonus: e.bonus, name: info ? info.name : '' });
@@ -219,6 +247,8 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, hub: hubOpts = 
     study: study ? hub.publicStudy(study, { isOwner: hub.isOwner(study, player.nickname) }) : null,
     players: world.listPlayers().filter((p) => p.id !== player.id),
     seats: world.seatSnapshot(),
+    seatLast: world.seatLastSnapshot(), // 15단계: 좌석마다 마지막에 앉았던 닉네임
+    seatItems: world.seatItems(), // 15단계: 좌석에 놓인 머그·안 읽은 쪽지 수
     pomodoro: world.pomodoroOf(player).snapshot(),
     npcs: world.npcSnapshots(),
     layout: world.listLayout(),
@@ -407,7 +437,7 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, hub: hubOpts = 
       const res = world.sit(player, payload && payload.seatId);
       if (!res.ok) return ack({ ok: false, error: res.error });
       ack({ ok: true, x: player.x, y: player.y, facing: player.facing, status: player.status });
-      to(world).emit('playerSat', { id: player.id, seatId: player.seatId, x: player.x, y: player.y, facing: player.facing, status: player.status });
+      to(world).emit('playerSat', { id: player.id, nickname: player.nickname, seatId: player.seatId, x: player.x, y: player.y, facing: player.facing, status: player.status });
     }));
 
     socket.on('stand', requirePlayer((_payload, ack, player, world) => {
@@ -504,6 +534,15 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, hub: hubOpts = 
     socket.on('layout:move', requirePlayer(safe((payload, player, world) => world.moveFurniture(player, payload || {}))));
     socket.on('layout:remove', requirePlayer(safe((payload, player, world) => world.removeFurniture(player, payload && payload.id))));
     socket.on('layout:lock', requirePlayer(safe((payload, player, world) => world.setLayoutLock(player, payload && payload.on))));
+    // ── 15단계: 쪽지 · 커피 배달 · D-day ────────────────────────────────
+    socket.on('note:leave', requirePlayer(safe((payload, player, world) => world.leaveNote(player, payload || {}))));
+    socket.on('note:read', requirePlayer(safe((_p, player, world) => world.readNotes(player))));
+    socket.on('note:box', requirePlayer(safe((_p, player, world) => world.noteBox(player))));
+    socket.on('coffee:targets', requirePlayer(safe((_p, player, world) => world.coffeeTargets(player))));
+    socket.on('coffee:gift', requirePlayer(safe((payload, player, world) => world.giftCoffee(player, payload || {}))));
+    socket.on('dday:list', requirePlayer(safe((_p, player, world) => world.listDdays(player))));
+    socket.on('dday:add', requirePlayer(safe((payload, player, world) => world.addDday(player, payload || {}))));
+    socket.on('dday:delete', requirePlayer(safe((payload, player, world) => world.deleteDday(player, payload && payload.id))));
     socket.on('todo:add', requirePlayer(safe((payload, player, world) => world.addTodo(player, payload && payload.text))));
     socket.on('todo:toggle', requirePlayer(safe((payload, player, world) => world.setTodoDone(player, payload && payload.id, payload && payload.done))));
     socket.on('todo:delete', requirePlayer(safe((payload, player, world) => world.deleteTodo(player, payload && payload.id))));

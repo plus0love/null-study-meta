@@ -10,6 +10,8 @@
  *
  * 보드/표지판 글자는 타일에 굽지 않고 labels 로 내려보내 클라이언트가 웹폰트로 그린다.
  * 3단계: 식물은 창가 양끝·스터디룸 각 1·커피 코너 1·입구 양옆·회의 구역 모서리만 남기고 액자/선반/수납장/러그로 채웠다.
+ * 15단계: 유리 스터디룸 2개를 넓은 2인 스터디룸 하나로(x 12..33). 통로 러너는 방 앞 가로. 좌석 id 고정(study-a/b) + 옛 id 별칭.
+ *         클라이언트가 동적으로 그리는 위치는 anchors (문 명패·코르크보드 목표 팻말·D-day 칠판·커피머신 김).
  */
 const { RoomBuilder } = require('./build');
 
@@ -36,15 +38,15 @@ function buildStudyRoom() {
   for (let x = 2; x <= 43; x++) b.place('wall_face', x, 1);
 
   // ── 상단 좌: 칠판 + 프린터 수납장 + 좁은 책장 ──────────────────────
-  b.place('wall_frames_b', 2, 1);
-  b.place('wall_picture_b', 3, 1);
+  b.place('wall_frames_c', 2, 1); // 15단계: 액자 3개 묶음
   b.place('shelf_narrow_a', 2, 3);
   b.place('shelf_narrow_b', 2, 5);
   b.place('cabinet_small', 2, 7);
   b.place('chalkboard_big', 4, 1);
   b.label(7.5, 4.0, 'Good\nStudy\nBetter\nTomorrow', { ...HAND, size: 24, color: '#e8dcc4', lineHeight: 0.98 });
-  b.label(9.4, 6.15, '♡', { ...SANS, size: 12, color: '#d9a98f' });
+  b.label(4.9, 6.1, '♡', { ...SANS, size: 12, color: '#d9a98f' }); // 15단계: 오른쪽 아래는 D-day 목록 자리라 왼쪽으로
   b.light(7.5, 1.2, 3.4, 0xffc46a, 0.6);
+  b.anchor('dday', 10.1, 5.6, { w: 64, lines: 3 }); // 15단계: D-day 목록 (칠판 오른쪽 아래, 최대 3개)
   b.place('cabinet_printer', 4, 7);
   b.place('wall_frames_a', 11, 1);
   b.place('wall_clock', 12, 1);
@@ -68,7 +70,7 @@ function buildStudyRoom() {
   }
   b.window(14, 0, 14, 4.5);
   b.place('wall_vine', 28, 1);
-  for (const x of lampCols) b.light(x + 0.5, 1.9, 2.8, 0xffb85c, 0.5);
+  for (const x of lampCols) b.light(x + 0.5, 1.9, 2.8, 0xffb85c, 0.5, { pool: 6.6 }); // 15단계: 펜던트 아래 바닥에 둥근 빛 웅덩이
 
   // ── 라운지 (소파 양옆: 스탠드 · 수납장 + 협탁, 창가 양끝 화분) ─────────
   b.place('plant_tall_3', 14, 5);
@@ -83,6 +85,14 @@ function buildStudyRoom() {
   b.place('round_table', 19, 8);
   b.light(21, 8.5, 3.2, 0xffc46a, 0.3);
   b.place('cushion', 24, 9); // 강아지 쿠션 — NPC 가 여기서 잔다 (server/game/npc.js)
+  // 15단계 밀도: 바닥 슬리퍼·잡지 더미 · 사이드 테이블 램프 · 강아지 밥그릇·장난감
+  b.place('magazines', 16, 9);
+  b.place('slippers_b', 17, 8);
+  b.place('table_lamp', 23, 7);
+  b.light(23.5, 7.6, 2.0, 0xffc46a, 0.35);
+  b.place('dog_bowl', 25, 9);
+  b.place('dog_toy', 26, 9);
+  b.anchor('tank', 20.5, 8.4); // 어항(공용 펫 물고기) 물결 위치
 
   // ── 상단 중앙 우: FOCUS/PLAN/STUDY/GROW 세로 표지판 ─────────────────
   b.place('board_focus_tall', 29, 1);
@@ -114,11 +124,14 @@ function buildStudyRoom() {
   b.place('counter_bottles', 5, 14);
   b.place('coffee_machine', 6, 13);
   b.place('counter_grinder', 7, 14);
-  b.place('counter_plates', 8, 14);
+  b.place('counter_menu', 8, 14); // 15단계: 메뉴 카드·냅킨·시럽병·머그 진열
   b.place('display_case', 4, 16);
   b.light(6, 14.5, 2.8, 0xffd48a, 0.4);
-  b.interactable('coffee', 'coffee', 6.5, 16, { hint: '커피 마시기' });
-  b.place('plant_tall_2', 9, 11);
+  b.interactable('coffee', 'coffee', 6.5, 16, { hint: '커피' });
+  b.anchor('steam', 6.5, 13.15); // 커피머신 김
+  b.place('plant_tall_2', 11, 11);
+  b.place('bean_shelf', 9, 12); // 15단계: 벽 선반 원두 봉지 (메뉴 보드 옆)
+  b.place('milk_crate', 9, 15);
   b.place('trash_bin', 8, 16);
   b.place('rug_coffee', 4, 17);
 
@@ -132,61 +145,86 @@ function buildStudyRoom() {
   b.place('pouf_green', 7, 19);
   b.place('pouf_cream', 4, 21);
   b.place('pouf_green', 4, 23);
-  b.place('side_table_round', 7, 22);
+  b.place('side_table_games', 7, 22); // 15단계: 보드게임 + 간식 접시
+  b.place('book_cart', 9, 21);
   b.light(7, 21.5, 3.2, 0xffc46a, 0.35);
 
-  // ── 중앙: 유리 스터디룸 2개 ─────────────────────────────────────────
-  // 방 A: x 11..20, 방 B: x 25..34 (B 는 A 의 좌우 대칭, x' = 45 - x)
-  // 벽: 차콜 프레임 기둥(gpost_*, 3타일마다·모서리·문 옆) + 반투명 유리 판(glass_*). 슬라이딩 문 패널 2x4 + 열린 자리 2타일.
-  // 안쪽은 zone 으로 내려보내 클라이언트가 다른 구역보다 밝게 + 유리 틴트/사선 반사를 그린다.
-  const studyRoom = (mirror, panelName, doorId, label) => {
-    const X = (x) => (mirror ? 45 - x : x);
-    const XW = (x, w) => (mirror ? 45 - x - (w - 1) : x); // 폭 w 오브젝트의 좌상단
-    // 위쪽 벽 (액자 2·선반 2·스팟 조명 2) + 벽 아래 그림자
-    for (let x = 11; x <= 20; x++) b.place('wall_face', X(x), 10);
-    b.fill(['floor_0_shadow', 'floor_1_shadow', 'floor_2_shadow'], XW(12, 8), 12, XW(12, 8) + 7, 12);
-    b.place('wall_frames_a', X(12), 10);
-    b.place('wall_lamp', X(14), 10);
-    b.place('wall_shelf', X(15), 10);
-    b.place('wall_shelf_b', X(16), 10);
-    b.place('wall_lamp', X(17), 10);
-    b.place('wall_frames_b', X(19), 10);
-    b.light(X(14) + 0.5, 11.5, 2.8, 0xffc46a, 0.5);
-    b.light(X(17) + 0.5, 11.5, 2.8, 0xffc46a, 0.5);
-    // 좌우 유리벽 (기둥 3타일 간격)
-    for (let y = 12; y <= 20; y++) {
-      const t = (y - 12) % 3 === 0 ? 'gpost_NS' : 'glass_NS';
-      b.place(t, X(11), y);
-      b.place(t, X(20), y);
-    }
-    // 아래 벽: 모서리 기둥 · 문 패널 · 열린 문 2타일 · 기둥 · 유리 판
-    b.place(mirror ? 'gpost_NW' : 'gpost_NE', X(11), 21);
-    b.place(mirror ? 'gpost_NE' : 'gpost_NW', X(20), 21);
-    b.place(panelName, XW(12, 2), 18);
-    b.label(XW(12, 2) + 1, 19.05, label, { ...SANS, size: 9, weight: 600, color: '#efe6d6', lineHeight: 1.3, spacing: 0.5 });
-    b.place('door_open', X(14), 21, { doorId: `${doorId}-l` });
-    b.place('door_open', X(15), 21, { doorId: `${doorId}-r` });
-    b.light(X(14) + (mirror ? 0 : 1), 21.5, 2.2, 0xffb85c, 0.45);
-    b.place(mirror ? 'gpost_W' : 'gpost_E', X(16), 21);
-    for (const x of [17, 18, 19]) b.place('glass_EW', X(x), 21);
-    b.zone(doorId, XW(12, 8), 12, XW(12, 8) + 7, 20, { kind: 'glass', bright: 0.6 });
-    // 가구: 넓은 책상(모니터·키보드·램프·머그) + 리턴, 검정 의자, 협탁 2, 코트 걸이, 러그(책상 앞까지), 화분 1
-    b.place('desk_wide', XW(14, 3), 12);
-    b.place('desk_return', X(16), 13);
-    b.place('chair_n', X(15), 14); // 책상에서 한 칸 아래 — 앉아도 아바타가 모니터를 가리지 않는다
-    b.screen(X(15), 14, { x: XW(14, 3) * 16 + 16, y: 12 * 16 + 2, w: 16, h: 7, kind: 'monitor' });
-    b.place('nightstand', X(12), 13);
-    b.place('nightstand', X(18), 13);
-    b.light(X(18) + 0.5, 13.3, 1.6, 0xffd48a, 0.35);
-    b.place('rug_study', XW(14, 5), 14);
-    b.place('coat_rack', X(12), 15);
-    b.place('plant_palm_1', X(18), 18);
-  };
-  studyRoom(false, 'study_panel_1', 'study1', '수빈s\nROOM');
-  studyRoom(true, 'study_panel_2', 'study2', '선아s\nROOM');
-  b.place('rug_corridor', 22, 12);
-  b.light(23, 16.5, 3.2, 0xffc46a, 0.28);
-  b.light(23, 23, 3.2, 0xffc46a, 0.25);
+  // ── 중앙: 2인 유리 스터디룸 (15단계: 두 방을 하나로 합침) ─────────────
+  // 벽: x 12 / 33 (세로 유리, 3타일마다 기둥), y 10..11 위쪽 벽, y 21 아래 유리벽. 안쪽 x 13..32, y 12..20.
+  // 슬라이딩 문 패널(x 20..21) + 열린 문 2타일(x 22..23) 은 방 앞 통로(스폰)와 이어진다. 명패 글자는 클라이언트가 스터디 설정(roomLabel)으로 그린다.
+  // 좌석 id 는 'study-a' / 'study-b' 로 고정 (옛 방 A/B 의자 seat-8 / seat-9 는 별칭으로 계속 받는다).
+  for (let x = 12; x <= 33; x++) b.place('wall_face', x, 10);
+  b.fill(['floor_0_shadow', 'floor_1_shadow', 'floor_2_shadow'], 13, 12, 32, 12);
+  // 위쪽 벽 장식: 액자·포스터·선반·스팟 조명 2·코르크보드(책상 위)·후크 가방·벽시계·스위치
+  b.place('wall_frames_a', 13, 10);
+  b.place('wall_poster', 14, 10);
+  b.place('wall_shelf', 15, 10);
+  b.place('wall_shelf_b', 16, 10);
+  b.place('wall_hook_bag', 17, 10);
+  b.place('wall_lamp', 19, 10);
+  b.place('corkboard', 21, 10);
+  b.anchor('corkboard', 22.5, 11.05, { seats: ['study-a', 'study-b'] });
+  b.place('wall_lamp', 25, 10);
+  b.place('wall_frames_b', 27, 10);
+  b.place('wall_clock', 29, 10);
+  b.place('wall_switch', 31, 10);
+  b.light(19.5, 11.5, 2.8, 0xffc46a, 0.5);
+  b.light(25.5, 11.5, 2.8, 0xffc46a, 0.5);
+  // 좌우 유리벽 (기둥 3타일 간격) + 아래 유리벽
+  for (let y = 12; y <= 20; y++) {
+    const t = (y - 12) % 3 === 0 ? 'gpost_NS' : 'glass_NS';
+    b.place(t, 12, y);
+    b.place(t, 33, y);
+  }
+  b.place('gpost_NE', 12, 21);
+  b.place('gpost_NW', 33, 21);
+  for (const x of [13, 14, 15, 17, 18, 19]) b.place('glass_EW', x, 21);
+  b.place('gpost_EW', 16, 21);
+  b.place('study_panel_1', 20, 18);
+  b.anchor('nameplate', 21, 19.05);
+  b.place('door_open', 22, 21, { doorId: 'study-l' });
+  b.place('door_open', 23, 21, { doorId: 'study-r' });
+  b.alias('study1-l', 'study-l');
+  b.light(23, 21.5, 2.2, 0xffb85c, 0.45);
+  b.place('gpost_W', 24, 21);
+  for (const x of [25, 26, 27, 29, 30, 31, 32]) b.place('glass_EW', x, 21);
+  b.place('gpost_EW', 28, 21);
+  b.zone('study', 13, 12, 32, 20, { kind: 'glass', bright: 0.6 });
+  // 유리벽 안쪽 왼편에 얇은 커튼 레일 (반쯤 걷힌 커튼, top 레이어)
+  b.place('curtain_top', 13, 12);
+  b.place('curtain_body', 13, 13);
+  b.place('curtain_body', 13, 14);
+  b.place('curtain_end', 13, 15);
+  for (let y = 16; y <= 19; y++) b.place('curtain_rail', 13, y);
+  // 가구: 러그(책상 앞까지) · 긴 책상(모니터 2·스탠드 2·공유 화분/시계) · 의자 2 (사이 1타일) · 협탁 2 · 옷걸이(가디건) · 작은 책장 · 2인 소파+러그 · 슬리퍼 · 화분 2
+  b.place('rug_study_wide', 18, 14);
+  b.place('rug_sofa', 28, 17);
+  b.place('desk_long', 19, 12);
+  b.place('nightstand_books', 18, 12);
+  b.place('nightstand_lamp', 26, 12);
+  b.light(26.5, 12.3, 1.6, 0xffd48a, 0.35);
+  b.light(19.5, 12.4, 1.5, 0xffd48a, 0.3);
+  b.light(25.5, 12.4, 1.5, 0xffd48a, 0.3);
+  // 책상 슬롯: 두 사람이 겹치지 않게 명시 (가운데 화분·모니터 칸은 피한다)
+  b.place('chair_n', 21, 14, { seatIds: ['study-a'], slots: [[20, 12], [20, 13], [19, 13]] });
+  b.place('chair_n', 23, 14, { seatIds: ['study-b'], slots: [[24, 12], [24, 13], [25, 13]] });
+  b.alias('seat-8', 'study-a');
+  b.alias('seat-9', 'study-b');
+  b.screen(21, 14, { x: 19 * 16 + 32, y: 12 * 16 + 2, w: 16, h: 8, kind: 'monitor' });
+  b.screen(23, 14, { x: 19 * 16 + 64, y: 12 * 16 + 2, w: 16, h: 8, kind: 'monitor' });
+  b.place('coat_rack_cardigan', 14, 11);
+  b.place('bookcase_small', 15, 12);
+  b.place('plant_palm_1', 32, 11);
+  b.place('plant_palm_0', 14, 19);
+  b.place('sofa_love', 28, 17, { seatIds: ['study-sofa-a', 'study-sofa-b'] });
+  b.light(30, 17.6, 2.6, 0xffc46a, 0.35);
+  b.place('slippers_a', 27, 19);
+  b.place('slippers_b', 32, 19);
+  b.place('magazines', 32, 16);
+  // 방 앞 가로 러너 (통로)
+  b.place('rug_runner_h', 18, 22);
+  b.light(18.5, 22.8, 2.6, 0xffc46a, 0.22);
+  b.light(27.5, 22.8, 2.6, 0xffc46a, 0.22);
 
   // ── 우측: 화이트보드 + 회의 테이블 8석 (노트북은 왼쪽 아래 의자 자리) ──
   b.place('ladder_shelf', 35, 10);
@@ -199,9 +237,12 @@ function buildStudyRoom() {
   b.place('chair_s', 38, 15);
   b.place('chair_s', 39, 15);
   for (const y of [16, 18, 20]) {
-    b.place('chair_e', 36, y);
+    b.place(y === 16 ? 'chair_e_bag' : 'chair_e', 36, y); // 15단계: 의자에 걸린 가방
     b.place('chair_w', 41, y);
   }
+  b.place('projector_screen', 42, 10); // 15단계: 내려온 프로젝터 스크린
+  b.place('wall_calendar', 33, 10); // 스터디룸 모서리 벽 = 회의 구역 쪽 벽 달력
+  b.place('cable_box', 37, 22);
   b.screen(36, 20, { x: 37 * 16 + 13, y: 16 * 16 + 63, w: 7, h: 4, kind: 'laptop' });
   b.place('plant_palm_0', 43, 22);
   b.place('water_dispenser', 35, 22);
@@ -212,8 +253,13 @@ function buildStudyRoom() {
 
   // ── 하단: 입구 + 바깥 ──────────────────────────────────────────────
   b.place('coat_rack', 16, 23);
+  b.place('umbrella_stand', 17, 24); // 15단계 복도 소품
+  b.place('info_sign', 19, 23);
+  b.anchor('infoSign', 19.5, 23.45);
+  b.place('shoe_rack', 26, 24);
   b.place('cabinet_small', 28, 23);
   b.place('trash_bin', 30, 24);
+  b.place('fire_extinguisher', 31, 24);
   b.place('entrance_wide', 18, 25);
   b.setSolid(22, 25, 23, 26, false); // 유리문 가운데는 통과 가능
   b.doors.push({ id: 'entrance', x: 22, y: 25, to: 'outdoor' }, { id: 'entrance', x: 23, y: 25, to: 'outdoor' }); // 12단계: 밟으면 공용 야외로

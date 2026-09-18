@@ -27,6 +27,7 @@ import props_v3 as G  # noqa: E402
 import props_outdoor as O  # noqa: E402
 import props_outdoor2 as O2  # noqa: E402
 import props_zoo as Z  # noqa: E402
+import props_v4 as S  # noqa: E402
 from pixel import Canvas  # noqa: E402
 from recolor import recolor  # noqa: E402
 
@@ -93,13 +94,13 @@ def build_objects():
     add("kerb", R.kerb(), "floor", False)
     add("grass_0", R.grass_strip(0), "floor", True)
     add("grass_1", R.grass_strip(1), "floor", True)
-    # 러그 (테두리 + 패턴)
-    add("rug_lounge", V.rug_fancy(12, 4, pattern="grid"), "floor", False)
-    add("rug_pouf", V.rug_fancy(7, 6, base="#e0cfae", border="#b08a63", border2="#cdb38b", pattern="diamond", accent="#cbb58f"), "floor", False)
-    add("rug_coffee", V.rug_fancy(4, 2, base="#c9a98b", border="#8f6a4c", border2="#b8967a", pattern="dots", accent="#bd9d7e"), "floor", False)
-    add("rug_study", V.rug_fancy(5, 6, base="#ddd0b8", border="#b39470", border2="#cbb694", pattern="dots", accent="#cfc0a3"), "floor", False)
-    add("rug_corridor", V.rug_fancy(3, 10, base="#dccab0", border="#a98a67", border2="#c8ae8a", pattern="diamond", accent="#cdb99c"), "floor", False)
-    add("rug_meeting", V.rug_fancy(7, 9, base="#e3d3b3", border="#b08960", border2="#cfb48d", pattern="grid", accent="#d3bd97"), "floor", False)
+    # 러그 (15단계: 테두리 2겹 + 중앙 패턴, 크림·세이지·버건디 3종 — 크기·이름은 그대로)
+    add("rug_lounge", S.rug_v4(12, 4, "burgundy", "medallion"), "floor", False)
+    add("rug_pouf", S.rug_v4(7, 6, "sage", "medallion"), "floor", False)
+    add("rug_coffee", S.rug_v4(4, 2, "burgundy", "dots"), "floor", False)
+    add("rug_study", S.rug_v4(5, 6, "cream", "dots"), "floor", False)
+    add("rug_corridor", S.rug_v4(3, 10, "cream", "stripes"), "floor", False)
+    add("rug_meeting", S.rug_v4(7, 9, "cream", "lattice"), "floor", False)
     add("doormat_big", V.doormat_blank(), "floor", False)
 
     # 벽 (몰딩)
@@ -336,6 +337,53 @@ def build_objects():
     add("snack_bar", Z.snack_bar(), top=1)
     add("photo_board", Z.photo_board())
     add("deck_post", Z.deck_railing_post())
+
+    # ── 15단계 실내 개편 (항상 맨 뒤에 추가) ──
+    # 2인 스터디룸
+    add("desk_long", S.desk_long())
+    add("nightstand_books", S.nightstand_books())
+    add("nightstand_lamp", S.nightstand_lamp())
+    add("sofa_love", S.sofa_love(), seats=[(1, 1, "down"), (2, 1, "down")])
+    add("corkboard", S.corkboard())
+    add("bookcase_small", S.bookcase_small())
+    add("coat_rack_cardigan", S.coat_rack_cardigan(), top=1)
+    add("slippers_a", S.slippers(0), solid=False)
+    add("slippers_b", S.slippers(1), solid=False)
+    for part in ("rail", "top", "body", "end"):
+        add(f"curtain_{part}", S.curtain(part), "top", False)
+    # 무늬 러그 (크림·세이지·버건디) + 술 달린 러너
+    add("rug_study_wide", S.rug_v4(9, 6, "cream", "medallion"), "floor", False)
+    add("rug_sofa", S.rug_v4(4, 3, "sage", "lattice"), "floor", False)
+    add("rug_runner_h", S.rug_v4(10, 2, "burgundy", "stripes", fringe=True), "floor", False)
+    # 라운지
+    add("magazines", S.magazines(), solid=False)
+    add("table_lamp", S.table_lamp(), top=1)
+    add("wall_frames_c", S.wall_frames_c())
+    add("dog_bowl", S.dog_bowl(), solid=False)
+    add("dog_toy", S.dog_toy(), solid=False)
+    # 회의 구역
+    add("chair_e_bag", S.chair_e_bag(), solid=False, seats=[(0, 0, "right")])
+    add("projector_screen", S.projector_screen(), top=1)
+    add("wall_calendar", S.wall_calendar())
+    add("cable_box", S.cable_box(), solid=False)
+    # 커피 코너 · 푸프
+    add("counter_menu", S.counter_menu())
+    add("bean_shelf", S.bean_shelf())
+    add("milk_crate", S.milk_crate())
+    add("side_table_games", S.side_table_games())
+    add("book_cart", S.book_cart())
+    # 벽 · 복도
+    add("wall_poster", S.wall_poster())
+    add("wall_hook_bag", S.wall_hook_bag())
+    add("wall_switch", S.wall_switch())
+    add("fire_extinguisher", S.fire_extinguisher())
+    add("umbrella_stand", S.umbrella_stand())
+    add("shoe_rack", S.shoe_rack())
+    add("info_sign", S.info_sign(), top=1)
+    # 쪽지 · 머그 (클라이언트가 책상 위에 스프라이트로 그린다)
+    add("note_icon", S.note_icon(), solid=False)
+    for kind in ("americano", "latte", "cocoa"):
+        add(f"mug_{kind}", S.mug_icon(kind), solid=False)
 
 
 # ── 아틀라스 패킹 ──────────────────────────────────────────────────────

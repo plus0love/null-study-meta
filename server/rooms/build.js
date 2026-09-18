@@ -34,6 +34,8 @@ class RoomBuilder {
     this.zones = [];
     this.screens = [];
     this.interactables = [];
+    this.seatAliases = {}; // 15단계: 옛 좌석 id → 새 id (맵 개편 뒤에도 옛 id 로 앉기 요청이 오면 매핑)
+    this.anchors = {}; // 15단계: 클라이언트가 동적으로 그리는 위치 (명패·코르크보드·D-day 칠판·커피머신 김 등), 픽셀 좌표
     this.spawn = { x: 0, y: 0 };
     this.placed = [];
     // 9단계: 바닥이 아닌 오브젝트 목록(props) + 셀마다 마지막으로 놓인 오브젝트의 props 인덱스(occupant, 없으면 -1).
@@ -78,6 +80,7 @@ class RoomBuilder {
    * 오브젝트 배치. top 행은 top 레이어(통과 가능), 나머지는 오브젝트 레이어.
    * 의자/문 셀은 통과 가능. opts.solid 로 충돌을 강제할 수 있다.
    * opts.layer 를 주면 그 레이어에만 타일을 쓰고 충돌·좌석·문은 건드리지 않는다 (낮 창문 등 겹침용).
+   * opts.seatIds: 좌석 id 를 고정한다 (오브젝트의 seats 순서대로). opts.slots: 좌석의 책상 슬롯을 명시 (Layout.deskSlots 가 우선 사용).
    */
   place(name, x, y, opts = {}) {
     const o = this.obj(name);
@@ -109,16 +112,21 @@ class RoomBuilder {
         if (o.door) this.doors.push({ id: opts.doorId || `${name}@${tx},${ty}`, x: tx, y: ty, to: opts.to || null });
       }
     }
-    for (const s of o.seats || []) {
-      this.seats.push({ id: `seat-${this.seats.length}`, x: x + s.dx, y: y + s.dy, facing: s.facing, kind: name });
-    }
+    (o.seats || []).forEach((s, i) => {
+      const id = opts.seatIds && opts.seatIds[i] ? opts.seatIds[i] : `seat-${this.seats.length}`;
+      const seat = { id, x: x + s.dx, y: y + s.dy, facing: s.facing, kind: name };
+      if (opts.slots) seat.slots = opts.slots.map(([tx, ty]) => ({ tx, ty }));
+      this.seats.push(seat);
+    });
     this.placed.push({ name, x, y });
     return this;
   }
 
-  /** 조명 (타일 좌표, 반지름은 타일 단위). */
-  light(x, y, r = 2.5, color = 0xffb85c, intensity = 0.55) {
-    this.lights.push({ x: Math.round((x + 0.5) * TILE), y: Math.round((y + 0.5) * TILE), r: Math.round(r * TILE), color, intensity });
+  /** 조명 (타일 좌표, 반지름은 타일 단위). opts.pool = 펜던트 아래 바닥 빛 웅덩이의 y(타일) — 클라이언트가 바닥에 둥근 빛을 그린다 (15단계) */
+  light(x, y, r = 2.5, color = 0xffb85c, intensity = 0.55, opts = {}) {
+    const l = { x: Math.round((x + 0.5) * TILE), y: Math.round((y + 0.5) * TILE), r: Math.round(r * TILE), color, intensity };
+    if (opts.pool !== undefined) l.pool = Math.round(opts.pool * TILE);
+    this.lights.push(l);
     return this;
   }
 
@@ -172,6 +180,18 @@ class RoomBuilder {
     return this;
   }
 
+  /** 옛 좌석 id → 새 id (15단계 맵 개편: 옛 클라이언트·저장된 값이 옛 id 로 와도 앉을 수 있게) */
+  alias(oldId, newId) {
+    this.seatAliases[oldId] = newId;
+    return this;
+  }
+
+  /** 클라이언트가 동적으로 그리는 위치 (타일 단위, 소수 가능 → 픽셀). extra 는 그대로 실린다 */
+  anchor(id, x, y, extra = {}) {
+    this.anchors[id] = { x: Math.round(x * TILE), y: Math.round(y * TILE), ...extra };
+    return this;
+  }
+
   setSpawn(x, y) {
     this.spawn = { x: Math.round((x + 0.5) * TILE), y: Math.round((y + 1) * TILE) };
     return this;
@@ -199,6 +219,8 @@ class RoomBuilder {
       zones: this.zones,
       screens: this.screens,
       interactables: this.interactables,
+      seatAliases: this.seatAliases,
+      anchors: this.anchors,
       spawn: this.spawn,
       props: this.props,
       occupant: this.occupant,
@@ -210,6 +232,11 @@ class RoomBuilder {
 function isBlocked(room, tx, ty) {
   if (tx < 0 || ty < 0 || tx >= room.width || ty >= room.height) return true;
   return room.collision[ty][tx];
+}
+
+/** 좌석 id 정규화: 옛 id(별칭)면 새 id 로 (15단계) */
+function canonicalSeatId(room, seatId) {
+  return room.seatAliases && Object.prototype.hasOwnProperty.call(room.seatAliases, seatId) ? room.seatAliases[seatId] : seatId;
 }
 
 function seatAt(room, tx, ty) {
@@ -231,4 +258,4 @@ function occupantAt(room, tx, ty) {
   return i >= 0 ? room.props[i] : null;
 }
 
-module.exports = { RoomBuilder, TILES, TILE, FACING_DELTA, isBlocked, seatAt, doorAt, interactableById, occupantAt };
+module.exports = { RoomBuilder, TILES, TILE, FACING_DELTA, isBlocked, seatAt, doorAt, interactableById, occupantAt, canonicalSeatId };

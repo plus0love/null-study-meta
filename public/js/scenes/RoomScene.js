@@ -31,6 +31,9 @@
  *    아바타 클릭 → hooks.onProfile(id) · V 소환/해제(hooks.onMount) · H 경적(hooks.onHorn) · 탑승 중 물리(Vehicles.step: 방향키 8방향 가속, 관성·마찰,
  *    진행 방향은 차종별 회전 속도로 부드럽게, 반대 방향은 브레이크 후 출발, 충돌 튕김) →
  *    move 에 vehicle { type, angle, speed }. 남의 탈것은 playerMoved 의 vehicle(각도·속도)로 8방향 프레임을 맞춘다 (VehicleView).
+ * 15단계 실내: 가구 밑 반투명 타원 그림자(buildPropShadows) · 펜던트 아래 바닥 빛 웅덩이(light.pool) · 창밖 비(10%, setRain) ·
+ *    커피머신 김(anchors.steam) · 벽시계 초침(wall_clock 소품) · 어항 물결(FishNpc) · 문 명패(setNameplate) · 코르크보드 목표 팻말(syncCorkboard) ·
+ *    책상 위 쪽지/머그 아이콘(tiles 텍스처의 타일 프레임, setSeatNotes/setSeatMugs) · D-day 칠판(setDdays).
  */
 (function () {
   'use strict';
@@ -53,6 +56,10 @@
   const DAYLIGHT_TICK = 1000; // ms — 시간대 가중치 재계산 주기
   const CYCLE_MS = 400; // 물·분수 타일 순환 주기
   const BOARD_ROWS = 5;
+  const RAIN_CHANCE = 0.1; // 15단계: 방에 들어올 때 이 확률로 창밖에 비
+  const CLOCK_TICK = 1000;
+  // 가구 밑 그림자를 그리지 않는 오브젝트 (벽·유리·창·바닥에 붙은 것·의자·작은 소품)
+  const NO_SHADOW = /^(wall_|gpost_|glass_|door_open|window_|study_panel|entrance_wide|chalkboard|board_|music_panel|bookshelf_big|cabinet_printer|menu_board|whiteboard|sign_|hedge|bollard|bench$|corkboard|curtain_|cup_shelf|counter_|display_case|shelf_narrow|coffee_machine|cushion$|slippers|magazines|dog_bowl|dog_toy|cable_box|milk_crate|fire_ext|chair_|pouf_|note_icon|mug_|bean_shelf|projector|facade|kerb|grass|paver)/;
 
   // ── 아바타 (내 것/원격 공용 표시 요소) ────────────────────────────────
   class Avatar {
@@ -127,6 +134,32 @@
       this.rod = null;
       this.bang = null;
       this.setFishing(p.fishing || null);
+      this.coffeeBuffUntil = p.coffeeBuffUntil || null; // 15단계: 커피를 받으면 10분 동안 휴식 아이콘이 ❤️☕
+      this.refreshStatus();
+    }
+
+    /** 15단계: 커피 버프 (서버 ms). 만료는 tickBuff 가 1초마다 본다 */
+    setBuff(until) {
+      this.coffeeBuffUntil = until || null;
+      this.refreshStatus();
+    }
+
+    get buffed() {
+      return Boolean(this.coffeeBuffUntil && this.coffeeBuffUntil > this.scene.hooks.serverNow());
+    }
+
+    statusEmoji() {
+      if (this.status !== 'study' && this.buffed) return '❤️☕';
+      return STATUS_EMOJI[this.status] || '•';
+    }
+
+    refreshStatus() {
+      const t = this.statusEmoji();
+      if (this.statusBubble.bubbleText.text !== t) this.statusBubble.bubbleText.setText(t);
+    }
+
+    tickBuff() {
+      if (this.coffeeBuffUntil && !this.buffed) { this.coffeeBuffUntil = null; this.refreshStatus(); }
     }
 
     /** 14단계: 낚시 자세 — 낚싯대(선 + 찌) + 입질이면 머리 위 "!" */
@@ -511,7 +544,7 @@
 
     setStatus(s) {
       this.status = s;
-      this.statusBubble.bubbleText.setText(STATUS_EMOJI[s] || '•');
+      this.refreshStatus();
     }
 
     labelText() {
@@ -800,6 +833,7 @@
       if (this.bounce) this.bounceT += delta / 90;
       if (this.fly || this.glow || this.state === 'swim') { this.flyT += delta / (this.glow ? 700 : 260); if (!this.buffer.length) this.setPosition(this.x, this.y); if (this.glow) this.setNight(this.nightAlpha); }
       if (this.tankFish && this.tankFish.length) this.syncTank();
+      if (this.species === 'fish') this.tickRipple(delta);
       const buf = this.buffer;
       if (!buf.length) return;
       const rt = performance.now() - INTERP_DELAY;
@@ -810,6 +844,24 @@
         const k = Phaser.Math.Clamp((rt - s0.t) / (s1.t - s0.t), 0, 1);
         this.setPosition(s0.x + (s1.x - s0.x) * k, s0.y + (s1.y - s0.y) * k);
       } else this.setPosition(s0.x, s0.y);
+    }
+
+    /** 15단계: 어항 수면 물결 — 스프라이트 위쪽에 흔들리는 밝은 선 2개 */
+    tickRipple(delta) {
+      this.rippleT = (this.rippleT || 0) + delta / 1000;
+      if (!this.ripple) this.ripple = this.scene.add.graphics().setDepth(this.sprite.depth + 0.00004);
+      const g = this.ripple;
+      const t = this.rippleT;
+      const x = Math.round(this.x);
+      const y = Math.round(this.y) - 24;
+      g.clear();
+      g.setDepth(this.sprite.depth + 0.00004);
+      g.lineStyle(1, 0xdff4ff, 0.55);
+      for (let i = 0; i < 2; i++) {
+        const yy = y + i * 3 + Math.round(Math.sin(t * 2.2 + i) * 1.2);
+        const x0 = x - 6 + Math.round(Math.sin(t * 1.7 + i * 2) * 2);
+        g.lineBetween(x0, yy, x0 + 5, yy);
+      }
     }
 
     /** 14단계: 어항 물고기 (FishNpc 스냅샷 tank: [fishId]) — 어항 안에서 작은 물고기가 헤엄친다 */
@@ -876,6 +928,7 @@
       this.sprite.destroy();
       if (this.dot) this.dot.destroy();
       for (const t of this.tankFish || []) t.sprite.destroy();
+      if (this.ripple) this.ripple.destroy();
       this.shadow.destroy();
       this.nameText.destroy();
     }
@@ -924,6 +977,11 @@
       this.npcs = new Map();
       this.nearNpc = null;
       this.nearItem = null; // 가까운 상호작용 지점 (커피머신·음악 패널)
+      this.seatItemSprites = []; // 15단계: 책상 위 쪽지·머그 아이콘
+      this.seatItems = { mugs: {}, notes: {} };
+      this.myNotes = 0; // 내 자리에 놓인 안 읽은 쪽지 수 (앉아 있을 때 E = 읽기)
+      this.ddayTexts = [];
+      this.fireworkStyle = 'fireworks';
       this.screens = []; // { def, rect, line, glow, on }
       this.skies = [];
       this.zoneFx = [];
@@ -965,9 +1023,11 @@
       this.mapH = room.height * T;
 
       this.buildLayers();
+      if (!room.outdoor) this.buildPropShadows();
       this.buildSky();
       this.buildZones();
       this.buildLabels();
+      this.buildAnchors();
       this.buildLightTextures();
       this.buildPetAnims();
       this.buildAnimalAnims();
@@ -979,6 +1039,7 @@
       this.setupWindowTwinkle();
       this.setupTileCycles();
       if (room.outdoor) this.buildOutdoorFx();
+      else this.buildIndoorFx();
       this.applyDaylight(this.currentWeights(), true);
 
       // 카메라 2배 줌 → 타일은 정수 배로 또렷하고, 텍스트는 고해상도로 그려진다. 캔버스는 사이드바를 뺀 영역에 꽉 찬다(RESIZE).
@@ -1031,6 +1092,10 @@
       for (const n of ack.npcs || []) this.upsertNpc(n);
       this.syncScreens();
       this.furniture.syncSeated(this.seatOwners);
+      this.seatLast = { ...(ack.seatLast || {}) }; // 15단계: 좌석마다 마지막에 앉았던 닉네임
+      this.myNotes = 0;
+      this.setSeatItems(ack.seatItems || { mugs: {}, notes: {} });
+      this.syncCorkboard();
       const cam = this.cameras.main;
       cam.startFollow(this.me.sprite, true, 0.15, 0.15);
       cam.centerOn(this.me.x, this.me.y);
@@ -1258,6 +1323,7 @@
       this.seatOwners[d.seatId] = d.id;
       const a = this.avatarOf(d.id);
       if (!a) return;
+      if (this.seatLast) { for (const [k, v] of Object.entries(this.seatLast)) if (v === a.nickname) delete this.seatLast[k]; this.seatLast[d.seatId] = a.nickname; }
       const r = this.remotes.get(d.id);
       if (r) r.buffer = [];
       a.setWalking(false);
@@ -1267,6 +1333,7 @@
       a.setStatus(d.status);
       this.syncScreens();
       this.furniture.syncSeated(this.seatOwners);
+      this.syncCorkboard();
     }
 
     onStood(d) {
@@ -1279,6 +1346,7 @@
       a.setPosition(d.x, d.y);
       a.setStatus(d.status);
       if (a === this.me) this.lastSent = null;
+      this.syncCorkboard();
     }
 
     // ── 9단계: 가구 · 책상 소품 · 편집 모드 ─────────────────────────
@@ -1482,6 +1550,7 @@
     onGoal(d) {
       const a = this.avatarOf(d.id);
       if (a) a.setGoal(d.goal);
+      this.syncCorkboard();
     }
 
     /** 랭킹 통계(닉네임 → 오늘 누적 초)로 팻말 진행 바 갱신 */
@@ -1523,8 +1592,8 @@
     /** 머리 위 타이머 글자 (1초마다) */
     tickPomodoros() {
       const now = this.hooks.serverNow();
-      if (this.me) { this.me.tickPomo(now); this.me.tickSnack(now); }
-      for (const r of this.remotes.values()) { r.avatar.tickPomo(now); r.avatar.tickSnack(now); }
+      if (this.me) { this.me.tickPomo(now); this.me.tickSnack(now); this.me.tickBuff(); }
+      for (const r of this.remotes.values()) { r.avatar.tickPomo(now); r.avatar.tickSnack(now); r.avatar.tickBuff(); }
     }
 
     onAvatar(d) {
@@ -1620,7 +1689,7 @@
       if (me.fishing) return { kind: me.fishing.state === 'bite' ? 'reel' : 'reel', target: { id: 'reel' }, d: 0 }; // 14단계: 낚시 중엔 E = 낚아채기
       const T = this.T;
       const cands = [];
-      if (this.nearSeat) cands.push({ kind: HINT_KIND[this.nearSeat.kind] || 'sit', target: this.nearSeat, d: Math.hypot((this.nearSeat.x + 0.5) * T - me.x, (this.nearSeat.y + 1) * T - me.y) });
+      if (this.nearSeat) cands.push({ kind: this.seatActionKind(this.nearSeat), target: this.nearSeat, d: Math.hypot((this.nearSeat.x + 0.5) * T - me.x, (this.nearSeat.y + 1) * T - me.y) });
       if (this.nearNpc) cands.push({ kind: 'pet', target: this.nearNpc, d: Math.hypot(this.nearNpc.x - me.x, this.nearNpc.y - me.y) });
       if (this.nearItem) cands.push({ kind: this.nearItem.kind, target: this.nearItem, d: Math.hypot(this.nearItem.x - me.x, this.nearItem.y - me.y) });
       if (!cands.length) return null;
@@ -1721,20 +1790,39 @@
       return best;
     }
 
+    /** 15단계: 빈 좌석의 E 종류 — 남(멤버)의 자리면 '앉기 · 쪽지' 선택, 아니면 앉기/눕기/안마 */
+    seatActionKind(seat) {
+      const owner = this.seatLast && !this.room.outdoor ? this.seatLast[seat.id] : null;
+      if (owner && this.me && owner !== this.me.nickname && !this.seatOwners[seat.id]) return 'seatChoice';
+      return HINT_KIND[seat.kind] || 'sit';
+    }
+
+    /** 앉기 요청 (자리 선택 모달에서도 쓴다) */
+    sitAt(seatId) {
+      if (this.sitPending || !this.me || this.me.seated) return Promise.resolve();
+      // 앉기 요청 전에 마지막 위치를 보내고, 응답이 올 때까지는 위치 전송을 멈춘다 (착석 뒤 도착한 move 가 거부되지 않도록)
+      this.flushMove(false);
+      this.sitPending = true;
+      return Promise.resolve(this.hooks.onSit(seatId)).finally(() => { this.sitPending = false; });
+    }
+
+    /** 15단계: 내 자리에 놓인 쪽지 수 (앉아 있으면 E = 읽기) */
+    setMyNotes(n) {
+      this.myNotes = Number(n) || 0;
+      if (this.me && this.me.seated) this.hooks.onInteract(this.myNotes > 0 ? 'read' : 'stand');
+    }
+
     toggleSeat() {
       if (!this.me) return;
-      if (this.me.seated) return this.hooks.onStand();
+      if (this.me.seated) return this.myNotes > 0 ? this.hooks.onReadNote() : this.hooks.onStand();
       const pick = this.pickTarget();
       if (!pick) return;
       if (pick.kind === 'pet') return this.hooks.onPet(pick.target.id);
-      if (pick.kind === 'sit' || pick.kind === 'lie' || pick.kind === 'massage') {
-        if (this.sitPending) return;
-        // 앉기 요청 전에 마지막 위치를 보내고, 응답이 올 때까지는 위치 전송을 멈춘다 (착석 뒤 도착한 move 가 거부되지 않도록)
+      if (pick.kind === 'seatChoice') {
         this.flushMove(false);
-        this.sitPending = true;
-        Promise.resolve(this.hooks.onSit(pick.target.id)).finally(() => { this.sitPending = false; });
-        return;
+        return this.hooks.onSeatChoice(pick.target, this.seatLast[pick.target.id]);
       }
+      if (pick.kind === 'sit' || pick.kind === 'lie' || pick.kind === 'massage') return this.sitAt(pick.target.id);
       // 커피머신·음악 패널: 서버가 거리를 확인하므로 마지막 위치를 먼저 보낸다
       this.flushMove(false);
       this.hooks.onUse(pick.kind, pick.target.id);
@@ -1782,6 +1870,8 @@
       this.updateRemotes();
       for (const n of this.npcs.values()) n.update(delta);
       this.tickCycles(delta);
+      if (this.rain) this.tickRain(delta);
+      if (this.clocks) this.tickClocks(delta);
       if (this.clouds) this.tickClouds(dt);
       if (this.room.outdoor) this.tickShootingStars(delta);
       this.pomoAcc += delta;
@@ -2104,7 +2194,8 @@
     }
 
     /** 11단계: 창밖 불꽃놀이 (ms 동안). 이미 진행 중이면 시간만 늘린다. 실제 시각(Date.now) 기준으로 update() 가 굴린다 */
-    celebrate(ms = 10000) {
+    celebrate(ms = 10000, style = 'fireworks') {
+      this.fireworkStyle = style === 'hearts' ? 'hearts' : 'fireworks';
       const until = Date.now() + ms;
       this.celebrateUntil = Math.max(this.celebrateUntil || 0, until);
       if (!this.fireworks) this.fireworks = [];
@@ -2140,7 +2231,9 @@
     spawnFirework(cx, cy) {
       if (!this.fireworks) this.fireworks = [];
       const pick = () => FIREWORK_COLORS[Math.floor(Math.random() * FIREWORK_COLORS.length)];
-      const f = { g: this.add.graphics().setDepth(DEPTH.fireworks), cx, cy, color: pick(), color2: pick(), radius: 14 + Math.random() * 8, spin: Math.random() * Math.PI, startedAt: Date.now() };
+      const hearts = this.fireworkStyle === 'hearts';
+      const heartPick = () => [0xff8a9a, 0xf2a0d6, 0xffb3c6, 0xff6f8e][Math.floor(Math.random() * 4)];
+      const f = { g: this.add.graphics().setDepth(DEPTH.fireworks), cx, cy, color: hearts ? heartPick() : pick(), color2: hearts ? 0xfff0f5 : pick(), radius: 14 + Math.random() * 8, spin: Math.random() * Math.PI, startedAt: Date.now(), style: this.fireworkStyle };
       this.fireworks.push(f);
       this.drawFirework(f, 0);
       return f;
@@ -2153,6 +2246,20 @@
       const a = t < 0.55 ? 1 : 1 - (t - 0.55) / 0.45; // 밝게 머물다 마지막에 사라짐
       const drop = t * t * 8; // 끝에서 살짝 떨어진다
       if (t < 0.25) { g.fillStyle(0xffffff, 1); g.fillRect(Math.round(f.cx) - 2, Math.round(f.cy) - 2, 4, 4); }
+      if (f.style === 'hearts') {
+        // 하트 폭죽: 하트 곡선 위의 점 20개가 퍼진다 (기념일)
+        g.fillStyle(f.color, a);
+        const s = (f.radius * k) / 17;
+        for (let i = 0; i < 20; i++) {
+          const th = (i / 20) * Math.PI * 2;
+          const hx = 16 * Math.sin(th) ** 3;
+          const hy = -(13 * Math.cos(th) - 5 * Math.cos(2 * th) - 2 * Math.cos(3 * th) - Math.cos(4 * th));
+          g.fillRect(Math.round(f.cx + hx * s) - 1, Math.round(f.cy + hy * s + drop) - 1, 3, 3);
+        }
+        g.fillStyle(f.color2, a * 0.9);
+        g.fillRect(Math.round(f.cx) - 1, Math.round(f.cy + drop * 0.5) - 1, 2, 2);
+        return;
+      }
       g.fillStyle(f.color, a);
       for (let i = 0; i < 16; i++) {
         const ang = f.spin + (i / 16) * Math.PI * 2;
@@ -2171,6 +2278,258 @@
       const k = (this.glowScale || 1) * (1 + this.fx.flash * 1.4);
       for (const g of this.glows || []) g.setAlpha(g.baseAlpha * k);
       if (this.windowFlash) this.windowFlash.setAlpha(this.fx.flash * 0.35);
+    }
+
+    // ── 15단계 실내 밀도: 가구 그림자 · 비 · 김 · 시계 · 어항 물결 ─────────────────────────
+    /** 바닥이 아닌 오브젝트(벽·유리·의자·작은 소품 제외) 밑에 반투명 타원 그림자 (바닥 위, 가구 아래) */
+    buildPropShadows() {
+      const T = this.T;
+      this.propShadows = []; // { x, y, w, h } (그리기는 Graphics 하나 — 오브젝트 수십 개를 따로 만들지 않는다)
+      const g = this.add.graphics().setDepth(0.85);
+      g.fillStyle(0x000000, 0.2);
+      for (const p of this.room.props || []) {
+        if (p.y <= 2 || NO_SHADOW.test(p.name)) continue;
+        const o = this.tilesMeta.objects[p.name];
+        if (!o || o.layer !== 'furniture') continue;
+        const h = o.h - (o.top || 0);
+        if (h <= 0) continue;
+        const w = o.w * T;
+        const sh = { x: p.x * T + w / 2, y: (p.y + o.h) * T - 3, w: Math.max(20, w * 0.92), h: Math.min(14, 6 + h * 3) };
+        g.fillEllipse(sh.x, sh.y, sh.w, sh.h);
+        this.propShadows.push(sh);
+      }
+      this.propShadowGfx = g;
+    }
+
+    /** 실내 연출: 창밖 비(10%) · 커피머신 김 · 벽시계 초침 · 어항 물결 위치 */
+    buildIndoorFx() {
+      this.rain = null;
+      this.rainDrops = [];
+      this.setRain(Math.random() < RAIN_CHANCE);
+      this.buildSteam();
+      this.buildClocks();
+    }
+
+    /** 창밖 빗줄기만 (하늘 위, 창틀 뒤). on 으로 강제 (설정·스크린샷) */
+    setRain(on) {
+      const want = Boolean(on) && (this.room.windows || []).length > 0;
+      if (this.rain && !want) { this.rain.destroy(); this.rain = null; this.rainDrops = []; return; }
+      if (!want || this.rain) return;
+      this.rain = this.add.graphics().setDepth(DEPTH.stars + 0.05);
+      this.rainDrops = [];
+      for (const w of this.room.windows) {
+        const n = Math.max(6, Math.round(w.w / 10));
+        for (let i = 0; i < n; i++) this.rainDrops.push({ win: w, x: w.x + Math.random() * w.w, y: w.y + Math.random() * w.h, len: 5 + Math.random() * 6, v: 90 + Math.random() * 60 });
+      }
+      this.rainAcc = 0;
+      this.tickRain(0, true);
+    }
+
+    get raining() {
+      return Boolean(this.rain);
+    }
+
+    tickRain(delta, force = false) {
+      this.rainAcc += delta;
+      if (!force && this.rainAcc < 40) return;
+      const dt = this.rainAcc / 1000;
+      this.rainAcc = 0;
+      const g = this.rain;
+      g.clear();
+      g.lineStyle(1, 0xdfe9f5, 0.38);
+      for (const d of this.rainDrops) {
+        d.y += d.v * dt;
+        d.x -= d.v * dt * 0.12;
+        if (d.y > d.win.y + d.win.h) { d.y = d.win.y - d.len; d.x = d.win.x + Math.random() * d.win.w; }
+        if (d.x < d.win.x) d.x += d.win.w;
+        const x0 = Math.round(d.x);
+        const y0 = Math.round(d.y);
+        g.lineBetween(x0, y0, x0 - 1, Math.min(d.win.y + d.win.h, y0 + d.len));
+      }
+    }
+
+    /** 커피머신 김: 작은 흰 점이 올라가며 퍼져 사라진다 (상시) */
+    buildSteam() {
+      const a = (this.room.anchors || {}).steam;
+      if (!a) return;
+      if (!this.textures.exists('steam')) {
+        const tex = this.textures.createCanvas('steam', 8, 8);
+        const ctx = tex.getContext();
+        const g = ctx.createRadialGradient(4, 4, 0, 4, 4, 4);
+        g.addColorStop(0, 'rgba(255,255,255,0.9)');
+        g.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, 8, 8);
+        tex.refresh();
+      }
+      this.steam = this.add.particles(a.x, a.y, 'steam', {
+        speedX: { min: -4, max: 4 }, speedY: { min: -18, max: -9 },
+        lifespan: { min: 1100, max: 1600 }, frequency: 240, quantity: 1,
+        scale: { start: 0.5, end: 1.3 }, alpha: { start: 0.42, end: 0 },
+      }).setDepth(2.6);
+    }
+
+    /** 벽시계 초침: wall_clock 소품마다 시계 면 가운데에서 1초마다 도는 붉은 바늘 */
+    buildClocks() {
+      this.clocks = [];
+      const T = this.T;
+      for (const p of this.room.props || []) {
+        if (p.name !== 'wall_clock') continue;
+        const cx = p.x * T + 16; // 시계 면 중심 (논리 8,11 → 2배)
+        const cy = p.y * T + 22;
+        const g = this.add.graphics().setDepth(1.3);
+        this.clocks.push({ cx, cy, g });
+      }
+      this.clockAcc = CLOCK_TICK;
+      if (this.clocks.length) this.tickClocks(0);
+    }
+
+    tickClocks(delta) {
+      this.clockAcc += delta;
+      if (this.clockAcc < CLOCK_TICK) return;
+      this.clockAcc = 0;
+      const sec = Math.floor(this.hooks.serverNow() / 1000) % 60;
+      const ang = (sec / 60) * Math.PI * 2 - Math.PI / 2;
+      for (const c of this.clocks) {
+        c.g.clear();
+        c.g.lineStyle(1, 0xe2605e, 1);
+        c.g.lineBetween(c.cx, c.cy, Math.round(c.cx + Math.cos(ang) * 7), Math.round(c.cy + Math.sin(ang) * 7));
+      }
+    }
+
+    // ── 15단계: 책상 위 쪽지·머그 아이콘 · D-day 칠판 · 커피 버프 ─────────────────────────
+    /** 타일 아틀라스의 오브젝트(1x1)를 스프라이트 프레임으로 (없으면 만든다) */
+    tileFrame(name) {
+      const o = this.tilesMeta.objects[name];
+      if (!o) return null;
+      const idx = o.tiles[0][0];
+      const key = `tile:${idx}`;
+      const tex = this.textures.get('tiles');
+      if (!tex.has(key)) {
+        const cols = this.tilesMeta.columns;
+        tex.add(key, 0, (idx % cols) * this.T, Math.floor(idx / cols) * this.T, this.T, this.T);
+      }
+      return key;
+    }
+
+    /** 좌석 앞 책상 칸 i (책상이 없으면 좌석이 보는 방향 앞 칸) */
+    itemSpot(seat, i) {
+      const slots = Layout.deskSlots(this.room, seat);
+      if (slots[i]) return slots[i];
+      if (slots.length) return slots[slots.length - 1];
+      const d = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] }[seat.facing] || [0, 1];
+      return { tx: seat.x + d[0], ty: seat.y + d[1] };
+    }
+
+    /** 서버 seatItems { mugs: { seatId: [{ menu, from, to }] }, notes: { seatId: n } } → 책상 위 아이콘 */
+    setSeatItems(items) {
+      this.seatItems = items || { mugs: {}, notes: {} };
+      for (const s of this.seatItemSprites) s.destroy();
+      this.seatItemSprites = [];
+      const T = this.T;
+      const put = (seat, i, frameName, dx = 0) => {
+        const key = this.tileFrame(frameName);
+        if (!key) return;
+        const spot = this.itemSpot(seat, i);
+        const sp = this.add.sprite(spot.tx * T + T / 2 + dx, (spot.ty + 1) * T, 'tiles', key).setOrigin(0.5, 1).setDepth(DEPTH.avatar + ((spot.ty + 1) * T) / this.mapH + 0.0004);
+        this.seatItemSprites.push(sp);
+      };
+      for (const [seatId, list] of Object.entries(this.seatItems.mugs || {})) {
+        const seat = this.seatById(seatId);
+        if (!seat) continue;
+        list.slice(0, 2).forEach((m, i) => put(seat, 1 + i, `mug_${m.menu}`, i ? 6 : 0));
+      }
+      for (const [seatId, n] of Object.entries(this.seatItems.notes || {})) {
+        const seat = this.seatById(seatId);
+        if (seat && n > 0) put(seat, 0, 'note_icon');
+      }
+      if (this.me && this.me.seated && this.me.seat) this.setMyNotes(this.seatItems.notes[this.me.seat.id] || 0);
+    }
+
+    /** 내 자리에 쪽지가 있다 (note:waiting) */
+    onNoteWaiting(d) {
+      this.setMyNotes(d && d.notes ? d.notes.length : 0);
+    }
+
+    /** playerBuff → ❤️☕ */
+    onBuff(d) {
+      const a = this.avatarOf(d.id);
+      if (a) a.setBuff(d.coffeeBuffUntil || null);
+    }
+
+    /** D-day 칠판 목록 (anchors.dday 오른쪽 아래, 최대 3줄. D-7 이하는 강조색) */
+    setDdays(board) {
+      for (const t of this.ddayTexts) t.destroy();
+      this.ddayTexts = [];
+      const a = (this.room.anchors || {}).dday;
+      if (!a) return;
+      const rows = (board || []).slice(0, a.lines || 3);
+      rows.forEach((d, i) => {
+        const color = d.today ? '#ff8a7a' : d.soon ? '#ffd08a' : '#d9cfbf';
+        const t = this.add.text(a.x, a.y + i * 10, `${d.label} ${d.title}`, { fontFamily: FONTS.hand, fontSize: '10px', color, resolution: ZOOM }).setOrigin(1, 0.5).setDepth(5);
+        this.ddayTexts.push(t);
+      });
+    }
+
+    get ddayLines() {
+      return this.ddayTexts.map((t) => t.text);
+    }
+
+    // ── 15단계: 앵커에 동적으로 그리는 것 — 문 명패(스터디 설정) · 코르크보드 목표 팻말 2장 ────────
+    buildAnchors() {
+      const a = this.room.anchors || {};
+      this.nameplateText = null;
+      this.corkNotes = [];
+      if (a.nameplate) {
+        this.nameplateText = this.add.text(a.nameplate.x, a.nameplate.y, this.nameplate || '', { fontFamily: FONTS.sans, fontSize: '9px', fontStyle: 'bold', color: '#efe6d6', align: 'center', resolution: ZOOM, wordWrap: { width: 60, useAdvancedWrap: true } }).setOrigin(0.5, 0.5).setDepth(5);
+        this.nameplateText.setLineSpacing(2);
+        this.nameplateText.setLetterSpacing(0.5);
+        this.setNameplate(this.nameplate || '');
+      }
+      if (a.corkboard) {
+        const seats = a.corkboard.seats || [];
+        seats.forEach((seatId, i) => {
+          const x = a.corkboard.x + (i - (seats.length - 1) / 2) * 40;
+          const y = a.corkboard.y;
+          const paper = this.add.graphics().setDepth(5);
+          const t = this.add.text(x, y, '', { fontFamily: FONTS.hand, fontSize: '9px', color: '#3b2f22', align: 'center', resolution: ZOOM, wordWrap: { width: 34, useAdvancedWrap: true } }).setOrigin(0.5, 0.5).setDepth(5.1);
+          this.corkNotes.push({ seatId, x, y, paper, text: t, value: null });
+        });
+        this.syncCorkboard();
+      }
+    }
+
+    /** 문 명패 글자 (방장 설정 roomLabel, 기본은 스터디 이름). 두 줄까지 */
+    setNameplate(text) {
+      this.nameplate = String(text || '');
+      if (!this.nameplateText) return;
+      const s = this.nameplate.length > 12 ? `${this.nameplate.slice(0, 12)}…` : this.nameplate;
+      this.nameplateText.setText(s ? `${s}` : '');
+    }
+
+    /** 코르크보드: 두 의자(study-a/b)에 앉은(또는 마지막에 앉았던) 사람의 오늘 목표를 팻말 2장에 나란히 */
+    syncCorkboard() {
+      if (!this.corkNotes || !this.corkNotes.length) return;
+      for (const n of this.corkNotes) {
+        const ownerId = this.seatOwners[n.seatId];
+        let av = ownerId ? this.avatarOf(ownerId) : null;
+        if (!av && this.seatLast && this.seatLast[n.seatId]) av = this.allAvatars().find((x) => x.nickname === this.seatLast[n.seatId]) || null;
+        const goal = av && av.goal ? (av.goal.text || (av.goal.targetMinutes ? `${av.goal.targetMinutes}분` : '')) : '';
+        const label = av ? `${av.nickname.slice(0, 5)}\n${goal || '·'}` : '';
+        if (label === n.value) continue;
+        n.value = label;
+        n.text.setText(label);
+        n.paper.clear();
+        if (!label) continue;
+        const w = 36;
+        const h = Math.max(18, Math.ceil(n.text.height) + 6);
+        n.paper.fillStyle(0xfff7e0, 1);
+        n.paper.fillRect(n.x - w / 2, n.y - h / 2, w, h);
+        n.paper.lineStyle(1, 0xd8c9a6, 1);
+        n.paper.strokeRect(n.x - w / 2, n.y - h / 2, w, h);
+        n.paper.fillStyle(0xe2605e, 1);
+        n.paper.fillRect(n.x - 1, n.y - h / 2 - 1, 3, 3);
+      }
     }
 
     // ── 보드/표지판 글자 (웹폰트) ───────────────────────────────────
@@ -2331,6 +2690,7 @@
       // 2) 앰버 글로우 (가산) — baseAlpha 에 시간대 배율(glowScale)과 뽀모도로 플래시를 곱한다
       this.glows = [];
       this.glowScale = (this.ambient && this.ambient.glow) || 1;
+      this.pools = [];
       for (const l of lights) {
         const g = this.add.image(l.x, l.y, 'glow')
           .setScale((l.r * 2.2) / 256)
@@ -2339,6 +2699,14 @@
         g.baseAlpha = l.intensity * 0.5;
         g.setAlpha(g.baseAlpha * this.glowScale);
         this.glows.push(g);
+        if (l.pool !== undefined) {
+          // 15단계: 펜던트 아래 바닥의 둥근 빛 웅덩이 (바닥 위 · 가구 아래, 납작한 타원)
+          const p = this.add.image(l.x, l.pool, 'glow').setScale((l.r * 1.9) / 256, (l.r * 0.9) / 256).setBlendMode(Phaser.BlendModes.ADD).setDepth(0.95);
+          p.baseAlpha = l.intensity * 0.42;
+          p.setAlpha(p.baseAlpha * this.glowScale);
+          this.glows.push(p);
+          this.pools.push(p);
+        }
         this.tweens.add({
           targets: g,
           baseAlpha: { from: l.intensity * 0.4, to: l.intensity * 0.55 },

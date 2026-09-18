@@ -18,6 +18,7 @@
  *    weeklyGoalReached / recordWeeklyGoal / claimRewards (그룹 목표 보너스, 오프라인 멤버는 다음 접속 때)
  *    attendanceDates (그룹 스트릭) · migrateLegacy (study_id 없는 가구·펫 행을 첫 스터디로)
  *  12단계 야외: users.vehicleConfig / statsPublic · addTrackRecord / trackTop({ scope: 'today'|'all' }) / trackBest / hasLapToday (track_records)
+ *  15단계: notes(addNote / unreadNotes / markNotesRead / listNotes) · coffee_gifts(addCoffeeGift / pendingGifts / markGiftReceived) · ddays(addDday / listDdays / deleteDday)
  */
 const { DEFAULT_TZ, dateKey, weekStart, streakOf, totalsOf } = require('./stats');
 
@@ -25,7 +26,7 @@ function createMemoryStore() {
   const users = new Map(); // nickname → { nickname, avatar, dogName, coins, coinCarrySeconds, deskItems, layoutLock, createdAt, updatedAt }
   const layout = []; // { id, studyId, roomId, itemId, inventoryId, x, y, rotation, meta, placedBy, placedAt } — 스터디에 놓인 공용 가구
   const roomPets = []; // { id, studyId, roomId, itemId, inventoryId, name, releasedBy, releasedAt, cosmetics, skills } — 공용 펫 (+ 강아지 설정 행)
-  const studies = new Map(); // id → { id, code, name, passwordHash, ownerNickname, maxPlayers, weeklyGoalMinutes, editPolicy, passwordChangedAt, createdAt, lastActiveAt }
+  const studies = new Map(); // id → { id, code, name, passwordHash, ownerNickname, maxPlayers, weeklyGoalMinutes, editPolicy, roomLabel, passwordChangedAt, createdAt, lastActiveAt }
   const members = []; // { studyId, nickname, joinedAt, lastSeenAt } — 소속(표시용)
   const access = []; // { id, studyId, tokenHash, nickname, createdAt, lastUsedAt } — 비밀번호를 맞춘 기기의 토큰 해시
   const rewards = []; // { id, studyId, weekStart, nickname, createdAt, awardedAt } — 그룹 목표 보너스 (awardedAt null = 아직 못 받음)
@@ -38,6 +39,9 @@ function createMemoryStore() {
   const trackRecords = []; // { id, nickname, studyId, vehicle, ms, createdAt } — 12단계 트랙 랩 기록
   const fishCatches = []; // { id, nickname, fishId, caughtAt } — 14단계 낚시
   const constellationViews = []; // { nickname, constId, seenAt } — 14단계 별자리 (닉네임+별자리마다 첫 관측 1행)
+  const notes = []; // { id, studyId, fromNickname, toNickname, seatId, text, createdAt, readAt } — 15단계 쪽지
+  const coffeeGifts = []; // { id, studyId, fromNickname, toNickname, seatId, menu, createdAt, receivedAt } — 15단계 커피 배달
+  const ddays = []; // { id, studyId|null, nickname, title, date, kind, createdAt } — 15단계 D-day (studyId 있으면 스터디 공용)
   let seq = 1;
 
   const ensureUser = (nickname, now = Date.now()) => {
@@ -294,7 +298,7 @@ function createMemoryStore() {
       return null;
     },
     async createStudy({ code, name, passwordHash = null, ownerNickname = null, maxPlayers = 8, weeklyGoalMinutes = 1200, editPolicy = 'anyone' }, now = Date.now()) {
-      const s = { id: seq++, code: String(code).toUpperCase(), name, passwordHash, ownerNickname, maxPlayers, weeklyGoalMinutes, editPolicy, passwordChangedAt: passwordHash ? now : null, createdAt: now, lastActiveAt: now };
+      const s = { id: seq++, code: String(code).toUpperCase(), name, passwordHash, ownerNickname, maxPlayers, weeklyGoalMinutes, editPolicy, roomLabel: null, passwordChangedAt: passwordHash ? now : null, createdAt: now, lastActiveAt: now };
       studies.set(s.id, s);
       return { ...s };
     },
@@ -302,7 +306,7 @@ function createMemoryStore() {
     async updateStudy(id, patch = {}, now = Date.now()) {
       const s = studies.get(Number(id));
       if (!s) return null;
-      for (const k of ['name', 'ownerNickname', 'maxPlayers', 'weeklyGoalMinutes', 'editPolicy']) if (patch[k] !== undefined) s[k] = patch[k];
+      for (const k of ['name', 'ownerNickname', 'maxPlayers', 'weeklyGoalMinutes', 'editPolicy', 'roomLabel']) if (patch[k] !== undefined) s[k] = patch[k];
       if (patch.passwordHash !== undefined) {
         s.passwordHash = patch.passwordHash;
         s.passwordChangedAt = now;
@@ -317,6 +321,7 @@ function createMemoryStore() {
       for (let i = layout.length - 1; i >= 0; i--) if (layout[i].studyId === sid) layout.splice(i, 1);
       for (let i = roomPets.length - 1; i >= 0; i--) if (roomPets[i].studyId === sid) roomPets.splice(i, 1);
       for (let i = rewards.length - 1; i >= 0; i--) if (rewards[i].studyId === sid) rewards.splice(i, 1);
+      for (const arr of [notes, coffeeGifts, ddays]) for (let i = arr.length - 1; i >= 0; i--) if (arr[i].studyId === sid) arr.splice(i, 1);
       return true;
     },
     async touchStudy(id, now = Date.now()) {
@@ -479,6 +484,65 @@ function createMemoryStore() {
       if (!row) return null;
       row.tank = Array.isArray(tank) ? tank.map((t) => ({ ...t })) : [];
       return row.tank.map((t) => ({ ...t }));
+    },
+
+    // ── 쪽지 · 커피 배달 · D-day (15단계) ────────────────────────────
+    async addNote({ studyId, from, to, seatId = null, text }, now = Date.now()) {
+      ensureUser(from, now);
+      const n = { id: seq++, studyId: studyId ?? null, fromNickname: from, toNickname: to, seatId, text, createdAt: now, readAt: null };
+      notes.push(n);
+      return { ...n };
+    },
+    /** 받은 사람의 안 읽은 쪽지 (오래된 것부터). studyId 를 주면 그 스터디 것만 */
+    async unreadNotes(to, studyId) {
+      return notes.filter((n) => n.toNickname === to && !n.readAt && (studyId === undefined || n.studyId === (studyId ?? null))).map((n) => ({ ...n }));
+    },
+    /** ids 의 쪽지를 읽음 처리 (받은 사람 것만). 반환: 바뀐 행 */
+    async markNotesRead(to, ids, now = Date.now()) {
+      const want = new Set(ids.map(Number));
+      const out = [];
+      for (const n of notes) if (n.toNickname === to && want.has(n.id) && !n.readAt) { n.readAt = now; out.push({ ...n }); }
+      return out;
+    },
+    /** 쪽지함: 받은/보낸 최근 limit 개 (새 것부터) */
+    async listNotes(nickname, { studyId, limit = 20 } = {}) {
+      const mine = (n) => studyId === undefined || n.studyId === (studyId ?? null);
+      const received = notes.filter((n) => n.toNickname === nickname && mine(n)).slice(-limit).reverse().map((n) => ({ ...n }));
+      const sent = notes.filter((n) => n.fromNickname === nickname && mine(n)).slice(-limit).reverse().map((n) => ({ ...n }));
+      return { received, sent };
+    },
+    async addCoffeeGift({ studyId, from, to, seatId = null, menu, receivedAt = null }, now = Date.now()) {
+      ensureUser(from, now);
+      const g = { id: seq++, studyId: studyId ?? null, fromNickname: from, toNickname: to, seatId, menu, createdAt: now, receivedAt };
+      coffeeGifts.push(g);
+      return { ...g };
+    },
+    /** 아직 못 받은 커피 (to 를 주면 그 사람 것만) */
+    async pendingGifts(studyId, to) {
+      return coffeeGifts.filter((g) => g.studyId === (studyId ?? null) && !g.receivedAt && (to === undefined || g.toNickname === to)).map((g) => ({ ...g }));
+    },
+    async markGiftReceived(id, now = Date.now()) {
+      const g = coffeeGifts.find((x) => x.id === Number(id));
+      if (!g) return null;
+      g.receivedAt = now;
+      return { ...g };
+    },
+    async addDday({ studyId = null, nickname, title, date, kind }, now = Date.now()) {
+      ensureUser(nickname, now);
+      const d = { id: seq++, studyId: studyId ?? null, nickname, title, date, kind, createdAt: now };
+      ddays.push(d);
+      return { ...d };
+    },
+    /** 내 개인 D-day(studyId null) + 이 스터디 공용 D-day */
+    async listDdays(nickname, studyId) {
+      return ddays.filter((d) => (d.studyId === null && d.nickname === nickname) || (studyId !== undefined && studyId !== null && d.studyId === studyId)).map((d) => ({ ...d }));
+    },
+    /** 만든 사람만 지운다 */
+    async deleteDday(id, nickname) {
+      const i = ddays.findIndex((d) => d.id === Number(id) && d.nickname === nickname);
+      if (i < 0) return false;
+      ddays.splice(i, 1);
+      return true;
     },
 
     // ── 기록 초기화 (7단계) ───────────────────────────────────────────

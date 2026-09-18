@@ -24,6 +24,16 @@ def floor_plank(variant=0, seam=None):
     grain = {0: [(1, 5, 9), (8, 10, 14), (3, 12, 6)], 1: [(0, 4, 5), (7, 9, 15), (10, 12, 13)], 2: [(2, 6, 12), (0, 11, 4), (9, 3, 15)]}[variant % 3]
     for x0, y, x1 in grain:
         c.hline(x0, x1, y, dk + "60")
+    # 15단계: 결 변주 — 톤마다 다른 옹이(작은 타원)·짧은 결·밝은 줄
+    extra = {0: [("knot", 11, 7), ("short", 2, 3, 5), ("light", 9, 12, 13)], 1: [("short", 12, 6, 15), ("light", 1, 8, 6), ("short", 4, 13, 8)], 2: [("knot", 3, 9), ("light", 7, 2, 12), ("short", 11, 13, 14)]}[variant % 3]
+    for e in extra:
+        if e[0] == "knot":
+            c.ellipse(e[1] - 1, e[2] - 1, 4, 3, dk + "70")
+            c.px(e[1], e[2], dk + "b0")
+        elif e[0] == "short":
+            c.hline(e[1], e[3], e[2], dk + "45")
+        else:
+            c.hline(e[1], e[3], e[2], hi + "70")
     if seam is not None:
         c.vline(seam, 0, 15, dk)
         c.vline(seam + 1, 1, 14, hi + "a0")
@@ -204,6 +214,14 @@ def sofa_wide(w=6, h=2):
         c.rect(cx + 1, 4, 11, 11, mid)
         c.rect(cx + 3, 6, 5, 3, hi)
         c.px(cx + 6, 9, dk)
+    # 15단계: 왼팔에 걸친 담요 (세이지)
+    c.rect(0, 8, 10, 13, "#4f6a45")
+    c.rect(1, 7, 9, 13, "#6b8a5e")
+    for y in range(8, 19, 3):
+        c.hline(2, 8, y, "#8aa585")
+    c.hline(1, 9, 19, "#3b5234")
+    for x in range(1, 10, 2):
+        c.px(x, 20, "#d3ddc0")
     c.rect(2, H - 4, W - 4, 2, "#00000030")
     return c
 
@@ -220,6 +238,14 @@ def round_table(w=4, h=2):
     c.rect(35, 11, 7, 4, "#7fa4c4")
     c.px(36, 12, "#e8eef7")
     deco(c, "cup", 27, 14)
+    # 15단계: 책 (버건디, 펼쳐진 페이지) · 리모컨
+    c.rect(8, 11, 8, 6, "#8c4a4f")
+    c.rect(9, 12, 6, 4, "#f5efe3")
+    c.vline(12, 12, 15, "#d8d3cc")
+    c.rect(46, 9, 3, 8, "#3b3540")
+    c.px(47, 10, "#e2605e")
+    c.px(47, 12, "#b9b6b3")
+    c.px(47, 14, "#b9b6b3")
     return c
 
 

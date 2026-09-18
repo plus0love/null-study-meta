@@ -58,8 +58,11 @@ test('스폰 위치는 통과 가능', () => {
   assert.ok(!isBlocked(room, tx, ty));
 });
 
-test('의자/푸프/소파 좌석 18개, 모두 통과 가능', () => {
-  assert.equal(room.seats.length, 18);
+test('의자/푸프/소파 좌석 20개 (2인 스터디룸 의자 2 + 2인 소파 2), 모두 통과 가능, 옛 좌석 id 별칭', () => {
+  assert.equal(room.seats.length, 20);
+  assert.deepEqual(room.seats.filter((s) => s.id.startsWith('study')).map((s) => [s.id, s.x, s.y, s.kind]), [['study-a', 21, 14, 'chair_n'], ['study-b', 23, 14, 'chair_n'], ['study-sofa-a', 29, 18, 'sofa_love'], ['study-sofa-b', 30, 18, 'sofa_love']]);
+  assert.deepEqual(room.seatAliases, { 'study1-l': 'study-l', 'seat-8': 'study-a', 'seat-9': 'study-b' }, '옛 방 A/B 의자 id 는 별칭으로 남는다');
+  assert.deepEqual(room.seats.find((s) => s.id === 'study-a').slots, [{ tx: 20, ty: 12 }, { tx: 20, ty: 13 }, { tx: 19, ty: 13 }]);
   for (const s of room.seats) assert.ok(!isBlocked(room, s.x, s.y), `좌석 ${s.id} (${s.x},${s.y})`);
   const facings = new Set(room.seats.map((s) => s.facing));
   for (const f of facings) assert.ok(['up', 'down', 'left', 'right'].includes(f));
@@ -67,15 +70,13 @@ test('의자/푸프/소파 좌석 18개, 모두 통과 가능', () => {
 
 test('유리문·입구는 통과 가능, 유리벽은 통과 불가', () => {
   for (const d of room.doors) assert.ok(!isBlocked(room, d.x, d.y), `문 ${d.id}`);
-  assert.ok(room.doors.some((d) => d.id === 'study1-l'));
-  assert.ok(room.doors.some((d) => d.id === 'study2-r'));
+  assert.ok(room.doors.some((d) => d.id === 'study-l'));
+  assert.ok(room.doors.some((d) => d.id === 'study-r'));
   assert.ok(room.doors.some((d) => d.id === 'entrance'));
-  // 스터디룸 A 의 좌우 유리벽
+  // 2인 스터디룸의 좌우 유리벽
   for (let y = 12; y <= 20; y++) {
-    assert.ok(isBlocked(room, 11, y));
-    assert.ok(isBlocked(room, 20, y));
-    assert.ok(isBlocked(room, 25, y));
-    assert.ok(isBlocked(room, 34, y));
+    assert.ok(isBlocked(room, 12, y));
+    assert.ok(isBlocked(room, 33, y));
   }
 });
 
@@ -86,9 +87,10 @@ test('스폰에서 모든 좌석·문·바깥까지 걸어서 도달 가능', ()
   for (const s of room.seats) assert.ok(reach.has(`${s.x},${s.y}`), `좌석 ${s.kind} (${s.x},${s.y}) 도달 불가`);
   for (const d of room.doors) assert.ok(reach.has(`${d.x},${d.y}`), `문 ${d.id} 도달 불가`);
   assert.ok(reach.has('22,28'), '입구 밖 매트 도달 불가');
-  // 스터디룸 안쪽
+  // 스터디룸 안쪽 (책상 앞 · 소파 앞 · 왼쪽 구석)
+  assert.ok(reach.has('22,15'));
+  assert.ok(reach.has('30,19'));
   assert.ok(reach.has('16,17'));
-  assert.ok(reach.has('29,17'));
 });
 
 test('상단 레이어에 화분 윗부분·펜던트 등이 있고, 그 칸은 통과 가능', () => {
@@ -117,9 +119,12 @@ test('조명 목록이 있고 픽셀 좌표가 맵 안', () => {
 });
 
 test('보드/표지판 라벨은 웹폰트용 데이터로 내려간다 (타일에 굽지 않음)', () => {
-  assert.ok(room.labels.length >= 10);
+  assert.ok(room.labels.length >= 8);
   const texts = room.labels.map((l) => l.text).join('|');
-  for (const t of ['Good', 'Study', 'FOCUS', 'Music', 'COFFEE', '수빈s\nROOM', '선아s\nROOM', 'Small Steps', 'WELCOME']) assert.match(texts, new RegExp(t));
+  for (const t of ['Good', 'Study', 'FOCUS', 'Music', 'COFFEE', 'Small Steps', 'WELCOME']) assert.match(texts, new RegExp(t));
+  assert.doesNotMatch(texts, /수빈|선아/, '문 명패 글자는 타일·라벨이 아니라 스터디 설정(roomLabel)으로 클라이언트가 그린다');
+  assert.deepEqual(room.anchors.nameplate, { x: 21 * 32, y: Math.round(19.05 * 32) });
+  assert.deepEqual(room.anchors.corkboard, { x: Math.round(22.5 * 32), y: Math.round(11.05 * 32), seats: ['study-a', 'study-b'] });
   for (const l of room.labels) {
     assert.ok(['hand', 'sans'].includes(l.font));
     assert.ok(l.x >= 0 && l.x <= room.width * 32 && l.y >= 0 && l.y <= room.height * 32);
@@ -168,42 +173,59 @@ test('창문: 밤 타일은 3프레임 애니메이션, 낮 타일은 windowDay 
   assert.deepEqual(room.windows[0], { x: 14 * 32, y: 0, w: 14 * 32, h: 144 });
 });
 
-test('유리 스터디룸: 프레임 기둥·유리 판·2타일 열린 문·2타일 슬라이딩 패널, 구역(zone) 2개', () => {
+test('2인 유리 스터디룸: 프레임 기둥·유리 판·2타일 열린 문·슬라이딩 패널·커튼, 구역(zone) 1개', () => {
   const { objects } = TILES;
   const at = (x, y) => room.layers.furniture[y][x];
   const idx = (name) => objects[name].tiles[0][0];
-  // 방 A (x 11..20): 세로 유리벽은 3타일마다 기둥
+  // 세로 유리벽 (x 12 / 33): 3타일마다 기둥
   for (let y = 12; y <= 20; y++) {
     const want = (y - 12) % 3 === 0 ? 'gpost_NS' : 'glass_NS';
-    assert.equal(at(11, y), idx(want), `(11,${y})`);
-    assert.equal(at(20, y), idx(want), `(20,${y})`);
-    assert.equal(at(25, y), idx(want), `(25,${y})`);
-    assert.equal(at(34, y), idx(want), `(34,${y})`);
+    assert.equal(at(12, y), idx(want), `(12,${y})`);
+    assert.equal(at(33, y), idx(want), `(33,${y})`);
   }
-  assert.equal(at(11, 21), idx('gpost_NE'));
-  assert.equal(at(20, 21), idx('gpost_NW'));
-  assert.equal(at(34, 21), idx('gpost_NW'));
-  assert.equal(at(25, 21), idx('gpost_NE'));
-  // 슬라이딩 문 패널은 2타일 폭 (x 12..13 / 32..33), 통과 불가
+  assert.equal(at(12, 21), idx('gpost_NE'));
+  assert.equal(at(33, 21), idx('gpost_NW'));
+  // 슬라이딩 문 패널 2x4 (x 20..21, y 18..21), 통과 불가. 열린 문 2타일은 패널 바로 옆 (22..23), 그 옆은 기둥
   assert.equal(objects.study_panel_1.w, 2);
   assert.equal(objects.study_panel_1.h, 4);
-  assert.equal(at(12, 21), objects.study_panel_1.tiles[3][0]);
-  assert.equal(at(13, 21), objects.study_panel_1.tiles[3][1]);
-  assert.ok(isBlocked(room, 12, 21) && isBlocked(room, 13, 21));
-  // 열린 문 2타일은 패널 바로 옆 (A: 14..15, B: 30..31), 그 옆은 기둥
-  for (const [x, id] of [[14, 'study1-l'], [15, 'study1-r'], [31, 'study2-l'], [30, 'study2-r']]) {
+  assert.equal(at(20, 21), objects.study_panel_1.tiles[3][0]);
+  assert.equal(at(21, 21), objects.study_panel_1.tiles[3][1]);
+  assert.ok(isBlocked(room, 20, 21) && isBlocked(room, 21, 21) && isBlocked(room, 20, 18) && isBlocked(room, 21, 20));
+  for (const [x, id] of [[22, 'study-l'], [23, 'study-r']]) {
     assert.equal(at(x, 21), idx('door_open'));
     assert.ok(!isBlocked(room, x, 21));
     assert.ok(room.doors.some((d) => d.id === id && d.x === x && d.y === 21), id);
   }
-  assert.equal(at(16, 21), idx('gpost_E'));
-  assert.equal(at(29, 21), idx('gpost_W'));
-  for (const x of [17, 18, 19, 26, 27, 28]) assert.equal(at(x, 21), idx('glass_EW'));
-  // 위쪽 벽 덩굴 없음
-  for (let x = 11; x <= 20; x++) assert.notEqual(room.layers.top[10][x], idx('wall_vine'));
-  assert.equal(room.zones.length, 2);
-  assert.deepEqual(room.zones.map((z) => z.id), ['study1', 'study2']);
-  assert.deepEqual(room.zones[0], { id: 'study1', kind: 'glass', x: 12 * 32, y: 12 * 32, w: 8 * 32, h: 9 * 32, bright: 0.6 });
+  assert.equal(at(24, 21), idx('gpost_W'));
+  for (const x of [13, 14, 15, 17, 18, 19, 25, 26, 27, 29, 30, 31, 32]) assert.equal(at(x, 21), idx('glass_EW'));
+  assert.equal(at(16, 21), idx('gpost_EW'));
+  assert.equal(at(28, 21), idx('gpost_EW'));
+  // 위쪽 벽(y 10..11)은 x 12..33 전부 벽면, 덩굴 없음
+  for (let x = 12; x <= 33; x++) {
+    assert.notEqual(at(x, 10), -1, `(${x},10)`);
+    assert.notEqual(room.layers.top[10][x], idx('wall_vine'));
+  }
+  // 긴 책상 7x2 · 의자 2 (사이 1타일) · 협탁 2 · 2인 소파 · 작은 책장 · 코르크보드
+  assert.equal(at(19, 12), objects.desk_long.tiles[0][0]);
+  assert.equal(at(25, 13), objects.desk_long.tiles[1][6]);
+  assert.equal(at(21, 14), idx('chair_n'));
+  assert.equal(at(23, 14), idx('chair_n'));
+  assert.equal(at(22, 14), -1, '의자 사이 1타일');
+  assert.equal(at(18, 12), idx('nightstand_books'));
+  assert.equal(at(26, 12), idx('nightstand_lamp'));
+  assert.equal(at(28, 17), objects.sofa_love.tiles[0][0]);
+  assert.equal(at(15, 12), objects.bookcase_small.tiles[0][0]);
+  assert.equal(at(21, 10), objects.corkboard.tiles[0][0]);
+  // 유리벽 안쪽 커튼 (top 레이어, 통과 가능)
+  assert.equal(room.layers.top[12][13], idx('curtain_top'));
+  assert.equal(room.layers.top[15][13], idx('curtain_end'));
+  assert.equal(room.layers.top[18][13], idx('curtain_rail'));
+  assert.ok(!isBlocked(room, 13, 13));
+  // 통로 러너는 방 앞 가로
+  assert.equal(room.layers.floor[22][18], objects.rug_runner_h.tiles[0][0]);
+  assert.equal(room.layers.floor[23][27], objects.rug_runner_h.tiles[1][9]);
+  assert.equal(room.zones.length, 1);
+  assert.deepEqual(room.zones[0], { id: 'study', kind: 'glass', x: 13 * 32, y: 12 * 32, w: 20 * 32, h: 9 * 32, bright: 0.6 });
 });
 
 test('화면(모니터 2 + 노트북 1)은 좌석에 연결되고, 상호작용 지점(커피·음악)은 통과 가능한 칸 위', () => {
@@ -218,7 +240,7 @@ test('화면(모니터 2 + 노트북 1)은 좌석에 연결되고, 상호작용 
     assert.ok(Math.hypot(s.x + s.w / 2 - (seat.x + 0.5) * 32, s.y + s.h / 2 - (seat.y + 0.5) * 32) < 96, `화면-좌석 거리 ${s.seatId}`);
   }
   const monitorSeats = room.screens.filter((s) => s.kind === 'monitor').map((s) => room.seats.find((q) => q.id === s.seatId));
-  assert.deepEqual(monitorSeats.map((q) => [q.x, q.y, q.kind]), [[15, 14, 'chair_n'], [30, 14, 'chair_n']]);
+  assert.deepEqual(monitorSeats.map((q) => [q.id, q.x, q.y, q.kind]), [['study-a', 21, 14, 'chair_n'], ['study-b', 23, 14, 'chair_n']]);
 
   assert.deepEqual(room.interactables.map((i) => i.id).sort(), ['coffee', 'music']);
   for (const it of room.interactables) {

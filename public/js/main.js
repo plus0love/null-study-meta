@@ -10,6 +10,9 @@
  *  - 그룹 주간 목표 달성(studyGoal): 창밖 불꽃놀이 10초 + 조명 플래시 + 차임 + 토스트. 오프라인 사이 달성분은 입장 ack profile.rewards 로 토스트.
  * 12단계 야외: 세션 ack 의 room 이 지금 씬의 맵과 다르면 /api/rooms/<id> 를 받아(한 번만) 씬을 restart 하고 미니맵을 바꾼다 (ensureRoom).
  *  - 문 밟기 → net.door() → 'session' → 같은 흐름. 탈것 V(mount/dismount) · H(경적) · 아바타 클릭 프로필 · 전광판 E · 랩 HUD/완주 연출(🏁 + 차임 + 토스트).
+ * 15단계: 남의 자리 앞 E → 앉기/쪽지 선택 → 쪽지 모달 → note:leave. 내 자리에 쪽지가 있으면(note:waiting) 앉은 채 E → note:read → 읽기 모달.
+ *  - 커피 코너 E → 커피 모달(마시기 = interact / 배달 = coffee:gift). coffee:received 토스트, playerBuff → ❤️☕, seatItems → 책상 위 머그·쪽지 아이콘.
+ *  - D-day: 입장 ack profile.ddays(칠판 목록 + 당일 연출: 기념일 하트 폭죽 · 시험 응원 문구), 설정에서 등록/삭제, 공용이 바뀌면 dday:update 로 다시 받는다.
  */
 (async function main() {
   'use strict';
@@ -117,6 +120,7 @@
   scene.hooks.onPet = (id) => net.petNpc(id).catch(() => {}); // 쿨다운/거리 거부는 조용히 무시
   scene.hooks.onUse = (kind, id) => {
     if (kind === 'music') return ui.openMusic(); // 소리는 본인에게만 → 서버는 모른다
+    if (kind === 'coffee') return ui.openCoffee(); // 15단계: 마시기 / 배달 메뉴
     if (kind === 'board') return ui.openBoard(); // 12단계: 전광판
     if (kind === 'shop') return ui.openWallet('mount'); // 12단계: 카트 정류장 → 탈것 상점
     // 14단계 동물원: 안내판(클라이언트 데이터) · 먹이 주기 · 매점
@@ -154,6 +158,43 @@
     }
     net.interact(id).then((r) => { if (!r.ok && r.error === 'too_far') ui.notify('조금 더 가까이 가 주세요.'); }).catch(() => {});
   };
+  // 15단계: 쪽지 · 커피 · D-day
+  const NOTE_ERR = { invalid_target: '자기 자신에게는 남길 수 없어요.', not_member: '스터디 멤버에게만 남길 수 있어요.', empty: '내용을 적어 주세요.', too_long: '쪽지는 60자까지예요.', no_seat: '상대의 자리를 찾지 못했어요.', too_far: '상대 자리 앞으로 조금 더 가까이.' };
+  scene.hooks.onSeatChoice = async (seat, owner) => {
+    const choice = await ui.askSeatChoice(owner);
+    if (choice === 'sit') return scene.sitAt(seat.id);
+    if (choice !== 'note') return null;
+    const text = await ui.openNoteCompose(owner);
+    if (!text) return null;
+    scene.flushMove(false);
+    return net.noteLeave(owner, text).then((r) => {
+      if (r.ok) ui.toast(r.delivered ? `${owner} 님 책상에 쪽지를 놓았어요 ✉️` : `${owner} 님 자리에 쪽지를 남겼어요 ✉️ 앉으면 보여요`);
+      else ui.notify(NOTE_ERR[r.error] || '쪽지를 남기지 못했어요.');
+      return r;
+    }).catch(() => null);
+  };
+  scene.hooks.onReadNote = () => net.noteRead().then((r) => { if (r.ok) { ui.showNotes(r.notes); scene.setMyNotes(0); ui.refreshNoteCount && ui.refreshNoteCount(); } }).catch(() => {});
+  net.on('note:waiting', (d) => { scene.onNoteWaiting(d); ui.toast(`✉️ 책상 위에 쪽지 ${d.notes.length}개 — E 로 읽어요`, 4000); ui.notify(`${d.notes.map((n) => n.from).join(', ')} 님의 쪽지가 책상 위에 있어요 ✉️`); ui.setNoteboxCount(d.notes.length); });
+  net.on('note:new', (d) => ui.notify(`${d.from} 님이 내 자리에 쪽지를 남겼어요 ✉️ (앉으면 읽을 수 있어요)`));
+  net.on('seatItems', (d) => scene.setSeatItems(d));
+  net.on('coffee:received', ({ gift, late }) => {
+    const mine = gift.from === ui.selfNickname;
+    ui.toast(mine ? `${gift.emoji} ${gift.menuName} 한 잔! 10분 동안 ❤️☕` : `${gift.from}님이 ${gift.emoji} ${gift.menuName}를 ${late ? '놓고 갔어요' : '건넸어요'} — 10분 동안 ❤️☕`, 5000);
+    if (!mine) ui.notify(`${gift.from}님이 ${gift.emoji} ${gift.menuName}를 놓고 갔어요`);
+    sound.chime('goal');
+  });
+  net.on('playerBuff', (d) => scene.onBuff(d));
+  ui.onCoffeeTargets = () => net.coffeeTargets();
+  ui.onCoffeeDrink = () => net.interact('coffee').then((r) => { if (!r.ok && r.error === 'too_far') ui.notify('조금 더 가까이 가 주세요.'); }).catch(() => {});
+  ui.onCoffeeGift = (menu, to) => net.coffeeGift(menu, to).then((r) => {
+    if (r.ok) { if (r.balance !== undefined) ui.setCoins(r.balance, { bump: true }); ui.toast(to === ui.selfNickname ? `${r.gift.emoji} ${r.gift.menuName} 한 잔 (-1 🪙)` : r.delivered ? `${to} 님에게 ${r.gift.emoji} ${r.gift.menuName}를 건넸어요 (-1 🪙)` : `${to} 님 자리에 ${r.gift.emoji} ${r.gift.menuName}를 놓았어요 (-1 🪙)`); sound.coin(-1); }
+    return r;
+  }).catch(() => ({ ok: false, error: 'store_error' }));
+  ui.onNoteBox = () => net.noteBox();
+  const refreshDdays = () => net.ddayList().then((r) => { if (r.ok) { scene.setDdays(r.board); ui.renderDdays(r.ddays); } }).catch(() => {});
+  ui.onDdayAdd = (d) => net.ddayAdd(d).then((r) => { if (r.ok) scene.setDdays(r.board); return r; }).catch(() => ({ ok: false, error: 'store_error' }));
+  ui.onDdayDelete = (id) => net.ddayDelete(id).then((r) => { if (r.ok) scene.setDdays(r.board); return r; }).catch(() => ({ ok: false, error: 'store_error' }));
+  net.on('dday:update', () => { if (!scene.room.outdoor) refreshDdays(); });
   scene.hooks.onEmojiKey = (i) => net.emoji(i).catch(() => {});
   scene.hooks.onChatKey = () => ui.focusChat();
   scene.hooks.onPositions = (map) => ui.drawMinimap(map);
@@ -287,6 +328,7 @@
     startLogin({ error: '' });
   };
   // ── 스터디 정보/설정 (11단계) ──
+  ui.onNameplate = (text) => scene.setNameplate(text); // 15단계: 문 명패
   ui.onStudyInfo = () => net.studyInfo();
   ui.onStudyUpdate = (patch) => net.studyUpdate(patch).catch(() => ({ ok: false }));
   ui.onStudyKick = (nickname) => net.studyKick(nickname).catch(() => ({ ok: false }));
@@ -439,6 +481,20 @@
     // 11단계: 오프라인 사이에 달성된 그룹 목표 보너스
     for (const r of profile.rewards || []) ui.toast(`🎆 ${r.studyName || '스터디'} 그룹 목표 달성 보너스 +${r.coins} 🪙`, 5000);
     if (profile.statsPublic !== undefined) ui.setStatsPublic(profile.statsPublic);
+    // 15단계: D-day 칠판 + 당일 연출(서버가 사람·날짜마다 1회만 준다) · 자리에 있는 쪽지·커피는 알림 벨
+    if (profile.ddays) {
+      scene.setDdays(profile.ddays.board || []);
+      for (const c of profile.ddays.celebrate || []) {
+        ui.toast(c.text, 6000);
+        ui.notify(c.text);
+        scene.celebrate(10000, c.effect === 'hearts' ? 'hearts' : 'fireworks');
+        scene.flashLights();
+        sound.chime('goal');
+      }
+      refreshDdays();
+    } else scene.setDdays([]);
+    if (profile.unreadNotes && profile.unreadNotes.length) { ui.notify(`읽지 않은 쪽지 ${profile.unreadNotes.length}개가 자리에 있어요 ✉️ (앉으면 읽을 수 있어요)`); ui.setNoteboxCount(profile.unreadNotes.length); } else ui.setNoteboxCount(0);
+    for (const g of profile.pendingGifts || []) ui.notify(`${g.from}님이 ${g.emoji} ${g.menuName}를 자리에 놓고 갔어요 (앉으면 받아요)`);
     if (scene.room.outdoor) {
       if (!ack.resumed) ui.addChat({ system: true, text: '🌳 공용 야외로 나왔어요. 다른 스터디 사람들도 여기서 만나요. 건물 이중문으로 들어가면 내 스터디로 돌아가요.' });
       net.trackBoard().then((r) => { if (r.ok) { scene.refreshBoard(r); ui.setLapBest(r.myBest ? r.myBest.ms : null); } }).catch(() => {});

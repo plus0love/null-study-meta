@@ -27,7 +27,7 @@ const remotePos = (id) => {
   return r ? { x: r.avatar.x, y: r.avatar.y, seated: r.avatar.seated, walking: r.avatar.walking } : null;
 };
 
-test('브라우저 2탭 (B 는 300ms 지연): 입장·이동 유지·채팅·착석·재접속', { skip: !hasChrome || !puppeteer ? 'Chrome/puppeteer-core 없음' : false, timeout: 120000 }, async (t) => {
+test('브라우저 2탭 (B 는 300ms 지연): 입장·이동 유지·채팅·착석·재접속', { skip: !hasChrome || !puppeteer ? 'Chrome/puppeteer-core 없음' : false, timeout: 180000 }, async (t) => {
   const srv = await boot({ world: { graceMs: 5000, study: { autoTick: false } } });
   t.after(() => srv.close());
   const proxy = await startDelayProxy(srv.port, 300);
@@ -96,7 +96,7 @@ test('브라우저 2탭 (B 는 300ms 지연): 입장·이동 유지·채팅·착
   // 순간이동은 거부되고 부드럽게 되돌아온다
   await a.evaluate(() => { const s = window.NSM.scene; s.me.setPosition(s.me.x + 300, s.me.y); });
   await a.waitForFunction(() => window.NSM.net.corrections > 0, { timeout: 8000 });
-  await a.waitForFunction((x) => Math.abs(window.NSM.scene.me.x - x) < 1, { timeout: 8000 }, afterA.x);
+  await a.waitForFunction((x) => Math.abs(window.NSM.scene.me.x - x) < 1, { timeout: 15000 }, afterA.x); // 헤드리스 저프레임 + 지연 프록시에서는 수렴이 느리다
   await sleep(200);
   const corrAfterTeleport = await a.evaluate(() => window.NSM.net.corrections); // 수렴 중 몇 번 더 거부될 수 있다
 
@@ -168,6 +168,7 @@ test('브라우저 2탭 (B 는 300ms 지연): 입장·이동 유지·채팅·착
   assert.ok(toDog && toDog.length, '강아지까지 경로가 있어야 함');
   await walk(a, toDog);
   await a.waitForFunction(() => document.getElementById('sit-hint').textContent.includes('쓰다듬기'), { timeout: 3000 });
+  for (let i = 0; i < 20 && dog.state !== 'look'; i++) await sleep(100); // 힌트는 클라이언트 거리, 쳐다보기는 서버 틱(100ms) — 잠깐 기다린다
   assert.equal(dog.state, 'look', '가까이 가면 쳐다본다');
   await a.keyboard.press('KeyE');
   await b.waitForFunction(() => Boolean(window.NSM.scene.npcs.get('dog').heart), { timeout: 5000 });
@@ -230,13 +231,15 @@ test('브라우저 2탭 (B 는 300ms 지연): 입장·이동 유지·채팅·착
   const toCoffee = pathTo(room, cur3.tx, cur3.ty, (x, y) => Math.hypot((x + 0.5) * T - coffee.x, (y + 1) * T - coffee.y) <= 20);
   assert.ok(toCoffee && toCoffee.length, '커피머신까지 경로가 있어야 함');
   await walk(a, toCoffee);
-  await a.waitForFunction(() => document.getElementById('sit-hint').textContent.includes('커피 마시기') && !window.NSM.scene.me.walking, { timeout: 5000 });
-  await a.keyboard.press('KeyE');
+  await a.waitForFunction(() => document.getElementById('sit-hint').textContent.includes('커피 코너') && !window.NSM.scene.me.walking, { timeout: 5000 });
+  // 15단계: 커피 코너 E → 모달(마시기 / 배달) → "한 잔 마시기" 가 예전의 ☕ 휴식 전환
+  const drink = async () => { await a.keyboard.press('KeyE'); await a.waitForSelector('#coffee-modal:not([hidden])', { timeout: 5000 }); await a.click('#coffee-drink'); };
+  await drink();
   await a.waitForFunction(() => window.NSM.ui.status === 'coffee', { timeout: 5000 });
   assert.match(await a.$eval('#btn-status', (el) => el.textContent), /☕ 휴식 중/);
   await b.waitForFunction((id) => window.NSM.scene.remotes.get(id).avatar.status === 'coffee', { timeout: 5000 }, idA);
   assert.match(await b.$eval('#members-list', (el) => el.textContent), /브라우저A.*☕ 휴식 중/s);
-  await a.keyboard.press('KeyE');
+  await drink();
   await a.waitForFunction(() => window.NSM.ui.status === 'rest', { timeout: 5000 });
 
   // 3단계 ③ 시간대: 시각을 고정하면 낮/노을/밤 단계와 낮 창문 레이어 알파·어둠 강도가 바뀐다. '항상 밤' 이면 낮에도 밤

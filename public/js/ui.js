@@ -30,7 +30,7 @@
   const $ = (id) => document.getElementById(id);
   const STATUS_LABEL = { study: '공부 중', rest: '휴식 중', coffee: '☕ 휴식 중' };
   const STATUS_ICON = { study: 'i-book', rest: 'i-leaf', coffee: 'i-coffee' };
-  const HINT_LABEL = { sit: '앉기', stand: '일어나기', pet: '쓰다듬기', coffee: '커피 마시기', music: '음악 듣기', lie: '눕기', massage: '안마의자에 앉기', board: '기록 보기', shop: '탈것 상점', sign: '안내판 보기', feed: '먹이 주기', snack_icecream: '아이스크림 사기 (1🪙)', snack_churros: '츄러스 사기 (1🪙)', fish: '낚시하기', reel: '지금! 낚아채기', telescope: '망원경 보기' };
+  const HINT_LABEL = { sit: '앉기', stand: '일어나기', seatChoice: '앉기 · 쪽지 남기기', read: '쪽지 읽기', coffee: '커피 코너', pet: '쓰다듬기', music: '음악 듣기', lie: '눕기', massage: '안마의자에 앉기', board: '기록 보기', shop: '탈것 상점', sign: '안내판 보기', feed: '먹이 주기', snack_icecream: '아이스크림 사기 (1🪙)', snack_churros: '츄러스 사기 (1🪙)', fish: '낚시하기', reel: '지금! 낚아채기', telescope: '망원경 보기' };
   const ANIMAL_LABEL = { panda: '판다', lion: '사자', giraffe: '기린', penguin: '펭귄', guinea_pig: '기니피그', flamingo: '플라밍고', monkey: '원숭이', elephant: '코끼리', duck: '오리', squirrel: '다람쥐', pigeon: '비둘기', butterfly: '나비', rabbit: '토끼', cat: '고양이' };
   const VEHICLE_LABEL = { rickshaw: '🛒 낡은 인력거', bicycle: '🚲 자전거', kickboard: '🛴 킥보드', kart: '🏎 기본 카트', sport: '🏎 스포츠 카트' };
   // 9단계: 편집 거부 사유 → 안내
@@ -55,9 +55,14 @@
   const PET_SLOT_LABEL = { head: '머리', neck: '목', back: '등' };
   const SKILL_ICON = { skill_come: '📣', skill_sleep: '💤', skill_high_five: '🖐' };
   const YT_API = 'https://www.youtube.com/iframe_api';
+  // 15단계
+  const NOTE_ERR = { invalid_target: '자기 자신에게는 남길 수 없어요.', not_member: '스터디 멤버에게만 남길 수 있어요.', empty: '내용을 적어 주세요.', too_long: '쪽지는 60자까지예요.', no_seat: '상대의 자리를 찾지 못했어요.', too_far: '상대 자리 앞으로 조금 더 가까이.' };
+  const COFFEE_ERR = { too_far: '커피 코너 앞으로 조금 더 가까이.', invalid_menu: '메뉴를 골라 주세요.', not_member: '스터디 멤버에게만 배달할 수 있어요.', no_seat: '상대의 자리를 찾지 못했어요.', insufficient: '코인이 모자라요. 1코인이 필요해요.', store_error: '저장소 오류가 났어요.' };
+  const DDAY_ERR = { invalid_title: '제목은 1~12자예요.', invalid_date: '날짜를 골라 주세요.', invalid_kind: '종류가 이상해요.', forbidden: '만든 사람만 지울 수 있어요.', not_found: '없는 D-day 예요.' };
+  const DDAY_KIND = { exam: '시험', anniversary: '기념일', other: '기타' };
   const STUDY_ERR = { // 11단계: 스터디 만들기/설정 거부 사유
     invalid_name: '이름은 1~20자예요.', invalid_password: '비밀번호는 4~20자예요.', invalid_max_players: '정원은 2~12명이에요.', invalid_goal: '주간 목표는 5~100시간이에요.',
-    invalid_policy: '편집 권한 값이 이상해요.', forbidden: '방장만 할 수 있어요.', no_study: '없는 스터디예요.', study_full: '정원이 다 찼어요.', not_empty: '다른 사람이 있으면 삭제할 수 없어요.',
+    invalid_policy: '편집 권한 값이 이상해요.', invalid_label: '명패는 12자까지예요.', forbidden: '방장만 할 수 있어요.', no_study: '없는 스터디예요.', study_full: '정원이 다 찼어요.', not_empty: '다른 사람이 있으면 삭제할 수 없어요.',
     too_many_players: '지금 있는 사람보다 정원이 작아요.', store_error: '저장소 오류가 났어요.', not_member: '멤버가 아니에요.', self: '자기 자신은 내보낼 수 없어요.',
   };
 
@@ -200,6 +205,7 @@
       this.bindStudy();
       this.bindLobby();
       this.bindOutdoor();
+      this.bindSocial(); // 15단계: 쪽지 · 커피 · D-day
       this.buildMinimapBase();
       this.renderTodos();
       setInterval(() => { this.tickPomodoro(); this.tickLap(); this.tickCoinProgress(); }, 250);
@@ -351,6 +357,184 @@
       $('board-track').textContent = r.track ? `한 바퀴 약 ${r.track.lengthTiles}타일 · 체크포인트 ${r.track.checkpoints}개` : '';
       $('board-mine').textContent = r.myBest ? `내 최고 기록 ${(r.myBest.ms / 1000).toFixed(1)}s (${VEHICLE_LABEL[r.myBest.vehicle] || r.myBest.vehicle}) · 하루 첫 완주 +1 🪙` : '탈것을 타고 출발선을 지나 한 바퀴 돌면 기록돼요 · 하루 첫 완주 +1 🪙';
       if (r.myBest) this.setLapBest(r.myBest.ms);
+    }
+
+    // ── 15단계: 쪽지 남기기/읽기/쪽지함 · 커피 코너 · 자리 선택 · D-day ─────────────
+    bindSocial() {
+      const close = (id) => { $(id).hidden = true; };
+      for (const [modal, btn] of [['note-read-modal', 'note-read-close'], ['notebox-modal', 'notebox-close'], ['coffee-modal', 'coffee-close']]) {
+        $(btn).addEventListener('click', () => close(modal));
+        $(modal).addEventListener('click', (e) => { if (e.target === $(modal)) close(modal); });
+      }
+      for (const id of ['note-text', 'dday-title', 'dday-date']) $(id).addEventListener('keydown', (e) => e.stopPropagation());
+      // 쪽지 남기기 (Promise 로 입력값을 돌려준다)
+      this.noteResolve = null;
+      $('note-cancel').addEventListener('click', () => this.resolveNote(null));
+      $('note-modal').addEventListener('click', (e) => { if (e.target === $('note-modal')) this.resolveNote(null); });
+      $('note-form').addEventListener('submit', (e) => { e.preventDefault(); const t = $('note-text').value.trim(); if (t) this.resolveNote(t); });
+      $('note-text').addEventListener('keydown', (e) => { if (e.key === 'Escape') this.resolveNote(null); });
+      // 자리 선택 (앉기 / 쪽지)
+      this.seatResolve = null;
+      $('seat-choice-cancel').addEventListener('click', () => this.resolveSeat(null));
+      $('seat-choice-sit').addEventListener('click', () => this.resolveSeat('sit'));
+      $('seat-choice-note').addEventListener('click', () => this.resolveSeat('note'));
+      $('seat-choice-modal').addEventListener('click', (e) => { if (e.target === $('seat-choice-modal')) this.resolveSeat(null); });
+      // 쪽지함
+      this.noteboxTab = 'received';
+      this.notebox = { received: [], sent: [] };
+      $('btn-notebox').addEventListener('click', () => this.openNoteBox());
+      for (const b of document.querySelectorAll('#notebox-tabs button')) b.addEventListener('click', () => { this.noteboxTab = b.dataset.tab; this.renderNoteBox(); });
+      // 커피
+      this.coffeeMenu = null;
+      $('coffee-drink').addEventListener('click', async () => { close('coffee-modal'); await this.onCoffeeDrink(); });
+      $('coffee-send').addEventListener('click', () => this.sendCoffee());
+      // D-day
+      $('dday-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const err = $('dday-error');
+        err.hidden = true;
+        const r = await this.onDdayAdd({ title: $('dday-title').value.trim(), date: $('dday-date').value, kind: $('dday-kind').value, shared: $('dday-shared').checked });
+        if (!r || !r.ok) { err.textContent = DDAY_ERR[r && r.error] || '등록하지 못했어요.'; err.hidden = false; return; }
+        $('dday-title').value = '';
+        this.toast(`D-day 등록 ✍️ ${r.dday.label} ${r.dday.title}`);
+        this.renderDdays(r.ddays);
+      });
+    }
+
+    resolveNote(value) {
+      $('note-modal').hidden = true;
+      const r = this.noteResolve;
+      this.noteResolve = null;
+      if (r) r(value);
+    }
+
+    /** 쪽지 입력 모달 → 입력한 한 줄 또는 null(취소) */
+    openNoteCompose(to) {
+      return new Promise((resolve) => {
+        this.noteResolve = resolve;
+        $('note-to').textContent = to;
+        $('note-text').value = '';
+        $('note-error').hidden = true;
+        $('note-modal').hidden = false;
+        setTimeout(() => $('note-text').focus(), 30);
+      });
+    }
+
+    resolveSeat(value) {
+      $('seat-choice-modal').hidden = true;
+      const r = this.seatResolve;
+      this.seatResolve = null;
+      if (r) r(value);
+    }
+
+    /** 남의 자리 앞에서 E: 'sit' | 'note' | null */
+    askSeatChoice(owner) {
+      return new Promise((resolve) => {
+        this.seatResolve = resolve;
+        $('seat-choice-title').textContent = `${owner} 님의 자리`;
+        $('seat-choice-desc').textContent = `${owner} 님이 마지막으로 앉았던 자리예요. 앉거나 쪽지를 남길 수 있어요.`;
+        $('seat-choice-modal').hidden = false;
+      });
+    }
+
+    noteItem(n, { showTo = false } = {}) {
+      return el('li', { class: !n.readAt && !showTo ? 'unread' : '' }, [
+        el('div', { class: 'note-meta' }, [el('span', { text: showTo ? `→ ${n.to}` : `${n.from} 님` }), el('span', { class: 'time', text: `${hhmm(n.createdAt)}${n.readAt ? ' · 읽음' : showTo ? ' · 안 읽음' : ''}` })]),
+        el('div', { class: 'note-text', text: n.text }),
+      ]);
+    }
+
+    /** 앉은 채 E 로 연 쪽지 (읽음 처리된 목록) */
+    showNotes(notes) {
+      const list = $('note-read-list');
+      list.innerHTML = '';
+      if (!notes.length) list.appendChild(el('li', { class: 'empty', text: '쪽지가 없어요.' }));
+      for (const n of notes) list.appendChild(this.noteItem({ ...n, readAt: n.readAt || Date.now() }));
+      $('note-read-modal').hidden = false;
+    }
+
+    isNoteReadOpen() {
+      return !$('note-read-modal').hidden;
+    }
+
+    async openNoteBox() {
+      this.closePopovers();
+      $('notebox-modal').hidden = false;
+      try {
+        const r = await this.onNoteBox();
+        if (r && r.ok) { this.notebox = r; this.setNoteboxCount(r.unread); }
+      } catch (_) { /* 오프라인 */ }
+      this.renderNoteBox();
+    }
+
+    renderNoteBox() {
+      for (const b of document.querySelectorAll('#notebox-tabs button')) b.classList.toggle('active', b.dataset.tab === this.noteboxTab);
+      const list = $('notebox-list');
+      list.innerHTML = '';
+      const rows = this.notebox[this.noteboxTab] || [];
+      if (!rows.length) list.appendChild(el('li', { class: 'empty', text: this.noteboxTab === 'received' ? '받은 쪽지가 없어요.' : '보낸 쪽지가 없어요.' }));
+      for (const n of rows) list.appendChild(this.noteItem(n, { showTo: this.noteboxTab === 'sent' }));
+    }
+
+    setNoteboxCount(unread) {
+      $('notebox-count').textContent = unread > 0 ? `안 읽음 ${unread}개` : '';
+    }
+
+    /** 커피 코너 모달 (메뉴 3종 + 누구에게) */
+    async openCoffee() {
+      $('coffee-error').hidden = true;
+      $('coffee-modal').hidden = false;
+      $('coffee-balance').textContent = `보유 ${this.coins} 🪙`;
+      $('coffee-menu').innerHTML = ''; // 다시 받는 동안 옛 버튼을 비운다 (열 때마다 멤버 상태가 바뀐다)
+      $('coffee-to').innerHTML = '';
+      let r = null;
+      try { r = await this.onCoffeeTargets(); } catch (_) { /* 오프라인 */ }
+      if (!r || !r.ok) return;
+      const menu = $('coffee-menu');
+      menu.innerHTML = '';
+      this.coffeeMenu = this.coffeeMenu || r.menu[0].id;
+      for (const m of r.menu) {
+        const b = el('button', { type: 'button', class: m.id === this.coffeeMenu ? 'active' : '', 'data-menu': m.id, onclick: () => { this.coffeeMenu = m.id; for (const x of menu.children) x.classList.toggle('active', x.dataset.menu === m.id); } }, [el('em', { text: m.emoji }), el('span', { text: m.name }), el('span', { class: 'muted', text: `${r.price}🪙` })]);
+        menu.appendChild(b);
+      }
+      const sel = $('coffee-to');
+      sel.innerHTML = '';
+      for (const m of r.members) {
+        const label = m.self ? `${m.nickname} (나)` : `${m.nickname}${m.online ? (m.seated ? ' · 앉아 있음' : ' · 접속 중') : ''}${!m.self && !m.hasSeat ? ' · 자리 없음' : ''}`;
+        sel.appendChild(el('option', { value: m.nickname, text: label }));
+      }
+      $('coffee-hint').textContent = '앉아 있으면 바로 건네요. 자리가 비어 있으면 책상 위에 머그가 놓이고, 앉을 때 받아요 (10분 동안 ❤️☕).';
+    }
+
+    async sendCoffee() {
+      const err = $('coffee-error');
+      err.hidden = true;
+      const to = $('coffee-to').value;
+      if (!this.coffeeMenu || !to) return;
+      const r = await this.onCoffeeGift(this.coffeeMenu, to);
+      if (!r || !r.ok) { err.textContent = COFFEE_ERR[r && r.error] || '배달하지 못했어요.'; err.hidden = false; return; }
+      $('coffee-modal').hidden = true;
+    }
+
+    isCoffeeOpen() {
+      return !$('coffee-modal').hidden;
+    }
+
+    /** 설정의 D-day 목록 */
+    renderDdays(list) {
+      this.ddays = list || [];
+      const ul = $('dday-list');
+      ul.innerHTML = '';
+      if (!this.ddays.length) ul.appendChild(el('li', { class: 'empty', text: '등록된 D-day 가 없어요.' }));
+      for (const d of this.ddays) {
+        ul.appendChild(el('li', {}, [
+          el('span', { class: `dd ${d.today ? 'today' : d.soon ? 'soon' : ''}`, text: d.label }),
+          el('span', { class: 'name', text: d.title }),
+          el('span', { class: 'kind', text: `${DDAY_KIND[d.kind] || d.kind} · ${d.date}` }),
+          d.shared ? el('span', { class: 'shared', text: '공용' }) : null,
+          d.mine ? el('button', { class: 'btn small ghost danger', type: 'button', text: '삭제', onclick: async () => { const r = await this.onDdayDelete(d.id); if (r && r.ok) this.renderDdays(r.ddays); } }) : null,
+        ]));
+      }
     }
 
     // ── 상단 HUD / 팝오버 ─────────────────────────────────────────────
@@ -1095,6 +1279,7 @@
 
     /** 잔액 (입장 ack · coins 이벤트). bump 면 배지가 살짝 튄다 */
     setCoins(n, { bump = false } = {}) {
+      if (!$('coffee-modal').hidden) $('coffee-balance').textContent = `보유 ${n} 🪙`;
       this.coins = Math.max(0, Number(n) || 0);
       const badge = $('coin-badge');
       badge.hidden = false;
@@ -2070,13 +2255,13 @@
       for (let n = 2; n <= 12; n++) sel.appendChild(el('option', { value: String(n), text: `${n}명` }));
       $('study-copy-code').addEventListener('click', () => this.copyText(this.study ? this.study.code : '', '코드를 복사했어요'));
       $('study-copy-link').addEventListener('click', () => this.copyText(this.studyLink(), '링크를 복사했어요'));
-      for (const id of ['study-edit-name', 'study-edit-pass', 'study-edit-goal']) $(id).addEventListener('keydown', (e) => e.stopPropagation());
+      for (const id of ['study-edit-name', 'study-edit-pass', 'study-edit-goal', 'study-edit-label']) $(id).addEventListener('keydown', (e) => e.stopPropagation());
       $('study-edit-unlock').addEventListener('change', () => { $('study-edit-pass').disabled = $('study-edit-unlock').checked; });
       $('study-edit-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         const err = $('study-edit-error');
         err.hidden = true;
-        const patch = { name: $('study-edit-name').value.trim(), maxPlayers: Number($('study-edit-max').value), weeklyGoalMinutes: Number($('study-edit-goal').value) * 60, editPolicy: $('study-edit-owner-only').checked ? 'owner' : 'anyone' };
+        const patch = { name: $('study-edit-name').value.trim(), maxPlayers: Number($('study-edit-max').value), weeklyGoalMinutes: Number($('study-edit-goal').value) * 60, editPolicy: $('study-edit-owner-only').checked ? 'owner' : 'anyone', roomLabel: $('study-edit-label').value.trim() };
         if ($('study-edit-unlock').checked) patch.password = '';
         else if ($('study-edit-pass').value) patch.password = $('study-edit-pass').value;
         const r = await this.onStudyUpdate(patch);
@@ -2112,6 +2297,7 @@
     /** 입장 ack · study:update — 좌상단 배지와 팝오버 제목 */
     setStudy(study) {
       this.study = study || null;
+      if (this.onNameplate) this.onNameplate(study ? study.roomLabel || study.name : ''); // 15단계: 스터디룸 문 명패
       $('study-name').textContent = study ? study.name : '스터디';
       $('study-lock').hidden = !(study && study.locked);
       $('study-info-title').textContent = study ? `${study.locked ? '🔒 ' : ''}${study.name}` : '스터디';
@@ -2126,6 +2312,7 @@
       $('study-edit-max').value = String(study.maxPlayers);
       $('study-edit-goal').value = String(Math.round(study.weeklyGoalMinutes / 60));
       $('study-edit-owner-only').checked = study.editPolicy === 'owner';
+      $('study-edit-label').value = study.roomLabel || '';
     }
 
     async refreshStudyInfo() {

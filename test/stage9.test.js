@@ -111,10 +111,11 @@ test('layout: 풋프린트·좌석 회전, 방 props/occupant, 책상 슬롯', (
   assert.deepEqual(L.solidCells(shop.get('bed').sprite, 22, 14, 0).map((c) => [c.tx, c.ty]), [[22, 14]], '침대 머리 쪽만 충돌');
   assert.deepEqual(L.solidCells(shop.get('rug_small').sprite, 22, 14, 0), [], '러그는 통과 가능');
   assert.equal(L.occupantAt(room, 6, 13).name, 'coffee_machine');
-  assert.equal(L.occupantAt(room, 14, 12).name, 'desk_wide');
+  assert.equal(L.occupantAt(room, 20, 12).name, 'desk_long');
   assert.equal(L.occupantAt(room, 22, 14), null);
   assert.equal(room.props.length > 100, true);
-  assert.deepEqual(L.deskSlots(room, room.seats.find((s) => s.x === 15 && s.y === 14)), [{ tx: 14, ty: 12 }, { tx: 16, ty: 12 }, { tx: 15, ty: 12 }], '스터디룸 의자 → 책상 뒷줄 3칸 (모니터 자리는 마지막)');
+  assert.deepEqual(L.deskSlots(room, room.seats.find((s) => s.x === 21 && s.y === 14)), [{ tx: 20, ty: 12 }, { tx: 20, ty: 13 }, { tx: 19, ty: 13 }], '2인 책상 의자 → 방 데이터가 명시한 슬롯 (모니터·공유 화분 칸은 피한다)');
+  assert.deepEqual(L.deskSlots(room, room.seats.find((s) => s.x === 23 && s.y === 14)), [{ tx: 24, ty: 12 }, { tx: 24, ty: 13 }, { tx: 25, ty: 13 }], '옆 사람 슬롯과 겹치지 않는다');
   assert.deepEqual(L.deskSlots(room, room.seats.find((s) => s.x === 36 && s.y === 16)).length, 3, '회의 테이블 의자 → 테이블 셀 3개');
   assert.deepEqual(L.deskSlots(room, room.seats[0]).length, 1, '소파 앞은 라운드 테이블 한 칸');
 });
@@ -131,30 +132,30 @@ test('layout: 배치 검증 — 빈 바닥/벽/좌석/문/스폰/맵 밖/기존 
   assert.equal(v('beanbag', { x: 'a', y: 1 }).error, 'out_of_bounds');
   assert.equal(v('beanbag', { x: 22, y: 14, rotation: 1 }).error, 'invalid_rotation');
   assert.equal(v('bed', { x: 22, y: 14, rotation: 2 }).error, 'invalid_rotation');
-  assert.equal(v('bed', { x: 22, y: 14, rotation: 1 }).ok, true);
+  assert.equal(v('bed', { x: 22, y: 16, rotation: 1 }).ok, true);
   assert.equal(v('floor_lamp', { x: 25, y: 6 }).error, 'blocked', '기존 협탁 위');
   // 겹침: 이미 놓인 침대(22,14 ~ 22,15) 위
   const bed = { id: 1, itemId: 'bed', x: 22, y: 14, rotation: 0 };
   assert.equal(v('beanbag', { x: 22, y: 15 }, [bed]).error, 'overlap');
   assert.equal(v('beanbag', { x: 22, y: 16 }, [bed]).ok, true);
   assert.equal(v('bed', { id: 1, x: 22, y: 15 }, [bed]).ok, true, '자기 자신과는 안 겹친다 (이동)');
-  assert.equal(v('rug_small', { x: 22, y: 14 }, [bed]).ok, true, '러그는 가구 아래에');
-  const rug = { id: 2, itemId: 'rug_small', x: 22, y: 14, rotation: 0 };
-  assert.equal(v('beanbag', { x: 23, y: 14 }, [rug]).ok, true, '러그 위에 가구');
+  assert.equal(v('rug_small', { x: 22, y: 15 }, [bed]).ok, true, '러그는 가구 아래에');
+  const rug = { id: 2, itemId: 'rug_small', x: 22, y: 15, rotation: 0 };
+  assert.equal(v('beanbag', { x: 23, y: 15 }, [rug]).ok, true, '러그 위에 가구');
   assert.equal(v('rug_small', { x: 21, y: 16 }, [rug]).ok, true, '러그끼리도');
   // 벽 전용
-  assert.equal(v('poster', { x: 13, y: 10 }).ok, true);
-  assert.equal(v('wall_clock', { x: 11, y: 11 }).ok, true);
+  assert.equal(v('poster', { x: 18, y: 10 }).ok, true);
+  assert.equal(v('wall_clock', { x: 18, y: 11 }).ok, true);
   assert.equal(v('poster', { x: 22, y: 14 }).error, 'wall_only', '바닥');
-  assert.equal(v('poster', { x: 12, y: 10 }).error, 'wall_only', '액자가 걸린 벽');
-  assert.equal(v('poster', { x: 13, y: 10 }, [{ id: 3, itemId: 'wall_clock', x: 13, y: 10, rotation: 0 }]).error, 'overlap');
+  assert.equal(v('poster', { x: 13, y: 10 }).error, 'wall_only', '액자가 걸린 벽');
+  assert.equal(v('poster', { x: 18, y: 10 }, [{ id: 3, itemId: 'wall_clock', x: 18, y: 10, rotation: 0 }]).error, 'overlap');
   // 위에만: 소파·책장·커피머신
   assert.equal(v('blanket', { x: 18, y: 6 }).ok, true);
   assert.equal(v('blanket', { x: 22, y: 6 }).error, 'needs_base', '소파 밖으로 한 칸');
   assert.equal(v('cushion', { x: 18, y: 6 }).ok, true, '소파 위');
   assert.equal(v('cushion', { x: 4, y: 20 }).ok, true, '푸프 위');
   assert.equal(v('cushion', { x: 22, y: 14 }).ok, true, '빈 바닥');
-  assert.equal(v('cushion', { x: 14, y: 12 }).error, 'needs_base', '책상 위는 안 됨');
+  assert.equal(v('cushion', { x: 20, y: 12 }).error, 'needs_base', '책상 위는 안 됨');
   assert.equal(v('bookshelf_fill', { x: 34, y: 3 }).ok, true);
   assert.equal(v('bookshelf_fill', { x: 34, y: 1 }).error, 'needs_base', '책장 위 벽 부분');
   assert.equal(v('coffee_upgrade', { x: 6, y: 13 }).ok, true);
@@ -162,7 +163,7 @@ test('layout: 배치 검증 — 빈 바닥/벽/좌석/문/스폰/맵 밖/기존 
   // 사람이 서 있는 셀
   assert.equal(v('beanbag', { x: 22, y: 14 }, [], new Set(['22,14'])).error, 'player_in_way');
   assert.equal(v('beanbag', { x: 22, y: 14 }, [], new Set(['22,15'])).ok, true, '좌석 셀은 통과 가능이라 괜찮다');
-  assert.equal(v('rug_small', { x: 22, y: 14 }, [], new Set(['22,14'])).ok, true, '통과 가능 가구는 사람 위에도');
+  assert.equal(v('rug_small', { x: 22, y: 15 }, [], new Set(['22,15'])).ok, true, '통과 가능 가구는 사람 위에도');
   assert.equal(v('ghost', { x: 1, y: 1 }).error, 'no_item');
   // 충돌 맵
   const grid = L.buildCollision(room, [bed, rug, { id: 4, itemId: 'floor_lamp', x: 30, y: 14, rotation: 0 }], (i) => shop.get(i));
@@ -221,10 +222,10 @@ test('월드: 배치 검증(no_item/not_placeable/already_placed/규칙) · 충�
   assert.equal((await world.placeFurniture(a, { inventoryId: lamp.id, x: 1, y: 1 })).error, 'blocked');
   // 내가 서 있는 자리엔 못 놓는다
   at(a, 22, 14);
-  assert.equal((await world.placeFurniture(a, { inventoryId: lamp.id, x: 22, y: 13 })).error, 'player_in_way');
+  assert.equal((await world.placeFurniture(a, { inventoryId: lamp.id, x: 22, y: 14 })).error, 'player_in_way');
   at(a, 22, 17);
   assert.equal(world.canStand(22.5 * T, 15 * T), true);
-  const p = await world.placeFurniture(a, { inventoryId: lamp.id, x: 22, y: 13 });
+  const p = await world.placeFurniture(a, { inventoryId: lamp.id, x: 22, y: 14 });
   assert.equal(p.ok, true);
   assert.equal(p.entry.itemId, 'floor_lamp');
   assert.equal(p.entry.placedBy, '민수');
@@ -235,7 +236,7 @@ test('월드: 배치 검증(no_item/not_placeable/already_placed/규칙) · 충�
   assert.deepEqual(await world.placeFurniture(a, { inventoryId: lamp.id, x: 25, y: 14 }), { ok: false, error: 'already_placed' });
   assert.deepEqual(events.layout.at(-1).op, 'add');
   // 러그는 조명 아래로 들어간다
-  const r = await world.placeFurniture(a, { inventoryId: rug.id, x: 21, y: 13, rotation: 1 });
+  const r = await world.placeFurniture(a, { inventoryId: rug.id, x: 21, y: 15, rotation: 1 });
   assert.equal(r.ok, true);
   assert.equal(r.entry.rotation, 1);
   assert.equal(world.listLayout().length, 2);
@@ -313,7 +314,7 @@ test('월드: 권한 — "내가 놓은 것만" 을 켠 사람의 가구는 남�
   const b = world.join({ nickname: '영희', socketId: 'sb' }).player;
   const bag = await give('민수', 'beanbag');
   const { entry } = await world.placeFurniture(a, { inventoryId: bag.id, x: 22, y: 14 });
-  assert.equal((await world.moveFurniture(b, { id: entry.id, x: 23, y: 14 })).ok, true, '기본은 누구나');
+  assert.equal((await world.moveFurniture(b, { id: entry.id, x: 24, y: 14 })).ok, true, '기본은 누구나');
   world.releaseFurniture(b, entry.id);
   assert.deepEqual(await world.setLayoutLock(a, true), { ok: true, layoutLock: true });
   assert.equal((await store.getUser('민수')).layoutLock, true);
@@ -338,10 +339,10 @@ test('월드: 침대·안마의자 — E 로 눕기/앉기(자동 휴식, 공부
   const bag = await give('민수', 'beanbag');
   const pb = await world.placeFurniture(a, { inventoryId: bed.id, x: 22, y: 14 });
   const pc = await world.placeFurniture(a, { inventoryId: chair.id, x: 24, y: 14 });
-  const pg = await world.placeFurniture(a, { inventoryId: bag.id, x: 21, y: 17 });
+  const pg = await world.placeFurniture(a, { inventoryId: bag.id, x: 17, y: 17 });
   assert.equal(pb.ok && pc.ok && pg.ok, true);
   const seats = world.allSeats().filter((s) => s.id.startsWith('f:'));
-  assert.deepEqual(seats.map((s) => [s.id, s.x, s.y, s.kind]), [[`f:${pb.entry.id}`, 22, 15, 'bed'], [`f:${pc.entry.id}`, 24, 15, 'massage'], [`f:${pg.entry.id}`, 21, 18, 'beanbag']]);
+  assert.deepEqual(seats.map((s) => [s.id, s.x, s.y, s.kind]), [[`f:${pb.entry.id}`, 22, 15, 'bed'], [`f:${pc.entry.id}`, 24, 15, 'massage'], [`f:${pg.entry.id}`, 17, 18, 'beanbag']]);
   // 너무 멀면 못 눕는다
   assert.deepEqual(world.sit(a, `f:${pb.entry.id}`), { ok: false, error: 'too_far' });
   a.x = 22.5 * T; a.y = 17 * T;
@@ -369,7 +370,7 @@ test('월드: 침대·안마의자 — E 로 눕기/앉기(자동 휴식, 공부
   assert.deepEqual(world.setStatus(a, 'study'), { ok: false, error: 'resting' });
   world.stand(a);
   // 빈백은 보통 의자처럼 공부
-  a.x = 21.5 * T; a.y = 20 * T;
+  a.x = 17.5 * T; a.y = 20 * T;
   assert.equal(world.sit(a, `f:${pg.entry.id}`).ok, true);
   assert.equal(a.status, 'study');
   assert.equal(world.study.live.has('민수'), true);
@@ -393,7 +394,7 @@ test('월드: 서버 재시작 — 저장소의 배치를 init() 에서 로드�
   const a = w1.world.join({ nickname: '민수', socketId: 'sa' }).player;
   const lamp = await w1.give('민수', 'floor_lamp');
   const bed = await w1.give('민수', 'bed', 'sage');
-  await w1.world.placeFurniture(a, { inventoryId: lamp.id, x: 22, y: 13 });
+  await w1.world.placeFurniture(a, { inventoryId: lamp.id, x: 22, y: 14 });
   const pb = await w1.world.placeFurniture(a, { inventoryId: bed.id, x: 26, y: 14, rotation: 1 });
   await store.addLayout('studyroom', { itemId: 'ghost_item', inventoryId: null, x: 30, y: 14, rotation: 0, meta: {}, placedBy: '민수' });
   await store.addLayout('otherroom', { itemId: 'floor_lamp', inventoryId: null, x: 30, y: 14, rotation: 0, meta: {}, placedBy: '민수' });
@@ -403,7 +404,7 @@ test('월드: 서버 재시작 — 저장소의 배치를 init() 에서 로드�
   assert.equal(w2.world.canStand(22.5 * T, 15 * T), true, '로드 전');
   await w2.world.init();
   const list = w2.world.listLayout();
-  assert.deepEqual(list.map((e) => [e.itemId, e.x, e.y, e.rotation, e.variant]), [['floor_lamp', 22, 13, 0, null], ['bed', 26, 14, 1, 'sage']]);
+  assert.deepEqual(list.map((e) => [e.itemId, e.x, e.y, e.rotation, e.variant]), [['floor_lamp', 22, 14, 0, null], ['bed', 26, 14, 1, 'sage']]);
   assert.equal(w2.world.canStand(22.5 * T, 15 * T), false);
   assert.equal(w2.world.canStand(27.5 * T, 15 * T), false, '가로 침대 머리 쪽');
   assert.equal(w2.world.seat(`f:${pb.entry.id}`).kind, 'bed');
@@ -606,12 +607,12 @@ test('브라우저: 지갑 가구 탭(카테고리·카드·색 선택·구매) 
   await openSettings(page);
   await page.waitForFunction(() => document.querySelectorAll('#desk-slots select').length === 3 && document.querySelectorAll('#desk-slots select')[0].value !== '', { timeout: 5000 });
   await page.click('#btn-settings'); // 닫기
-  const seat = srv.world.room.seats.find((s) => s.x === 15 && s.y === 14);
-  me.x = 15.5 * 32; me.y = 15 * 32;
+  const seat = srv.world.room.seats.find((s) => s.x === 21 && s.y === 14);
+  me.x = 21.5 * 32; me.y = 15 * 32;
   srv.world.sit(me, seat.id);
   srv.io.emit('playerSat', { id: me.id, seatId: me.seatId, x: me.x, y: me.y, facing: me.facing, status: me.status });
   await page.waitForFunction(() => window.NSM.scene.me.deskSprites.length === 2, { timeout: 5000 });
-  assert.deepEqual(await page.evaluate(() => window.NSM.scene.me.deskSprites.map((s) => [s.x, s.y, s.anims.isPlaying])), [[14.5 * 32, 13 * 32, false], [16.5 * 32, 13 * 32, true]], '뒷줄 책상 셀 · 어항은 애니');
+  assert.deepEqual(await page.evaluate(() => window.NSM.scene.me.deskSprites.map((s) => [s.x, s.y, s.anims.isPlaying])), [[20.5 * 32, 13 * 32, false], [20.5 * 32, 14 * 32, true]], '명시된 책상 슬롯 · 어항은 애니');
   srv.world.stand(me);
   srv.io.emit('playerStood', { id: me.id, status: me.status, x: me.x, y: me.y });
   await page.waitForFunction(() => window.NSM.scene.me.deskSprites.length === 0, { timeout: 5000 });

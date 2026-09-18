@@ -36,6 +36,13 @@
  *         'desk' { player } (책상 소품 변경), 'editing' { player } (편집 모드 on/off)
  *         'vehicle' { player } (12단계: 탑승·해제·데칼 변경 — 소켓이 playerVehicle 로 방송)
  *         'weeklyGoal' { weekStart, totalSeconds, targetSeconds, bonus, awarded: [playerId] } (11단계 그룹 목표 달성)
+ *  - 15단계: 쪽지(notes) · 커피 배달(coffee_gifts) · D-day(ddays).
+ *    쪽지: 상대의 자리(seatFor: 마지막에 앉았던 자리 → 지금 앉은 자리 → 2인 스터디룸 의자) 앞(64px)에서 leaveNote(60자). 받는 사람이 그 자리에 앉으면
+ *    'notesWaiting'(아이콘·토스트), 앉은 채 readNotes 로 읽음 처리. seatItems() = 좌석마다 놓인 머그·안 읽은 쪽지 수 (모두에게 방송).
+ *    커피: 커피 코너 앞에서 giftCoffee(menu, to) — 1코인 차감 → 상대가 앉아 있으면 바로, 아니면 자리에 머그(pending, 앉을 때 receiveGift). 받은 사람은 10분 coffeeBuffUntil.
+ *    D-day: 개인(studyId null) + 스터디 공용. 칠판 목록은 dday.forBoard, 당일 연출은 사람·날짜마다 한 번(ddayCelebrations, 입장 ack profile.ddays.celebrate).
+ * 이벤트(15단계): 'note' { note, seatId, by, recipient }, 'notesWaiting' { player, seatId, notes }, 'seatItems' { mugs, notes },
+ *         'coffee' { gift, by, recipient, seatId, delivered, self, late }, 'buff' { player }, 'ddays' { by }
  */
 const EventEmitter = require('node:events');
 const crypto = require('node:crypto');
@@ -48,13 +55,14 @@ const { DogNpc, SharedPetNpc, FishNpc, FollowerNpc, SPECIES: PET_SPECIES } = req
 const { StudyTracker } = require('./study');
 const { createMemoryStore } = require('../store/memory');
 const { DEFAULT_TZ, dateKey, weekStart, isValidTz } = require('../store/stats');
-const { FACING_DELTA, interactableById } = require('../rooms/build');
+const { FACING_DELTA, interactableById, canonicalSeatId } = require('../rooms/build');
 const { normalizeAvatar } = require('./avatar');
 const { focusBonusFor } = require('./coins');
 const { createShop, pickVariant, PET_SLOTS } = require('./shop');
 const { validatePlacement, buildCollision, seatOf, cellsOf } = require('./layout');
 const { validateVehiclePayload, typeOf: vehicleType } = require('./vehicles');
 const { FISH, fishById, CATCH_PER_DAY } = require('./fishing');
+const Dday = require('./dday');
 const { LIST: CONSTELLATIONS, byId: constellationById } = require('./constellations');
 
 const GRACE_MS = 30 * 1000; // 연결 끊김 후 플레이어를 유지하는 시간
@@ -76,6 +84,14 @@ const MAX_SHARED_PETS = 3;
 const PET_NAME_MAX = 8;
 const WEEKLY_BONUS = 10; // 11단계: 그룹 주간 목표 달성 보너스 (멤버마다)
 const TANK_MAX = 3; // 14단계: 공용 펫 어항에 넣을 수 있는 물고기 수
+// 15단계
+const NOTE_MAX = 60;
+const NOTE_RANGE_PX = 64; // 상대 자리 중심까지 이 거리 안이어야 쪽지를 남길 수 있다
+const NOTE_BOX_LIMIT = 20;
+const STUDY_CHAIRS = /^study-[ab]$/; // 2인 스터디룸 의자 (자리를 모르는 상대의 기본 자리)
+const COFFEE_PRICE = 1;
+const COFFEE_BUFF_MS = 10 * 60 * 1000;
+const COFFEE_MENU = { americano: { name: '아메리카노', emoji: '☕' }, latte: { name: '라떼', emoji: '☕' }, cocoa: { name: '코코아', emoji: '☕' } };
 
 function seatCenter(room, seat) {
   return { x: (seat.x + 0.5) * room.tileSize, y: (seat.y + 1) * room.tileSize };
@@ -129,6 +145,11 @@ class World extends EventEmitter {
     this.players = new Map(); // id → player
     this.sessions = new Map(); // token → player
     this.seatOwners = new Map(); // seatId → playerId
+    this.seatLast = new Map(); // 15단계: seatId → 마지막에 앉았던 닉네임 (쪽지·커피 배달 대상 자리, 코르크보드 팻말)
+    this.lastSeatOf = new Map(); // 닉네임 → 마지막에 앉았던 seatId
+    this.pendingGifts = []; // 15단계: 아직 안 받은 커피 (자리에 머그로 놓여 있음)
+    this.unreadCount = new Map(); // 15단계: 닉네임 → 앉아서 확인한 안 읽은 쪽지 수 (seatItems 아이콘)
+    this.celebrated = new Set(); // 15단계: `${nickname}|${ddayId}|${date}` 당일 연출 1회
     this.graceTimers = new Map(); // playerId → timeout
     this.chatLimiter = createRateLimiter();
     this.pomodoroOpts = { ...pomodoro, now }; // 개인 타이머 기본값 (테스트: focusMs/breakMs)
@@ -178,6 +199,7 @@ class World extends EventEmitter {
       if (this.ownsStudy) await this.study.refreshTotals();
       await this.loadLayout();
       await this.loadPets();
+      await this.loadSocial();
       // 강아지 이름: 스터디의 'dog' 행. 독립 실행(스터디 없음)이면 옛 users.dog_name 의 마지막 값
       if (this.dog && this.dogRow && this.dogRow.name) this.dog.setName(this.dogRow.name);
       else if (this.dog && this.studyId === null) {
@@ -208,7 +230,7 @@ class World extends EventEmitter {
 
   /** 다른 클라이언트에 보내는 공개 정보 */
   publicPlayer(p) {
-    return { id: p.id, nickname: p.nickname, avatar: p.avatar, x: p.x, y: p.y, facing: p.facing, moving: p.moving, status: p.status, seatId: p.seatId, connected: p.connected, listening: p.listening || null, goal: this.publicGoal(p.nickname), pomodoro: this.publicPomodoro(p), editing: Boolean(p.editing), deskItems: this.publicDeskItems(p), vehicle: this.publicVehicle(p), studyName: p.homeStudy ? p.homeStudy.name : null };
+    return { id: p.id, nickname: p.nickname, avatar: p.avatar, x: p.x, y: p.y, facing: p.facing, moving: p.moving, status: p.status, seatId: p.seatId, connected: p.connected, listening: p.listening || null, goal: this.publicGoal(p.nickname), pomodoro: this.publicPomodoro(p), editing: Boolean(p.editing), deskItems: this.publicDeskItems(p), vehicle: this.publicVehicle(p), studyName: p.homeStudy ? p.homeStudy.name : null, coffeeBuffUntil: this.coffeeBuffOf(p) };
   }
 
   /** 탑승 중인 탈것 (12단계): { type, color, decal, angle, speed } | null */
@@ -324,6 +346,13 @@ class World extends EventEmitter {
       await this.loadDesk(player);
       out.vehicleConfig = this.vehicleConfigOf(player);
       out.statsPublic = Boolean(player.statsPublic);
+      if (!this.outdoor) {
+        // 15단계: D-day 칠판·당일 연출(1회) · 자리에 있는 안 읽은 쪽지 · 놓인 커피
+        const dd = await this.listDdays(player);
+        out.ddays = { board: dd.board, celebrate: await this.ddayCelebrations(player) };
+        out.unreadNotes = (await this.store.unreadNotes(player.nickname, this.scopeId)).map((n) => this.publicNote(n));
+        out.pendingGifts = this.pendingGifts.filter((g) => g.toNickname === player.nickname).map((g) => this.publicGift(g));
+      }
     } catch (err) {
       this.log.warn(`[world] 프로필 로드 실패 (${player.nickname}): ${err.message}`);
     }
@@ -447,7 +476,8 @@ class World extends EventEmitter {
   seat(seatId) {
     if (typeof seatId !== 'string') return null;
     if (seatId.startsWith('f:')) return this.layoutSeat(this.layout.get(Number(seatId.slice(2))));
-    return this.room.seats.find((s) => s.id === seatId) || null;
+    const id = canonicalSeatId(this.room, seatId); // 15단계: 옛 좌석 id 별칭
+    return this.room.seats.find((s) => s.id === id) || null;
   }
 
   /** 배치 항목의 좌석 { id: 'f:<id>', x, y, facing, kind, layoutId } | null */
@@ -473,13 +503,14 @@ class World extends EventEmitter {
     if (player.seatId) return { ok: false, error: 'already_seated' };
     const seat = this.seat(seatId);
     if (!seat) return { ok: false, error: 'no_seat' };
-    const owner = this.seatOwners.get(seatId);
+    const owner = this.seatOwners.get(seat.id);
     if (owner && owner !== player.id) return { ok: false, error: 'occupied' };
     if (player.vehicle) return { ok: false, error: 'riding' }; // 12단계: 탑승 중엔 앉을 수 없다
     const c = seatCenter(this.room, seat);
     if (Math.hypot(c.x - player.x, c.y - player.y) > SIT_RANGE_PX) return { ok: false, error: 'too_far' };
-    this.seatOwners.set(seatId, player.id);
-    player.seatId = seatId;
+    this.seatOwners.set(seat.id, player.id); // 별칭으로 왔어도 새 id 로 기록
+    player.seatId = seat.id;
+    this.rememberSeat(player, seat.id);
     player.x = c.x;
     player.y = c.y;
     player.facing = seat.facing;
@@ -489,6 +520,7 @@ class World extends EventEmitter {
     // 침대·안마의자는 자동 휴식 (세션이 쌓이지 않는다). 일어나면 앉기 전 상태로. 뽀모도로 휴식 구간에 앉으면 타이머를 따라 휴식 중
     player.status = this.outdoor || RESTING_SEATS.has(seat.kind) || this.inPomodoroBreak(player) ? 'rest' : 'study'; // 야외 벤치는 휴식만
     this.study.sync(player);
+    if (!this.outdoor) this.deliverPending(player).catch((err) => this.log.warn(`[world] 쪽지·커피 전달 실패 (${player.nickname}): ${err.message}`));
     return { ok: true, seat };
   }
 
@@ -507,11 +539,24 @@ class World extends EventEmitter {
     player.budget = maxBudget();
     player.lastMoveAt = this.now();
     this.study.sync(player);
+    if (this.unreadCount.get(player.nickname)) this.emit('seatItems', this.seatItems()); // 일어나면 쪽지 아이콘은 사라진다
     return { ok: true };
   }
 
   seatSnapshot() {
     return Object.fromEntries(this.seatOwners);
+  }
+
+  /** 15단계: 좌석마다 마지막에 앉았던 닉네임 (한 사람은 한 자리만 — 다른 자리에 앉으면 옛 자리는 지운다) */
+  rememberSeat(player, seatId) {
+    const prev = this.lastSeatOf.get(player.nickname);
+    if (prev && prev !== seatId && this.seatLast.get(prev) === player.nickname) this.seatLast.delete(prev);
+    this.lastSeatOf.set(player.nickname, seatId);
+    this.seatLast.set(seatId, player.nickname);
+  }
+
+  seatLastSnapshot() {
+    return Object.fromEntries(this.seatLast);
   }
 
   // ── 상태 / 채팅 / 이모지 ────────────────────────────────────────────
@@ -856,11 +901,31 @@ class World extends EventEmitter {
     return { ok: true, editing: player.editing };
   }
 
+  /**
+   * 저장된 가구 배치 로드. 15단계: 맵이 바뀌어(2인 스터디룸) 이제 놓을 수 없는 자리(새 가구·벽·좌석 위)에 있던 항목은
+   * 저장소에서 지워 놓은 사람 인벤토리로 돌려보낸다 (인벤토리 행은 그대로라 팔레트에 다시 보인다). 반환: 회수한 항목 목록
+   */
   async loadLayout() {
     const rows = await this.store.roomLayout(this.scopeId);
     this.layout.clear();
-    for (const e of rows) if (this.shop.get(e.itemId)) this.layout.set(e.id, e);
+    const kept = [];
+    const recalled = [];
+    for (const e of rows) {
+      const item = this.shop.get(e.itemId);
+      if (!item) continue;
+      const v = validatePlacement(this.baseRoom, item, { id: e.id, x: e.x, y: e.y, rotation: e.rotation || 0 }, kept, (id) => this.shop.get(id));
+      if (!v.ok) {
+        try { await this.store.removeLayout(this.scopeId, e.id); } catch (err) { this.log.warn(`[world] 가구 회수 실패 (${e.id}): ${err.message}`); continue; }
+        recalled.push({ ...e, error: v.error });
+        this.log.log(`[world] 맵 개편으로 가구 회수: ${e.itemId} (${e.x},${e.y}) → ${e.placedBy || '?'} 인벤토리 (${v.error})`);
+        continue;
+      }
+      kept.push(e);
+      this.layout.set(e.id, e);
+    }
+    this.recalledLayout = recalled;
     this.rebuildCollision();
+    return recalled;
   }
 
   listLayout() {
@@ -1032,6 +1097,224 @@ class World extends EventEmitter {
     const inv = await this.store.addInventory(player.nickname, item.id, { name: item.name, price: item.price, tab: item.tab, category: item.category, variant: v.variant, ...(skill ? { target: String(target) } : {}), ...item.meta }, this.now());
     if (skill) await skill.apply();
     return { ok: true, balance: r.balance, item, inventory: inv };
+  }
+
+  // ── 15단계: 쪽지 · 커피 배달 · D-day ─────────────────────────────────
+  async loadSocial() {
+    this.pendingGifts = await this.store.pendingGifts(this.scopeId);
+  }
+
+  async isMember(nickname) {
+    return (await this.memberNicknames()).includes(nickname);
+  }
+
+  playerByNickname(nickname) {
+    for (const p of this.players.values()) if (p.nickname === nickname) return p;
+    return null;
+  }
+
+  /**
+   * 상대의 "자리": 마지막에 앉았던 좌석 → 지금 앉아 있는 좌석 → 2인 스터디룸 의자(상대 것이거나 주인이 없는 빈 의자, exclude 의 자리는 제외) → null
+   */
+  seatFor(nickname, exclude = null) {
+    const last = this.lastSeatOf.get(nickname);
+    if (last && this.seat(last)) return this.seat(last);
+    const p = this.playerByNickname(nickname);
+    if (p && p.seatId && this.seat(p.seatId)) return this.seat(p.seatId);
+    const chairs = this.room.seats.filter((s) => STUDY_CHAIRS.test(s.id));
+    const ownerOf = (s) => this.seatLast.get(s.id) || null;
+    return chairs.find((s) => ownerOf(s) === nickname)
+      || chairs.find((s) => !ownerOf(s) && !this.seatOwners.has(s.id))
+      || chairs.find((s) => ownerOf(s) !== exclude && !this.seatOwners.has(s.id))
+      || null;
+  }
+
+  publicNote(n) {
+    return { id: n.id, from: n.fromNickname, to: n.toNickname, text: n.text, seatId: n.seatId || null, createdAt: n.createdAt, readAt: n.readAt || null };
+  }
+
+  /**
+   * 쪽지 남기기: 상대(스터디 멤버, 본인 제외)의 자리 앞에서 한 줄(≤60자).
+   * @returns {{ ok: true, note, seatId, delivered } | { ok: false, error: 'not_indoor' | 'invalid_target' | 'not_member' | 'empty' | 'too_long' | 'no_seat' | 'too_far' }}
+   */
+  async leaveNote(player, { to, text } = {}) {
+    if (this.outdoor) return { ok: false, error: 'not_indoor' };
+    const target = String(to ?? '').trim();
+    if (!target || target === player.nickname) return { ok: false, error: 'invalid_target' };
+    if (!(await this.isMember(target))) return { ok: false, error: 'not_member' };
+    const clean = String(text ?? '').replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim();
+    if (!clean) return { ok: false, error: 'empty' };
+    if ([...clean].length > NOTE_MAX) return { ok: false, error: 'too_long' };
+    const seat = this.seatFor(target, player.nickname);
+    if (!seat) return { ok: false, error: 'no_seat' };
+    const c = seatCenter(this.room, seat);
+    if (Math.hypot(c.x - player.x, c.y - player.y) > NOTE_RANGE_PX) return { ok: false, error: 'too_far' };
+    const note = await this.store.addNote({ studyId: this.scopeId, from: player.nickname, to: target, seatId: seat.id, text: clean }, this.now());
+    const recipient = this.playerByNickname(target);
+    const seated = Boolean(recipient && recipient.seatId === seat.id);
+    this.emit('note', { note: this.publicNote(note), seatId: seat.id, by: player, recipient });
+    if (seated) await this.deliverNotes(recipient);
+    return { ok: true, note: this.publicNote(note), seatId: seat.id, delivered: seated };
+  }
+
+  /** 앉은 사람의 안 읽은 쪽지 → 'notesWaiting' (책상 위 아이콘 + 토스트). 없으면 조용히 */
+  async deliverNotes(player) {
+    if (!player.seatId || player.removed) return [];
+    const list = await this.store.unreadNotes(player.nickname, this.scopeId);
+    this.unreadCount.set(player.nickname, list.length);
+    if (list.length) this.emit('notesWaiting', { player, seatId: player.seatId, notes: list.map((n) => this.publicNote(n)) });
+    return list;
+  }
+
+  /** 앉을 때: 쪽지 알림 + 자리에 놓인 커피 받기 + 아이콘 갱신 */
+  async deliverPending(player) {
+    await this.deliverNotes(player);
+    for (const g of this.pendingGifts.filter((x) => x.toNickname === player.nickname)) await this.receiveGift(player, g);
+    this.emit('seatItems', this.seatItems());
+  }
+
+  /** 좌석마다 놓인 머그(안 받은 커피)와 안 읽은 쪽지 수(받는 사람이 앉아 있을 때만) */
+  seatItems() {
+    const mugs = {};
+    for (const g of this.pendingGifts) {
+      if (!g.seatId) continue;
+      if (!mugs[g.seatId]) mugs[g.seatId] = [];
+      mugs[g.seatId].push({ id: g.id, menu: g.menu, from: g.fromNickname, to: g.toNickname });
+    }
+    const notes = {};
+    for (const [nick, n] of this.unreadCount) {
+      if (!n) continue;
+      const p = this.playerByNickname(nick);
+      if (p && p.seatId) notes[p.seatId] = n;
+    }
+    return { mugs, notes };
+  }
+
+  /** 앉은 채 E: 안 읽은 쪽지를 모두 읽음 처리하고 돌려준다 */
+  async readNotes(player) {
+    if (!player.seatId) return { ok: false, error: 'not_seated' };
+    const list = await this.store.unreadNotes(player.nickname, this.scopeId);
+    if (list.length) await this.store.markNotesRead(player.nickname, list.map((n) => n.id), this.now());
+    this.unreadCount.set(player.nickname, 0);
+    this.emit('seatItems', this.seatItems());
+    return { ok: true, notes: list.map((n) => this.publicNote({ ...n, readAt: this.now() })) };
+  }
+
+  /** 쪽지함: 받은/보낸 최근 20개 */
+  async noteBox(player) {
+    const { received, sent } = await this.store.listNotes(player.nickname, { studyId: this.scopeId, limit: NOTE_BOX_LIMIT });
+    return { ok: true, received: received.map((n) => this.publicNote(n)), sent: sent.map((n) => this.publicNote(n)), unread: received.filter((n) => !n.readAt).length };
+  }
+
+  publicGift(g) {
+    const m = COFFEE_MENU[g.menu] || { name: g.menu, emoji: '☕' };
+    return { id: g.id, from: g.fromNickname, to: g.toNickname, menu: g.menu, menuName: m.name, emoji: m.emoji, seatId: g.seatId || null, createdAt: g.createdAt };
+  }
+
+  coffeeBuffOf(p) {
+    return p.coffeeBuffUntil && p.coffeeBuffUntil > this.now() ? p.coffeeBuffUntil : null;
+  }
+
+  applyCoffeeBuff(p) {
+    p.coffeeBuffUntil = this.now() + COFFEE_BUFF_MS;
+    this.emit('buff', { player: p });
+  }
+
+  /** 커피 배달 대상: 스터디 멤버 (접속·착석·자리 유무). 본인 포함 */
+  async coffeeTargets(player) {
+    const names = await this.memberNicknames();
+    return { ok: true, price: COFFEE_PRICE, menu: Object.entries(COFFEE_MENU).map(([id, m]) => ({ id, ...m })), members: names.map((n) => { const p = this.playerByNickname(n); return { nickname: n, self: n === player.nickname, online: Boolean(p && p.connected), seated: Boolean(p && p.seatId), hasSeat: Boolean(this.seatFor(n, player.nickname)) }; }) };
+  }
+
+  /**
+   * 커피 배달: 커피 코너 앞에서 menu(아메리카노·라떼·코코아, 1코인)를 to(멤버 또는 본인)에게.
+   * 상대가 앉아 있으면(또는 본인이면) 바로 전달 + 10분 버프, 아니면 자리에 머그(pending — 앉을 때 받는다).
+   * @returns {{ ok: true, gift, delivered, balance } | { ok: false, error: 'not_indoor' | 'too_far' | 'invalid_menu' | 'not_member' | 'no_seat' | 'insufficient' | 'store_error', balance? }}
+   */
+  async giftCoffee(player, { menu, to } = {}) {
+    if (this.outdoor) return { ok: false, error: 'not_indoor' };
+    const it = interactableById(this.room, 'coffee');
+    if (!it || Math.hypot(it.x - player.x, it.y - player.y) > it.range) return { ok: false, error: 'too_far' };
+    if (!COFFEE_MENU[menu]) return { ok: false, error: 'invalid_menu' };
+    const target = String(to ?? player.nickname).trim() || player.nickname;
+    const self = target === player.nickname;
+    if (!self && !(await this.isMember(target))) return { ok: false, error: 'not_member' };
+    const recipient = self ? player : this.playerByNickname(target);
+    const seat = self ? null : (recipient && recipient.seatId ? this.seat(recipient.seatId) : this.seatFor(target, player.nickname));
+    if (!self && !seat) return { ok: false, error: 'no_seat' };
+    const pay = await this.coinTask(player.nickname, async () => {
+      const res = await this.store.adjustCoins(player.nickname, -COFFEE_PRICE, `coffee:${menu}`, this.now());
+      if (res.ok) this.emit('coins', { nickname: player.nickname, playerId: player.id, delta: -COFFEE_PRICE, reason: `coffee:${menu}`, balance: res.balance });
+      return res;
+    }, `-${COFFEE_PRICE}, coffee:${menu}`);
+    if (!pay) return { ok: false, error: 'store_error' };
+    if (!pay.ok) return { ok: false, error: pay.error, balance: pay.balance };
+    const now = this.now();
+    const deliverNow = self || Boolean(recipient && recipient.seatId);
+    const gift = await this.store.addCoffeeGift({ studyId: this.scopeId, from: player.nickname, to: target, seatId: seat ? seat.id : player.seatId || null, menu, receivedAt: deliverNow ? now : null }, now);
+    if (deliverNow) {
+      this.applyCoffeeBuff(recipient);
+      this.emit('coffee', { gift: this.publicGift(gift), by: player, recipient, seatId: gift.seatId, delivered: true, self, late: false });
+    } else {
+      this.pendingGifts.push(gift);
+      this.emit('coffee', { gift: this.publicGift(gift), by: player, recipient: null, seatId: seat.id, delivered: false, self: false, late: false });
+      this.emit('seatItems', this.seatItems());
+    }
+    return { ok: true, gift: this.publicGift(gift), delivered: deliverNow, balance: pay.balance };
+  }
+
+  /** 자리에 놓여 있던 커피를 받는다 (앉을 때) */
+  async receiveGift(player, gift) {
+    await this.store.markGiftReceived(gift.id, this.now());
+    this.pendingGifts = this.pendingGifts.filter((g) => g.id !== gift.id);
+    this.applyCoffeeBuff(player);
+    this.emit('coffee', { gift: this.publicGift(gift), by: null, recipient: player, seatId: gift.seatId, delivered: true, self: false, late: true });
+  }
+
+  // ── D-day (15단계) ──────────────────────────────────────────────────
+  async listDdays(player) {
+    const rows = await this.store.listDdays(player.nickname, this.scopeId);
+    const now = this.now();
+    const ddays = rows.filter((d) => Dday.visible(d, now, this.tz)).map((d) => ({ ...Dday.decorate(d, now, this.tz), mine: d.nickname === player.nickname, shared: d.studyId !== null && d.studyId !== undefined }));
+    ddays.sort((a, b) => a.daysLeft - b.daysLeft);
+    return { ok: true, ddays, board: Dday.forBoard(rows, now, this.tz) };
+  }
+
+  /** 등록: 제목 12자 · 날짜 · 종류(exam/anniversary/other) · 스터디 공용 여부 */
+  async addDday(player, payload = {}) {
+    const v = Dday.validate(payload);
+    if (!v.ok) return v;
+    const { title, date, kind, shared } = v.values;
+    const row = await this.store.addDday({ studyId: shared ? this.scopeId : null, nickname: player.nickname, title, date, kind }, this.now());
+    if (shared) this.emit('ddays', { by: player });
+    return { ok: true, dday: Dday.decorate(row, this.now(), this.tz), ...(await this.listDdays(player)) };
+  }
+
+  /** 삭제: 만든 사람만 */
+  async deleteDday(player, id) {
+    const rows = await this.store.listDdays(player.nickname, this.scopeId);
+    const row = rows.find((d) => d.id === Number(id));
+    if (!row) return { ok: false, error: 'not_found' };
+    if (row.nickname !== player.nickname) return { ok: false, error: 'forbidden' };
+    await this.store.deleteDday(row.id, player.nickname);
+    if (row.studyId !== null && row.studyId !== undefined) this.emit('ddays', { by: player });
+    return { ok: true, ...(await this.listDdays(player)) };
+  }
+
+  /** 오늘이 D-day 인 것 중 이 사람에게 아직 연출하지 않은 것 (사람·D-day·날짜마다 1회) */
+  async ddayCelebrations(player) {
+    const rows = await this.store.listDdays(player.nickname, this.scopeId);
+    const now = this.now();
+    const today = this.today();
+    const out = [];
+    for (const d of rows) {
+      if (Dday.daysLeft(d.date, now, this.tz) !== 0) continue;
+      const key = `${player.nickname}|${Dday.celebrationKey(d, today)}`;
+      if (this.celebrated.has(key)) continue;
+      this.celebrated.add(key);
+      out.push({ ...Dday.decorate(d, now, this.tz), ...Dday.celebration(d) });
+    }
+    return out;
   }
 
   // ── 오늘 목표 / 랭킹 / 할 일 (영구 데이터) ──────────────────────────
@@ -1512,4 +1795,4 @@ class World extends EventEmitter {
   }
 }
 
-module.exports = { World, GRACE_MS, SIT_RANGE_PX, EMOJIS, STATUSES, MANUAL_STATUSES, LISTENING_MAX, GOAL_TEXT_MAX, GOAL_MIN, GOAL_MAX, GOAL_STEP, TODO_MAX, LOCK_MS, DESK_SLOTS, RESTING_SEATS, MAX_SHARED_PETS, PET_NAME_MAX, WEEKLY_BONUS, TANK_MAX, seatCenter };
+module.exports = { World, GRACE_MS, SIT_RANGE_PX, EMOJIS, STATUSES, MANUAL_STATUSES, LISTENING_MAX, GOAL_TEXT_MAX, GOAL_MIN, GOAL_MAX, GOAL_STEP, TODO_MAX, LOCK_MS, DESK_SLOTS, RESTING_SEATS, MAX_SHARED_PETS, PET_NAME_MAX, WEEKLY_BONUS, TANK_MAX, NOTE_MAX, NOTE_RANGE_PX, NOTE_BOX_LIMIT, COFFEE_PRICE, COFFEE_BUFF_MS, COFFEE_MENU, seatCenter };

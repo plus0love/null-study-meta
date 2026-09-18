@@ -18,8 +18,8 @@ const { isBlocked } = require('../rooms/build');
 const { normalizeNickname } = require('./nickname');
 
 const TICK_MS = 100; // 10Hz
-const NEAR_PX = 48; // 플레이어가 이 안에 오면 쳐다본다
 const PET_RANGE_PX = 56; // 쓰다듬기 가능 거리
+const NEAR_PX = PET_RANGE_PX; // 플레이어가 이 안에 오면 쳐다본다 (15단계: 쓰다듬기 힌트가 뜨는 거리와 같게 — 힌트가 보이면 늘 쳐다본다)
 const PET_COOLDOWN_MS = 3000;
 const NAME_MAX = 8;
 const SPEED = { wander: 40, stroll: 60, home: 50 }; // px/s

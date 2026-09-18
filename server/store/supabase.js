@@ -5,6 +5,7 @@
  * 집계는 SQL 함수(study_totals / attendance_streaks / list_todos / coin_stats)에 시간대를 넘겨 DB 에서 계산한다.
  * 코인 증감(adjust_coins)은 잔액 확인·차감·원장 기록을 한 트랜잭션(plpgsql)으로 처리해 동시 요청에도 음수가 되지 않는다.
  * 11단계: studies / study_members / study_goal_rewards / study_access(기기 토큰 해시). room_layout · room_pets 는 study_id 로 스터디마다 나뉜다.
+ * 15단계: notes(쪽지) · coffee_gifts(커피 배달) · ddays(D-day). 인터페이스는 memory.js 와 같다.
  */
 const { DEFAULT_TZ } = require('./stats');
 
@@ -24,7 +25,7 @@ function createSupabaseStore({ url, key }) {
   };
   const userRow = (r) => (r ? { nickname: r.nickname, avatar: r.avatar, dogName: r.dog_name, coins: Number(r.coins) || 0, coinCarrySeconds: Number(r.coin_carry_seconds) || 0, deskItems: Array.isArray(r.desk_items) ? r.desk_items : [null, null, null], layoutLock: Boolean(r.layout_lock), petConfig: r.pet_config || null, vehicleConfig: r.vehicle_config || null, statsPublic: Boolean(r.stats_public), createdAt: ms(r.created_at), updatedAt: ms(r.updated_at) } : null);
   const trackRow = (r) => ({ id: r.id, nickname: r.nickname, studyId: r.study_id ?? null, vehicle: r.vehicle, ms: Number(r.ms), createdAt: ms(r.created_at) });
-  const studyRow = (r) => (r ? { id: r.id, code: r.code, name: r.name, passwordHash: r.password_hash || null, ownerNickname: r.owner_nickname || null, maxPlayers: Number(r.max_players) || 8, weeklyGoalMinutes: Number(r.weekly_goal_minutes) || 1200, editPolicy: r.edit_policy || 'anyone', passwordChangedAt: ms(r.password_changed_at), createdAt: ms(r.created_at), lastActiveAt: ms(r.last_active_at) } : null);
+  const studyRow = (r) => (r ? { id: r.id, code: r.code, name: r.name, passwordHash: r.password_hash || null, ownerNickname: r.owner_nickname || null, maxPlayers: Number(r.max_players) || 8, weeklyGoalMinutes: Number(r.weekly_goal_minutes) || 1200, editPolicy: r.edit_policy || 'anyone', roomLabel: r.room_label || null, passwordChangedAt: ms(r.password_changed_at), createdAt: ms(r.created_at), lastActiveAt: ms(r.last_active_at) } : null);
   const memberRow = (r) => ({ studyId: r.study_id, nickname: r.nickname, joinedAt: ms(r.joined_at), lastSeenAt: ms(r.last_seen_at) });
   const accessRow = (r) => ({ id: r.id, studyId: r.study_id, tokenHash: r.token_hash, nickname: r.nickname, createdAt: ms(r.created_at), lastUsedAt: ms(r.last_used_at) });
   const rewardRow = (r) => ({ id: r.id, studyId: r.study_id, weekStart: r.week_start, nickname: r.nickname, createdAt: ms(r.created_at), awardedAt: ms(r.awarded_at) });
@@ -33,6 +34,9 @@ function createSupabaseStore({ url, key }) {
   const ledgerRow = (r) => ({ id: r.id, nickname: r.nickname, delta: Number(r.delta), reason: r.reason, createdAt: ms(r.created_at) });
   const invRow = (r) => ({ id: r.id, nickname: r.nickname, itemId: r.item_id, acquiredAt: ms(r.acquired_at), meta: r.meta || {} });
   const todoRow = (r) => ({ id: r.id, nickname: r.nickname, text: r.text, done: r.done, createdAt: ms(r.created_at), doneAt: ms(r.done_at), carried: Boolean(r.carried) });
+  const noteRow = (r) => ({ id: r.id, studyId: r.study_id ?? null, fromNickname: r.from_nickname, toNickname: r.to_nickname, seatId: r.seat_id || null, text: r.text, createdAt: ms(r.created_at), readAt: ms(r.read_at) });
+  const giftRow = (r) => ({ id: r.id, studyId: r.study_id ?? null, fromNickname: r.from_nickname, toNickname: r.to_nickname, seatId: r.seat_id || null, menu: r.menu, createdAt: ms(r.created_at), receivedAt: ms(r.received_at) });
+  const ddayRow = (r) => ({ id: r.id, studyId: r.study_id ?? null, nickname: r.nickname, title: r.title, date: r.date, kind: r.kind, createdAt: ms(r.created_at) });
 
   return {
     kind: 'supabase',
@@ -238,6 +242,7 @@ function createSupabaseStore({ url, key }) {
       if (patch.maxPlayers !== undefined) p.max_players = patch.maxPlayers;
       if (patch.weeklyGoalMinutes !== undefined) p.weekly_goal_minutes = patch.weeklyGoalMinutes;
       if (patch.editPolicy !== undefined) p.edit_policy = patch.editPolicy;
+      if (patch.roomLabel !== undefined) p.room_label = patch.roomLabel;
       if (patch.passwordHash !== undefined) { p.password_hash = patch.passwordHash; p.password_changed_at = iso(now); }
       if (!Object.keys(p).length) return this.getStudy(id);
       const r = check(await client.from('studies').update(p).eq('id', id).select().maybeSingle());
@@ -380,6 +385,55 @@ function createSupabaseStore({ url, key }) {
     async setPetTank(roomPetId, tank) {
       const rows = check(await client.from('room_pets').update({ tank: Array.isArray(tank) ? tank : [] }).eq('id', roomPetId).select('tank')) || [];
       return rows[0] ? rows[0].tank : null;
+    },
+
+    // ── 쪽지 · 커피 배달 · D-day (15단계) ────────────────────────────
+    async addNote({ studyId, from, to, seatId = null, text }, now = Date.now()) {
+      await ensureUser(from);
+      return noteRow(check(await client.from('notes').insert({ study_id: studyId ?? null, from_nickname: from, to_nickname: to, seat_id: seatId, text, created_at: iso(now) }).select().single()));
+    },
+    async unreadNotes(to, studyId) {
+      let q = client.from('notes').select('*').eq('to_nickname', to).is('read_at', null).order('created_at');
+      if (studyId !== undefined) q = studyId === null ? q.is('study_id', null) : q.eq('study_id', studyId);
+      return (check(await q) || []).map(noteRow);
+    },
+    async markNotesRead(to, ids, now = Date.now()) {
+      if (!ids.length) return [];
+      const rows = check(await client.from('notes').update({ read_at: iso(now) }).eq('to_nickname', to).is('read_at', null).in('id', ids.map(Number)).select()) || [];
+      return rows.map(noteRow);
+    },
+    async listNotes(nickname, { studyId, limit = 20 } = {}) {
+      const scoped = (q) => (studyId === undefined ? q : studyId === null ? q.is('study_id', null) : q.eq('study_id', studyId));
+      const received = check(await scoped(client.from('notes').select('*').eq('to_nickname', nickname)).order('created_at', { ascending: false }).limit(limit)) || [];
+      const sent = check(await scoped(client.from('notes').select('*').eq('from_nickname', nickname)).order('created_at', { ascending: false }).limit(limit)) || [];
+      return { received: received.map(noteRow), sent: sent.map(noteRow) };
+    },
+    async addCoffeeGift({ studyId, from, to, seatId = null, menu, receivedAt = null }, now = Date.now()) {
+      await ensureUser(from);
+      return giftRow(check(await client.from('coffee_gifts').insert({ study_id: studyId ?? null, from_nickname: from, to_nickname: to, seat_id: seatId, menu, created_at: iso(now), received_at: receivedAt ? iso(receivedAt) : null }).select().single()));
+    },
+    async pendingGifts(studyId, to) {
+      let q = client.from('coffee_gifts').select('*').is('received_at', null).order('created_at');
+      q = studyId === null || studyId === undefined ? q.is('study_id', null) : q.eq('study_id', studyId);
+      if (to !== undefined) q = q.eq('to_nickname', to);
+      return (check(await q) || []).map(giftRow);
+    },
+    async markGiftReceived(id, now = Date.now()) {
+      const r = check(await client.from('coffee_gifts').update({ received_at: iso(now) }).eq('id', id).select().maybeSingle());
+      return r ? giftRow(r) : null;
+    },
+    async addDday({ studyId = null, nickname, title, date, kind }, now = Date.now()) {
+      await ensureUser(nickname);
+      return ddayRow(check(await client.from('ddays').insert({ study_id: studyId ?? null, nickname, title, date, kind, created_at: iso(now) }).select().single()));
+    },
+    async listDdays(nickname, studyId) {
+      const own = check(await client.from('ddays').select('*').eq('nickname', nickname).is('study_id', null)) || [];
+      const shared = studyId !== undefined && studyId !== null ? check(await client.from('ddays').select('*').eq('study_id', studyId)) || [] : [];
+      return [...own, ...shared].map(ddayRow);
+    },
+    async deleteDday(id, nickname) {
+      const rows = check(await client.from('ddays').delete().eq('id', id).eq('nickname', nickname).select('id'));
+      return Boolean(rows && rows.length);
     },
 
     // ── 기록 초기화 (7단계) ───────────────────────────────────────────

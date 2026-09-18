@@ -865,3 +865,26 @@ body.outdoor #btn-edit { display: none; }
 .profile-box { width: min(320px, calc(100vw - 32px)); }
 .profile-box #profile-week { font-size: 14px; }
 @media (max-width: 720px) { .board-cols { grid-template-columns: 1fr; } }
+
+/* ── 15단계: 쪽지 · 커피 · D-day ───────────────────────────────────── */
+.note-list li { flex-direction: column; align-items: flex-start; gap: 3px; }
+.note-list li .note-meta { font-size: 11px; color: var(--cream-faint); display: flex; gap: 8px; width: 100%; }
+.note-list li .note-meta .time { margin-left: auto; }
+.note-list li .note-text { font-size: 13px; color: var(--cream); white-space: pre-wrap; word-break: break-all; }
+.note-list li.unread { border: 1px solid var(--line-strong); }
+.note-list li.empty { color: var(--cream-faint); }
+.coffee-menu { display: flex; gap: 8px; }
+.coffee-menu button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 6px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); color: var(--cream); font-size: 12px; cursor: pointer; }
+.coffee-menu button em { font-style: normal; font-size: 20px; }
+.coffee-menu button.active { border-color: var(--amber); background: var(--amber-dim); color: var(--amber-2); }
+#coffee-to { width: 100%; }
+.dday-form { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; align-items: center; }
+.dday-form input[type="text"] { grid-column: 1 / -1; }
+.dday-form .opt { font-size: 12px; }
+.dday-list li { gap: 8px; }
+.dday-list li .dd { font-family: var(--mono, monospace); font-weight: 700; color: var(--cream-dim); min-width: 46px; }
+.dday-list li .dd.soon { color: var(--amber-2); }
+.dday-list li .dd.today { color: var(--danger); }
+.dday-list li .kind { font-size: 11px; color: var(--cream-faint); }
+.dday-list li .shared { font-size: 10px; padding: 1px 6px; border-radius: 999px; background: rgba(159, 211, 154, 0.14); color: var(--ok); }
+.dday-list li button { margin-left: auto; }

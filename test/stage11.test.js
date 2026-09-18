@@ -108,7 +108,7 @@ test('허브: 코드 6자(헷갈리는 글자 제외) · 이름 정규화 · 생
   assert.equal((await hub.createStudy({ name: '공개방', ownerNickname: '민수' })).access, null, '공개 스터디는 토큰이 없다');
   assert.ok(await store.findAccess(r.study.id, hashToken(r.access)), '저장소엔 해시만');
   assert.equal((await store.findAccess(r.study.id, r.access)), null, '원문으로는 못 찾는다');
-  assert.deepEqual({ ...r.study, id: 0, code: '', createdAt: 0 }, { id: 0, code: '', name: '새벽 코딩방', locked: true, ownerNickname: '민수', maxPlayers: 8, weeklyGoalMinutes: 1200, editPolicy: 'anyone', online: 0, createdAt: 0 });
+  assert.deepEqual({ ...r.study, id: 0, code: '', createdAt: 0 }, { id: 0, code: '', name: '새벽 코딩방', locked: true, ownerNickname: '민수', maxPlayers: 8, weeklyGoalMinutes: 1200, editPolicy: 'anyone', roomLabel: null, online: 0, createdAt: 0 });
   assert.equal('passwordHash' in r.study, false, '해시는 밖으로 안 나간다');
   const row = await store.getStudy(r.study.id);
   assert.match(row.passwordHash, /^scrypt\$/);
@@ -156,7 +156,7 @@ test('허브: 로비 목록 — 내 스터디(이번 주 시간·그룹 스트�
 test('허브: 마이그레이션 — 스터디가 없고 study_id 없는 가구·펫이 있으면 기본 스터디를 만들어 옮기고 옛 강아지 이름을 잇는다 · 60일 비활성 삭제', async () => {
   const store = createMemoryStore();
   // 11단계 전: room_id 만 있고 study_id 는 없다 (memory 저장소에 직접 옛 형태로 넣는다)
-  const lamp = await store.addLayout(undefined, { itemId: 'floor_lamp', inventoryId: null, x: 22, y: 13, rotation: 0, meta: {}, placedBy: '민수' });
+  const lamp = await store.addLayout(undefined, { itemId: 'floor_lamp', inventoryId: null, x: 22, y: 15, rotation: 0, meta: {}, placedBy: '민수' });
   const dogRow = await store.addRoomPet(undefined, { itemId: 'dog', name: '사랑', releasedBy: null, cosmetics: { head: null }, skills: ['come'] });
   await store.upsertUser('민수', { dogName: '초코' });
   const { hub } = makeHub({ store });
@@ -228,7 +228,7 @@ test('허브: 월드 지연 생성 · 비면 releaseMs 뒤 해제(가구는 저�
 
   // 가구를 놓고 모두 나가면 → 해제 → 다시 들어오면 로드
   const inv = await store.addInventory('민수', 'floor_lamp', { name: '스탠드', category: 'shared' });
-  assert.equal((await j1.world.placeFurniture(j1.player, { inventoryId: inv.id, x: 22, y: 13 })).ok, true);
+  assert.equal((await j1.world.placeFurniture(j1.player, { inventoryId: inv.id, x: 22, y: 15 })).ok, true);
   j1.world.remove(j1.player.id, 'leave');
   assert.equal(hub.worlds.has(a.id), true, '바로는 안 내린다');
   await sleep(120);
@@ -278,9 +278,9 @@ test('허브: 방장 권한 — 설정 변경(비밀번호 변경 시 기기 토
   assert.deepEqual(w.setEditing(jm.player, true), { ok: false, error: 'forbidden' });
   assert.equal(w.setEditing(jo.player, true).ok, true);
   const inv = await store.addInventory('민수', 'floor_lamp', { name: '스탠드', category: 'shared' });
-  assert.deepEqual(await w.placeFurniture(jm.player, { inventoryId: inv.id, x: 22, y: 13 }), { ok: false, error: 'forbidden' });
+  assert.deepEqual(await w.placeFurniture(jm.player, { inventoryId: inv.id, x: 22, y: 15 }), { ok: false, error: 'forbidden' });
   assert.equal((await hub.updateStudy(s.code, '방장', { editPolicy: 'anyone' })).ok, true);
-  assert.equal((await w.placeFurniture(jm.player, { inventoryId: inv.id, x: 22, y: 13 })).ok, true);
+  assert.equal((await w.placeFurniture(jm.player, { inventoryId: inv.id, x: 22, y: 15 })).ok, true);
 
   // 기기 기준: 같은 닉네임이라도 토큰 없는 다른 기기는 비밀번호, 토큰 있는 기기는 생략 (소속 여부와 무관)
   jm.world.remove(jm.player.id, 'leave');
@@ -473,7 +473,7 @@ test('소켓 E2E: 로비 목록·만들기·코드 참가·없는 코드·정원
   const lamp = await ask(b, 'shop:buy', { itemId: 'floor_lamp' });
   const bWorld = srv.world;
   const pb = bWorld.players.get(jb.self.id);
-  const placed = await bWorld.placeFurniture(pb, { inventoryId: lamp.inventory.id, x: 22, y: 13 });
+  const placed = await bWorld.placeFurniture(pb, { inventoryId: lamp.inventory.id, x: 22, y: 15 });
   assert.equal(placed.ok, true);
   const aWorld = srv.hub.worlds.get(created.study.id);
   assert.equal(aWorld.listLayout().length, 0);
