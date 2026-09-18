@@ -25,6 +25,8 @@ import props_room as R  # noqa: E402
 import props_v2 as V  # noqa: E402
 import props_v3 as G  # noqa: E402
 import props_outdoor as O  # noqa: E402
+import props_outdoor2 as O2  # noqa: E402
+import props_zoo as Z  # noqa: E402
 from pixel import Canvas  # noqa: E402
 from recolor import recolor  # noqa: E402
 
@@ -252,6 +254,88 @@ def build_objects():
     add("railing_h", O.railing("H"))
     add("railing_v", O.railing("V"))
     add("telescope", O.telescope(), top=1)
+    # ── 14단계 야외 다듬기 (항상 맨 뒤에 추가) ──
+    for tone in range(4):
+        for seed in range(3):
+            add(f"grass2_{tone}_{seed}", O2.grass2(tone, seed), "floor", False)
+    for i in range(3):
+        add(f"grass_tuft_{i}", O2.grass_tuft(i), "floor", False)
+        add(f"grass_clover_{i}", O2.grass_clover(i), "floor", False)
+        add(f"grass_flowers_{i}", O2.grass_flowers(i), "floor", False)
+        add(f"grass_pebble_{i}", O2.grass_pebble(i), "floor", False)
+    for mask in range(16):
+        add(f"gravel_{mask}", O2.gravel(mask, mask), "floor", False)
+    for sides in ("N", "S", "E", "W", "NE", "NW", "SE", "SW"):
+        add(f"dirt_kerb_{sides}", O2.dirt_kerb(sides), "floor", False)
+    add("dirt_skid_0", O2.dirt_skid(0), "floor", False)
+    add("dirt_skid_1", O2.dirt_skid(1), "floor", False)
+    add("start_line_W", O2.start_line_v("W"), "floor", False)
+    add("start_line_E", O2.start_line_v("E"), "floor", False)
+    add("tire_stack", O2.tire_stack())
+    add("start_banner", O2.start_banner(), "top", False)
+    add("arch_post", O2.arch_post())
+    add("stand_bench_s", O2.stand_bench_s(), solid=False, seats=[(0, 0, "down"), (1, 0, "down"), (2, 0, "down")])
+    for n in range(1, 5):
+        add(f"corner_sign_{n}", O2.corner_sign(n))
+    add("pit_box", O2.pit_box(), top=1)
+    add("brick_0", O2.brick(0), "floor", True)
+    add("brick_1", O2.brick(1), "floor", True)
+    add("facade_window_night", O2.facade_window_night())
+    add("facade_window_day", O2.facade_window_day())
+    add("canopy", O2.canopy(), "top", False)
+    add("sign_lamp", O2.sign_lamp(), "top", False)
+    add("wall_vine_out", O2.wall_vine(), "top", False)
+    add("bike_rack", O2.bike_rack())
+    for col in ("pink", "yellow", "purple", "white"):
+        add(f"planter_{col}", O2.planter(col))
+        add(f"flowerbed_{col}", O2.flowerbed(col))
+    add("flowerbed_red", O2.flowerbed("red"))
+    add("tree_round_big", O2.tree_round_big(), top=3)
+    add("tree_birch", O2.tree_birch(), top=2)
+    add("tree_olive", O2.tree_olive(), top=2)
+    add("bush_0", O2.bush(0))
+    add("bush_1", O2.bush(1))
+    add("reed", O2.reed(), "top", False)
+    add("pond_rock", O2.pond_rock())
+    add("water_lily_f0", O2.water_lily(0), "floor", True, anim="water_lily_f1", cycle=True)
+    add("water_lily_f1", O2.water_lily(1), "floor", True, anim="water_lily_f0", cycle=True)
+    add("blanket", O2.blanket(), "floor", False)
+    add("plaza_ring2", O2.plaza_ring2(), "floor", False)
+    add("plaza_center", O2.plaza_center(), "floor", False)
+    add("kart_garage", O2.kart_garage(), top=1)
+    for lv in range(3):
+        add(f"hill_step_{lv}", O2.hill_step(lv), "floor", False)
+    # ── 14단계 B 동물원 ──
+    add("fence_h", Z.fence_h())
+    add("fence_v", Z.fence_v())
+    for k in ("nw", "ne", "sw", "se"):
+        add(f"fence_{k}", Z.fence_corner(k))
+    add("glass_fence_h", Z.glass_fence_h())
+    add("glass_fence_v", Z.glass_fence_v())
+    add("gate_post", Z.gate_post())
+    add("sand_0", Z.sand(0), "floor", False)
+    add("sand_1", Z.sand(1), "floor", False)
+    add("ice_0", Z.ice(0), "floor", False)
+    add("ice_1", Z.ice(1), "floor", False)
+    add("pool_f0", Z.pool(0), "floor", False, anim="pool_f1", cycle=True)
+    add("pool_f1", Z.pool(1), "floor", False, anim="pool_f0", cycle=True)
+    for sides in ("N", "S", "E", "W", "NE", "NW", "SE", "SW"):
+        add(f"pool_edge_{sides}", Z.pool_edge(sides), "floor", False)
+    add("photo_mark", Z.photo_mark(), "floor", False)
+    add("bamboo", Z.bamboo(), top=1)
+    add("acacia", Z.acacia(), top=3)
+    add("hay", Z.hay())
+    add("trough", Z.trough())
+    add("log", Z.log())
+    add("snow_mound", Z.snow_mound())
+    add("rope_post", Z.rope_post(), top=1)
+    add("rope", Z.rope(), "top", False)
+    add("platform", Z.platform())
+    add("zoo_sign", Z.zoo_sign())
+    add("zoo_banner", Z.zoo_banner(), "top", False)
+    add("snack_bar", Z.snack_bar(), top=1)
+    add("photo_board", Z.photo_board())
+    add("deck_post", Z.deck_railing_post())
 
 
 # ── 아틀라스 패킹 ──────────────────────────────────────────────────────

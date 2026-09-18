@@ -332,9 +332,10 @@ class BaseNpc extends EventEmitter {
 
 // ── 방 공용 펫 (강아지 + 고양이·거북이·물고기) ─────────────────────────
 class SharedPetNpc extends BaseNpc {
-  constructor(room, { home = HOME, spots = [CUSHION], speeds = SPEED, startTile = null, ...opts } = {}) {
+  constructor(room, { home = HOME, spots = [CUSHION], speeds = SPEED, startTile = null, stroll = null, ...opts } = {}) {
     super(room, { kind: opts.kind || 'pet', ...opts });
     this.home = home;
+    this.stroll = stroll || { x0: 2, y0: 3, x1: 43, y1: 24 }; // 가끔 멀리 산책하는 구역 (14단계: 야외 고양이는 자기 구역)
     this.spots = spots;
     this.speeds = speeds;
     const st = startTile || spots[0] || { x: home.x0, y: home.y0 };
@@ -373,7 +374,7 @@ class SharedPetNpc extends BaseNpc {
       if (spot && this.goTo({ tx: spot.x, ty: spot.y }, S.wander, () => this.setState('sleep', this.between(15000, 40000)))) return;
       if (!spot) { this.setState('sleep', this.between(10000, 25000)); return; }
     } else {
-      const t = this.randomTile({ x0: 2, y0: 3, x1: 43, y1: 24 });
+      const t = this.randomTile(this.stroll);
       if (t && this.goTo(t, S.stroll, () => this.setState('idle', this.between(1500, 4000)))) return;
     }
     this.setState('idle', this.between(800, 2000));
@@ -425,6 +426,16 @@ class FishNpc extends BaseNpc {
     this.y = c.y - 10; // 테이블 위
     this.state = 'sit';
     this.swimUntil = this.now();
+    this.tank = []; // 14단계: 낚시로 잡아 넣은 물고기 [{ fishId, by, at }]
+  }
+
+  setTank(tank) {
+    this.tank = Array.isArray(tank) ? tank.map((f) => ({ fishId: f.fishId, by: f.by, at: f.at })) : [];
+    this.dirty = true;
+  }
+
+  snapshot() {
+    return { ...super.snapshot(), tank: this.tank.map((f) => f.fishId) };
   }
 
   behave(now) {

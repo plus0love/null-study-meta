@@ -26,9 +26,9 @@ const outdoor = getOutdoor();
 const room = getStudyRoom();
 
 // ── 단위: 맵 ────────────────────────────────────────────────────────
-test('야외 맵: 80x50 · 문 2개(→ studyroom) · 스폰/출발선/체크포인트 걷기 가능 · 트랙은 둥근 사각 흙길 · 하늘 띠는 통과 불가 · 스터디룸 입구는 → outdoor', () => {
-  assert.equal(outdoor.width, 80);
-  assert.equal(outdoor.height, 50);
+test('야외 맵: 100x70 · 문 2개(→ studyroom) · 스폰/출발선/체크포인트 걷기 가능 · 트랙은 둥근 사각 흙길 · 하늘 띠는 통과 불가 · 스터디룸 입구는 → outdoor', () => {
+  assert.equal(outdoor.width, 100);
+  assert.equal(outdoor.height, 70);
   assert.equal(outdoor.outdoor, true);
   assert.deepEqual(outdoor.doors.map((d) => [d.x, d.y, d.to]), [[31, 19, 'studyroom'], [32, 19, 'studyroom']]);
   assert.ok(canStand(outdoor, outdoor.spawn.x, outdoor.spawn.y));
@@ -43,12 +43,12 @@ test('야외 맵: 80x50 · 문 2개(→ studyroom) · 스폰/출발선/체크포
   let cells = 0;
   for (let y = TRACK.y0; y <= TRACK.y1; y++) for (let x = TRACK.x0; x <= TRACK.x1; x++) if (isTrackCell(x, y)) cells++;
   assert.ok(cells > 300 && cells < 420, `트랙 셀 ${cells}`);
-  for (let x = 0; x < 80; x++) assert.equal(outdoor.collision[0][x], true, '하늘');
+  for (let x = 0; x < 100; x++) assert.equal(outdoor.collision[0][x], true, '하늘');
   assert.ok(outdoor.seats.length >= 20, '벤치 좌석');
   assert.ok(outdoor.seats.every((s) => !outdoor.collision[s.y][s.x]));
   assert.ok(outdoor.interactables.some((i) => i.kind === 'board') && outdoor.interactables.some((i) => i.kind === 'shop'));
-  assert.ok(outdoor.windows.length === 1 && outdoor.windows[0].w === 80 * T, '하늘 사각형');
-  assert.ok(outdoor.props.some((p) => p.name === 'scoreboard') && outdoor.props.some((p) => p.name === 'kart_stop') && outdoor.props.some((p) => p.name === 'fountain_f0'));
+  assert.ok(outdoor.windows.length === 1 && outdoor.windows[0].w === 100 * T, '하늘 사각형');
+  assert.ok(outdoor.props.some((p) => p.name === 'scoreboard') && outdoor.props.some((p) => p.name === 'kart_garage') && outdoor.props.some((p) => p.name === 'fountain_f0'));
   assert.ok(outdoor.layers.top.some((row) => row.some((i) => i !== -1)), '나무 윗부분은 top 레이어');
   // 스폰에서 출발선·전광판 앞·전망대까지 걸어서 도달
   const sp = { x: Math.floor(outdoor.spawn.x / T), y: Math.floor((outdoor.spawn.y - 1) / T) };
@@ -408,10 +408,10 @@ test('소켓 E2E: 탑승/해제 — 활성 탈것 없음 · 스터디 안 불가
   await sleep(40);
   assert.equal(c2.length, 1, '200px 순간이동은 거부');
   assert.equal(c2[0].reason, 'too_fast');
-  // 충돌: 나무(섬 안 62,22 둥근 나무 줄기 62..63, 24) 안으로는 못 들어간다
-  const tree = { x: 62.5 * T, y: 25 * T };
+  // 충돌: 나무(섬 안 58,19 둥근 나무 줄기 58..59, 21) 안으로는 못 들어간다
+  const tree = { x: 58.5 * T, y: 22 * T };
   assert.equal(canStand(srv.hub.outdoor.room, tree.x, tree.y), false);
-  p.x = 62.5 * T; p.y = 27 * T; p.budget = 10000;
+  p.x = 58.5 * T; p.y = 24 * T; p.budget = 10000;
   const c3 = once(a, 'move:correct');
   a.emit('move', { x: tree.x, y: tree.y, facing: 'up', moving: true, vehicle: { type: 'kart', angle: -Math.PI / 2, speed: 100 } });
   assert.equal((await c3).reason, 'blocked');

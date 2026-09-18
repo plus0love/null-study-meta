@@ -36,6 +36,8 @@ function createMemoryStore() {
   const ledger = []; // { id, nickname, delta, reason, createdAt } — 모든 코인 증감
   const inventory = []; // { id, nickname, itemId, acquiredAt, meta }
   const trackRecords = []; // { id, nickname, studyId, vehicle, ms, createdAt } — 12단계 트랙 랩 기록
+  const fishCatches = []; // { id, nickname, fishId, caughtAt } — 14단계 낚시
+  const constellationViews = []; // { nickname, constId, seenAt } — 14단계 별자리 (닉네임+별자리마다 첫 관측 1행)
   let seq = 1;
 
   const ensureUser = (nickname, now = Date.now()) => {
@@ -433,6 +435,50 @@ function createMemoryStore() {
     async hasLapToday(nickname, { tz = DEFAULT_TZ, now = Date.now() } = {}) {
       const today = dateKey(now, tz);
       return trackRecords.some((r) => r.nickname === nickname && dateKey(r.createdAt, tz) === today);
+    },
+
+    // ── 낚시 · 별자리 · 어항 (14단계) ─────────────────────────────────
+    async addFishCatch({ nickname, fishId }, now = Date.now()) {
+      ensureUser(nickname, now);
+      const r = { id: seq++, nickname, fishId: String(fishId), caughtAt: now };
+      fishCatches.push(r);
+      return { ...r };
+    },
+    /** 종별 잡은 횟수·첫 포획·마지막 포획 (잡은 종만) */
+    async fishCodex(nickname) {
+      const m = new Map();
+      for (const r of fishCatches) {
+        if (r.nickname !== nickname) continue;
+        const e = m.get(r.fishId) || { fishId: r.fishId, count: 0, firstAt: r.caughtAt, lastAt: r.caughtAt };
+        e.count++;
+        e.firstAt = Math.min(e.firstAt, r.caughtAt);
+        e.lastAt = Math.max(e.lastAt, r.caughtAt);
+        m.set(r.fishId, e);
+      }
+      return [...m.values()];
+    },
+    /** 오늘(tz) 잡은 마릿수 (하루 제한 판정) */
+    async fishCatchesToday(nickname, { tz = DEFAULT_TZ, now = Date.now() } = {}) {
+      const today = dateKey(now, tz);
+      return fishCatches.filter((r) => r.nickname === nickname && dateKey(r.caughtAt, tz) === today).length;
+    },
+    /** 별자리 관측 기록: 처음이면 inserted true (같은 별자리는 첫 관측만 남긴다) */
+    async addConstellationView(nickname, constId, now = Date.now()) {
+      ensureUser(nickname, now);
+      const prev = constellationViews.find((v) => v.nickname === nickname && v.constId === constId);
+      if (prev) return { inserted: false, seenAt: prev.seenAt };
+      constellationViews.push({ nickname, constId: String(constId), seenAt: now });
+      return { inserted: true, seenAt: now };
+    },
+    async constellationViews(nickname) {
+      return constellationViews.filter((v) => v.nickname === nickname).map((v) => ({ constId: v.constId, seenAt: v.seenAt }));
+    },
+    /** 공용 펫 어항 물고기 목록 [{ fishId, by, at }] (room_pets.tank) */
+    async setPetTank(roomPetId, tank) {
+      const row = roomPets.find((r) => r.id === roomPetId);
+      if (!row) return null;
+      row.tank = Array.isArray(tank) ? tank.map((t) => ({ ...t })) : [];
+      return row.tank.map((t) => ({ ...t }));
     },
 
     // ── 기록 초기화 (7단계) ───────────────────────────────────────────

@@ -2,7 +2,7 @@
 
 2D 탑뷰 멀티플레이 **스터디 메타버스**. 밤의 아늑한 스터디 카페 "우리의 스터디룸"에서 같이 공부하는 공간을 만듭니다.
 
-> **현재 단계: 12단계 — 공용 야외 + 카트 (트랙 · 랩 기록 · 탈것 상점).** 5단계까지의 요약: 닉네임으로 입장해 다른 접속자와 같은 방을 걸어다니고(서버 이동 검증),
+> **현재 단계: 14단계 — 야외 다듬기 + 동물원·자유 동물 + 낚시·별자리.** (12단계 야외 · 13단계 실시간 코인 위에 얹음) 5단계까지의 요약: 닉네임으로 입장해 다른 접속자와 같은 방을 걸어다니고(서버 이동 검증),
 > 의자·푸프·소파에 앉고(E), 채팅·이모지·공부/휴식 상태를 공유하고 각자 뽀모도로를 돌립니다. 끊겨도 30초 안에 같은 세션으로 이어집니다.
 > 라운지의 갈색 푸들 "사랑" 은 서버가 움직이는 NPC 로, 가까이 가면 쳐다보고 E 로 쓰다듬을 수 있습니다.
 > 3단계에서는 목업처럼 두께감 있는 유리 스터디룸·슬라이딩 문으로 맵을 정리하고, 책상에 앉으면 모니터가 켜지고,
@@ -16,6 +16,34 @@
 > 개인 뽀모도로가 돌면 머리 위에 "🍅 18:32" / "☕ 4:10" 이 남에게도 보입니다.
 > 9단계에서는 **가구 상점**이 열렸습니다. 코인으로 책상 소품 12종(내 자리 책상 위에 3개 장착)과 공용 가구 11종(🛠 편집 모드로 방 안 어디든 배치,
 > 모두가 봄)을 삽니다. 침대에 누우면 💤, 안마의자는 흔들리고, 스탠드 조명은 주변을 밝힙니다. 배치는 `room_layout` 에 저장돼 서버를 재시작해도 남습니다.
+
+> **14단계**에서는 야외가 100×70 타일로 넓어지고(오른쪽·아래 20타일) 전체가 다듬어졌습니다.
+> **A. 비주얼** — 잔디는 이음새 없는 4톤 + 잔디 결·클로버·작은 꽃·돌 소품, 산책로는 흙 테두리가 있는 자갈길(16방향 마스크). 건물은 검은 상자 대신 벽돌 파사드에 큰 창문 4개
+> (밤엔 실내 불빛이 새어 나오고 낮엔 하늘이 비침 — `windowDay` 레이어), 입구 캐노피·간판 조명·덩굴·자전거 거치대·플랜터. 트랙은 흰/빨강 연석·코너 안쪽 스키드 자국·바깥 타이어 배리어·
+> 출발 아치(깃발)·코너 번호 표지판·피트 박스, 관중석은 트랙 위 언덕 경사(3단 띠)에 2줄, 안쪽 섬은 꽃밭. 공원은 나무 6종 군락(큰 활엽수·자작나무·올리브·덤불…)·연못 갈대·돌·수련·피크닉 담요,
+> 광장은 분수 물보라 파티클 + 원형 포석 띠 2겹 + 화단 4색 + 카트 차고. 밤엔 별이 훨씬 많고 가끔 별똥별이 떨어지며, 낮엔 구름 그림자 5개가 천천히 지나가고 따뜻한 톤이 얹힙니다.
+> **B. 동물원** — 정문 아치 `ZOO`(공원 남쪽 산책로 끝) 와 트랙 오른쪽 옆문으로 이어지는 L 자 동물원. 우리 8개(판다·펭귄·플라밍고·토끼/기니피그 만지기 코너·기린·코끼리·사자·원숭이)는
+> 나무 울타리 + 앞면 유리 펜스, 안엔 대나무·얼음/수영장·아카시아·바위·밧줄·놀이단. 우리 앞 안내판(E → 이름·한 줄 설명)과 먹이 주기 지점(E → 하루 3번, 동물이 다가와 먹고 종별 이모지 반응).
+> 동물은 서버가 움직이는 NPC(어슬렁·앉기·먹기·자기, 종별 6프레임 시트 `animals.png`, 토끼·고양이는 펫 시트). 매점(아이스크림·츄러스 E → 1코인, 손에 든 아이콘 5분), 포토존(발자국 두 칸에 둘이 서면 플래시 + "OO님과 OO님이 사진을 찍었어요"),
+> 2인용 벤치·전망 데크. 우리 밖 자유 동물: 연못 오리 2·나무 사이 다람쥐·광장/공원 고양이 2(벤치에서 낮잠, E 쓰다듬기)·비둘기 떼 5(가까이 가면 날아오름)·꽃밭 나비·밤 반딧불이 — 전부 서버 동기화.
+> **C. 낚시·별자리** — 연못 둘레 낚시 자리 4곳에서 E → 낚싯대 자세, 5~10초 뒤 "!" 가 뜨면 1.2초 안에 E → 성공(놓치면 실패, 움직이면 취소). 물고기 10종(흔함 6 · 보통 3 · 희귀 1, 확률 서버 판정 66/30/4%),
+> 잡으면 머리 위 아이콘 + 시스템 채팅(희귀 황금 잉어는 서버 전체). 지갑 **도감 탭**: 잡은 종·횟수·첫 포획일(미포획은 실루엣), 내 스터디에 어항 물고기(공용 펫)가 있으면 최대 3마리를 넣어 어항에서 헤엄치게 합니다. 하루 5마리(`STATS_TZ`), `fish_catches` 에 저장.
+> 밤(19~06시)에 전망대 망원경 앞 E → 화면 위로 밤하늘 오버레이가 열리고 오늘의 별자리(날짜 기준 365개 순환: 실제 별자리 88 + 상상 별자리 277)가 별이 켜지며 선으로 이어집니다. 낮엔 "밤에 다시 와요". 본 별자리는 도감 탭 "별자리"에 기록(`constellation_views`).
+
+| 야외 전체 (낮 · 구름 그림자) | 야외 전체 (밤 · 창문 불빛 · 가로등 · 반딧불이) |
+|---|---|
+| ![낮](screenshots/s14_map_day.png) | ![밤](screenshots/s14_map_night.png) |
+
+| 트랙 확대 (연석 · 출발 아치 · 피트 · 꽃밭 · 나비) | 동물원 확대 (유리 펜스 · 안내판 · 만지기 코너 · 매점 · 포토존) |
+|---|---|
+| ![트랙](screenshots/s14_track.png) | ![동물원](screenshots/s14_zoo.png) |
+
+![동물 12종 스프라이트](screenshots/s14_animals_row.png)
+![물고기 10종](screenshots/s14_fish_row.png)
+
+| 낚시 (낚싯대 · 찌 · 연못 오리) | 오늘의 별자리 오버레이 |
+|---|---|
+| ![낚시](screenshots/s14_fishing.png) | ![별자리](screenshots/s14_constellation.png) |
 
 > 12단계에서는 스터디룸 입구 이중문으로 나가면 **모든 스터디가 공유하는 야외**(80×50 타일, Socket.io room `outdoor` 하나)가 열립니다.
 > 건물 앞 광장(분수·가로등·벤치·전광판·카트 정류장) · 왼쪽 공원(잔디 3톤·나무 3종·연못·산책로·피크닉 테이블) · 오른쪽 흙길 트랙(한 바퀴 약 120타일, 출발선·관중 벤치) ·
@@ -117,7 +145,10 @@ null-study-meta/
 │   ├── gate.js               # 사이트 비밀번호(ROOM_PASSWORD) 게이트 + 11단계 스터디 비밀번호(hashPassword/verifyPassword, createStudyGate) · 실패 5회 → 30초 잠금 공용
 │   ├── socket.js             # 소켓 프로토콜 배선 — 11단계: 로비(site:auth/lobby:list/study:create/study:lookup) · 스터디(study:info/update/kick/delete) · 방 안 이벤트는 Socket.io room `study:<id>` 로만
 │   ├── game/
-│   │   ├── outdoor.js        # 12단계: OutdoorWorld — 탈것 소환/해제·경적, 이동 뒤 랩 판정(track.js), 완주 기록·하루 첫 완주 보상·전광판·프로필
+│   │   ├── outdoor.js        # 12단계: OutdoorWorld — 탈것 소환/해제·경적, 이동 뒤 랩 판정(track.js), 완주 기록·하루 첫 완주 보상·전광판·프로필. 14단계: 동물 생성·먹이(하루 3번)·매점·포토존·낚시 세션(cast/bite/reel)·별자리 관측
+│   │   ├── animals.js        # 14단계: 동물 NPC — AnimalNpc(우리 안 자율 행동·먹이) · DuckNpc(물 위) · SquirrelNpc · PigeonNpc(날아오름) · ButterflyNpc · FireflyNpc(glow) · CatNpc · createOutdoorAnimals
+│   │   ├── fishing.js        # 14단계: 물고기 10종·등급 확률(roll)·낚시 세션 타이밍(5~10초 입질 → 1.2초 창) — 순수 함수
+│   │   ├── constellations.js # 14단계: 별자리 365개(실제 88 + 상상 277, 별 좌표·연결선) · 날짜 인덱스(tz) · 밤 판정
 │   │   ├── vehicles.js       # 12단계: 탈것 종류(최고 속도·가속·회전·마찰)·색·데칼·경적, 방향키 물리(step)·8방향·페이로드 검증 — /js/vehicles.js 로 브라우저에도 그대로
 │   │   ├── track.js          # 12단계: 랩 판정 (출발선 선분 교차 방향 · 체크포인트 순서 · 역주행 reset · 쇼트컷 불인정)
 │   │   ├── hub.js            # 11단계: 스터디 허브 — 스터디 목록·소속·비밀번호·정원, 스터디마다 World 지연 생성/비면 5분 뒤 해제, 로비 데이터, 60일 비활성 삭제, 옛 데이터 마이그레이션, 그룹 목표 타이머
@@ -130,11 +161,11 @@ null-study-meta/
 │   │   ├── coins.js          # 8단계: 코인 규칙 (앉아서 공부 10분마다 1 즉시, 집중 완주 보너스 5 · 20분 미만 없음) — 순수 함수
 │   │   ├── shop.js           # 8·9단계: 상점 카탈로그 (탭 4개, 가구 23종 — 스프라이트 메타·변형) — 구매 검증·프레임 키 규칙
 │   │   ├── layout.js         # 9단계: 공용 가구 배치 규칙 (풋프린트 회전·벽/소파/책장 전용·겹침·러그·충돌 맵·책상 슬롯) — /js/layout.js 로 브라우저에도 그대로
-│   │   └── npc.js            # 펫 NPC (10단계 일반화): BaseNpc(BFS 경로·쓰다듬기·이름·꾸미기·스킬) · DogNpc/SharedPetNpc(자율 행동, 종별 잠자리) · FishNpc(어항) · FollowerNpc(주인 따라다니기)
+│   │   └── npc.js            # 펫 NPC (10단계 일반화): BaseNpc(BFS 경로·쓰다듬기·이름·꾸미기·스킬) · DogNpc/SharedPetNpc(자율 행동, 종별 잠자리·산책 구역) · FishNpc(어항 + 14단계 낚시 물고기 tank) · FollowerNpc(주인 따라다니기)
 │   ├── rooms/
 │   │   ├── build.js          # RoomBuilder: tiles.json 기준으로 레이어 배열 + 충돌/의자/문/조명/창문/구역/화면/상호작용 지점 생성
 │   │   ├── studyroom.js      # "우리의 스터디룸" 46x34 타일 정의 (3단계: 유리 스터디룸·식물 정리·수납장/선반 채우기). 입구 이중문 doors[].to = 'outdoor'
-│   │   └── outdoor.js        # 12단계: 공용 야외 80x50 — 언덕/전망대 · 건물 외벽(문 → studyroom) · 보도 · 광장(분수·전광판·정류장) · 공원(연못·산책로) · 둥근 사각 트랙 + track(출발선·체크포인트)
+│   │   └── outdoor.js        # 12·14단계: 공용 야외 100x70 — 언덕/전망대(관중석) · 벽돌 파사드(창문·캐노피) · 보도 · 광장(분수·원형 포석·화단·차고) · 공원(연못·자갈길·군락) · 연석 트랙 + track · 동물원(우리 8·안내판·먹이·매점·포토존·전망 데크) · 낚시 자리 4 · room.zoo / room.animals
 │   └── store/                # index.js(선택/폴백), memory.js, supabase.js (같은 인터페이스), stats.js(시간대·주 시작·스트릭 규칙 공용)
 ├── public/
 │   ├── index.html, css/style.css
@@ -146,7 +177,7 @@ null-study-meta/
 │   ├── js/daylight.js        # 시간대 가중치(낮/노을/밤, 경계 30분) + 하늘 팔레트 + 실내 연출 강도 (순수 함수, 테스트 공용)
 │   ├── js/music.js           # 유튜브 URL 파싱 · 최근 5개 (순수 함수, 테스트 공용)
 │   ├── js/fx.js              # Web Audio 합성 알림음(뽀모도로·목표·코인, 각각 끌 수 있음) + 브라우저 알림 도우미
-│   ├── js/scenes/RoomScene.js# 타일맵(floor/furniture/windowDay/top), 아바타, 하늘 그라데이션·별, 유리 구역 틴트·밝기, 화면 on/off, 상호작용 지점, 조명·플래시. 12단계: 맵 전환(restart)·문·탈것 물리·랩 HUD 훅·전광판 글자·야외 어둠/노을 틴트·물/분수 순환
+│   ├── js/scenes/RoomScene.js# 타일맵(floor/furniture/windowDay/top), 아바타, 하늘 그라데이션·별, 유리 구역 틴트·밝기, 화면 on/off, 상호작용 지점, 조명·플래시. 12단계: 맵 전환(restart)·문·탈것 물리·랩 HUD 훅·전광판 글자·야외 어둠/노을 틴트·물/분수 순환. 14단계: 구름 그림자·분수 물보라·별똥별·낮 톤, 동물 시트 NPC(flipX·fly/swim/eat)·반딧불이 글로우·어항 물고기, 간식 아이콘·낚싯대·"!"·포토 플래시
 │   ├── js/scenes/vehicles.js # 12단계: VehicleView — 8방향 탈것 프레임 + 데칼, 아바타가 앉는 위치(vehicles.json meta)
 │   └── assets/               # tiles.png / tiles.json (아틀라스), dog.png / dog.json, avatar/ (catalog.json + 레이어별 PNG), player.png / player.json(옛 단일 시트, 빌드 산출물), CREDITS.txt
 ├── tools/
@@ -162,6 +193,12 @@ null-study-meta/
 │   ├── screenshot_stage3.js  # 3단계 검수 컷: 낮/노을/밤, 스터디룸 확대(모니터 켜짐), 커피, 전체 맵
 │   ├── screenshot_stage11.js # 11단계: 로비·스터디 만들기·잠긴 스터디 입장·목표 달성 연출 (서버를 스스로 띄운다)
 │   ├── screenshot_stage12.js # 12단계: 야외 전체 맵·트랙 확대·탑승 화면·전광판 (서버를 스스로 띄운다)
+│   ├── screenshot_stage14.js # 14단계: 야외 낮/밤·트랙·동물원·낚시·별자리 오버레이 (서버를 스스로 띄운다, --only=map,zoo,…)
+│   ├── props_outdoor2.py     # 14단계 A: 잔디 v2·자갈길 16방향·연석 흙길·스키드·출발 아치·관중석·코너 표지판·피트·벽돌/창문/캐노피·나무 3종·갈대·수련·담요·화단·차고·언덕 경사 띠
+│   ├── props_zoo.py          # 14단계 B: 울타리·유리 펜스·모래/얼음/우리 물·대나무·아카시아·건초·여물통·통나무·밧줄·안내판·ZOO 배너·매점·포토존 보드
+│   ├── animal_sprites.py     # 14단계 B: 동물 12종 × 6프레임 시트 (public/assets/animals.png/json + tools/out/s14_animals_row.png)
+│   ├── fish_sprites.py       # 14단계 C: 물고기 10종 × 2프레임 (public/assets/fish.png/json + tools/out/s14_fish_row.png)
+│   ├── preview_stage14.py    # 14단계 새 타일 미리보기 (tools/out/s14_tiles_preview.png)
 │   ├── props_outdoor.py      # 12단계: 야외 타일·소품 드로잉 (잔디·흙길·돌길·광장·물 2프레임·물가·나무 3종·분수 3프레임·가로등·벤치·전광판…)
 │   ├── vehicles.py           # 12단계: 탈것 시트 (4종 × 색 6 × 8방향 + 데칼 3) → public/assets/vehicles.png/json
 │   ├── compare_mockup.py     # 목업 | 게임 나란히 (screenshots/compare_mockup.png)
@@ -503,6 +540,7 @@ node tools/screenshot_stage5.js  # s5_builder.png · s5_builder_top.png · s5_se
 | 아바타 추가 파츠 (머리 11종·상의 디테일 4종·안경 3종·민머리 두상) | 이 저장소 오리지널 (`tools/avatar_parts.py`, 원본 화풍 규칙으로 코드 드로잉) | 프로젝트 라이선스 |
 | 강아지 NPC (16×24, 걷기 4방향×2·앉기·자기) | 이 저장소 오리지널 (`tools/dog_sprite.py`, 쿠션 위 푸들 그림 기준) | 프로젝트 라이선스 |
 | 나머지 대부분 (바닥·벽·창문 밤/낮·보드·소파·유리 파티션·슬라이딩 문·수납장·커피머신·벤치 …) | 이 저장소에서 코드로 그린 오리지널 | 프로젝트 라이선스 |
+| 14단계 야외 타일(`props_outdoor2.py`·`props_zoo.py`) · 동물 12종 시트(`animal_sprites.py`) · 물고기 10종(`fish_sprites.py`) | 이 저장소 오리지널 | 프로젝트 라이선스 |
 
 다시 빌드하려면 (Python 3.9+, Pillow):
 
@@ -541,8 +579,22 @@ node tools/screenshot_stage10.js                                     # 10단계:
 node tools/screenshot_stage11.js                                     # 11단계: 로비·스터디 만들기·잠긴 스터디 입장·목표 달성 연출 (서버를 스스로 띄운다)
 python tools/vehicles.py                                             # 12단계 탈것 시트 (public/assets/vehicles.png/json + tools/out/vehicles_preview.png)
 node tools/screenshot_stage12.js                                     # 12단계: 야외 전체 맵·트랙 확대·탑승 화면·전광판
+python tools/animal_sprites.py && python tools/fish_sprites.py      # 14단계 동물·물고기 시트 (+ 검수용 한 줄 미리보기)
+python tools/preview_stage14.py                                      # 14단계 새 타일 미리보기 (tools/out/s14_tiles_preview.png)
+node tools/screenshot_stage14.js                                     # 14단계: 야외 낮/밤·트랙·동물원·낚시·별자리 (--only=map,track,zoo,fishing,constellation)
 python tools/compare_mockup.py                                        # screenshots/compare_mockup.png
 ```
+
+## 동물원 · 낚시 · 별자리 (14단계)
+
+- **동물원** (`server/rooms/outdoor.js` `ENCLOSURES`/`FREE_ANIMALS` → `room.zoo`/`room.animals`, `server/game/animals.js`): 우리 안 동물은 `AnimalNpc` 가 우리 안쪽 사각형에서만 BFS 로 어슬렁이고,
+  `feed()` 로 먹이 지점까지 걸어가 4.5초 동안 먹으며 `react`(종별 이모지) 를 냅니다. 먹이 횟수는 서버 메모리(닉네임·날짜, 재시작 시 초기화). 매점은 `purchase:snack_<id>` 로 1코인을 차감하고 `player.snack` 을 5분 동안 유지합니다(클라이언트가 `until` 로 지웁니다).
+  포토존은 이동 검증 뒤 `checkPhoto` 가 발자국 두 칸의 두 사람을 찾아 `photo` 를 냅니다(같은 쌍 20초). 스냅샷 `sheet: 'animals'` 는 클라이언트가 `animals.png` 로, 없으면 펫 시트로 그리며 `pettable` 이 아니면 E 대상이 아닙니다.
+- **낚시** (`server/game/fishing.js`): `fish:cast` → 세션 `{ biteAt, windowUntil }` (5~10초 균등, 창 1.2초). `OutdoorWorld.tickFishing` 이 100ms 마다 입질/실패를 판정해 `playerFishing` 으로 방송하고, `fish:reel` 은 창 안일 때만 `roll()` 로 종을 뽑아 `fish_catches` 에 저장합니다.
+  하루 5마리는 저장소의 오늘(tz) 포획 수로 셉니다. 잡은 물고기는 스터디 방의 공용 펫 어항(`room_pets.tank`, 최대 3, 같은 종 1)에 넣을 수 있고 `FishNpc` 스냅샷 `tank` 로 모두에게 보입니다.
+- **별자리** (`server/game/constellations.js`): 실제 별자리 88개(잘 알려진 30개는 손으로 넣은 별 좌표·연결선, 나머지는 이름 씨앗 결정적 패턴) + 단어표로 만든 상상 별자리 277개를 결정적으로 섞어 365개.
+  `sky:view` 는 망원경 앞 + 밤(19~06시, `STATS_TZ`)일 때만 오늘(그 해 몇 번째 날 − 1) 것을 돌려주고 `constellation_views` 에 첫 관측을 기록합니다. 오버레이는 클라이언트 캔버스(별이 120ms 간격으로 켜지고 선이 320ms 마다 이어짐).
+- **Supabase**: `supabase/schema.sql` 을 다시 실행하면 `fish_catches`·`constellation_views` 테이블과 `room_pets.tank` 컬럼이 추가됩니다 (여러 번 실행 안전).
 
 ## 다음 단계
 
@@ -552,3 +604,4 @@ python tools/compare_mockup.py                                        # screensh
 - 유리문/입구 `doors` 로 방 이동, 실외 연결
 - 앉은 자세 프레임, 아바타 파츠 확장(치마·가방·모자 색)
 - 강아지 상호작용 확장 (간식 주기, 따라오기)
+- 동물원 먹이 횟수 영구 저장, 계절/날씨(비·눈), 낚시 대회·물고기 크기 기록

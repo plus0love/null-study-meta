@@ -54,6 +54,8 @@ const { focusBonusFor } = require('./coins');
 const { createShop, pickVariant, PET_SLOTS } = require('./shop');
 const { validatePlacement, buildCollision, seatOf, cellsOf } = require('./layout');
 const { validateVehiclePayload, typeOf: vehicleType } = require('./vehicles');
+const { FISH, fishById, CATCH_PER_DAY } = require('./fishing');
+const { LIST: CONSTELLATIONS, byId: constellationById } = require('./constellations');
 
 const GRACE_MS = 30 * 1000; // 연결 끊김 후 플레이어를 유지하는 시간
 const SIT_RANGE_PX = 56; // 좌석 중심까지 이 거리 안이어야 앉을 수 있다 (대각선 인접 포함)
@@ -73,6 +75,7 @@ const RESTING_SEATS = new Set(['bed', 'massage']); // 앉으면 자동 휴식 (�
 const MAX_SHARED_PETS = 3;
 const PET_NAME_MAX = 8;
 const WEEKLY_BONUS = 10; // 11단계: 그룹 주간 목표 달성 보너스 (멤버마다)
+const TANK_MAX = 3; // 14단계: 공용 펫 어항에 넣을 수 있는 물고기 수
 
 function seatCenter(room, seat) {
   return { x: (seat.x + 0.5) * room.tileSize, y: (seat.y + 1) * room.tileSize };
@@ -1204,6 +1207,7 @@ class World extends EventEmitter {
     const id = `s:${row.id}`;
     const base = { id, species, name: row.name, cosmetics: row.cosmetics, skills: row.skills || [], now: this.now, random: this.npcOpts.random, tickMs: this.npcOpts.tickMs };
     const npc = species === 'fish' ? new FishNpc(this.room, base) : new SharedPetNpc(this.room, { ...base, home: info.home, spots: info.spots || [], speeds: info.sharedSpeed });
+    if (species === 'fish') npc.setTank(row.tank || []); // 14단계: 낚시로 잡아 넣은 물고기
     npc.roomPetId = row.id;
     npc.releasedBy = row.releasedBy;
     this.roomPets.set(row.id, { row, npc });
@@ -1213,6 +1217,55 @@ class World extends EventEmitter {
 
   sharedPetCount() {
     return this.roomPets.size;
+  }
+
+  // ── 14단계 C: 공용 펫 어항 · 도감 ────────────────────────────────────
+  /** 이 방의 어항(공용 펫 물고기) */
+  tankPet() {
+    for (const e of this.roomPets.values()) if (e.npc.species === 'fish') return e;
+    return null;
+  }
+
+  tankInfo() {
+    const t = this.tankPet();
+    return t ? { available: true, petId: t.row.id, fish: t.npc.tank.map((f) => ({ ...f })), max: TANK_MAX } : { available: false, fish: [], max: TANK_MAX };
+  }
+
+  /**
+   * 잡은 물고기를 어항에 넣기/빼기 (같은 종은 하나만, 최대 TANK_MAX). 빼기는 넣은 사람만.
+   * @returns {{ ok: true, tank } | { ok: false, error: 'no_tank' | 'no_fish' | 'not_caught' | 'tank_full' | 'already' | 'not_in_tank' | 'forbidden' }}
+   */
+  async setTank(player, fishId, on = true) {
+    const t = this.tankPet();
+    if (!t) return { ok: false, error: 'no_tank' };
+    const fish = fishById(String(fishId || ''));
+    if (!fish) return { ok: false, error: 'no_fish' };
+    let tank = t.npc.tank.map((f) => ({ ...f }));
+    if (on) {
+      const caught = (await this.store.fishCodex(player.nickname)).some((r) => r.fishId === fish.id);
+      if (!caught) return { ok: false, error: 'not_caught' };
+      if (tank.some((f) => f.fishId === fish.id)) return { ok: false, error: 'already' };
+      if (tank.length >= TANK_MAX) return { ok: false, error: 'tank_full' };
+      tank.push({ fishId: fish.id, by: player.nickname, at: this.now() });
+    } else {
+      const cur = tank.find((f) => f.fishId === fish.id);
+      if (!cur) return { ok: false, error: 'not_in_tank' };
+      if (cur.by !== player.nickname) return { ok: false, error: 'forbidden' };
+      tank = tank.filter((f) => f.fishId !== fish.id);
+    }
+    await this.store.setPetTank(t.row.id, tank);
+    t.row.tank = tank;
+    t.npc.setTank(tank);
+    return { ok: true, tank: tank.map((f) => ({ ...f })) };
+  }
+
+  /** 도감: 물고기 10종(잡은 횟수·첫 포획, 못 잡은 종은 count 0) + 오늘 잡은 수 · 별자리 관측 기록. 어항 정보는 소켓이 붙인다 */
+  async codex(player) {
+    const [rows, views, today] = await Promise.all([this.store.fishCodex(player.nickname), this.store.constellationViews(player.nickname), this.store.fishCatchesToday(player.nickname, { tz: this.tz, now: this.now() })]);
+    const by = new Map(rows.map((r) => [r.fishId, r]));
+    const fish = FISH.map((f) => { const r = by.get(f.id); return { id: f.id, name: f.name, rarity: f.rarity, emoji: f.emoji, desc: f.desc, count: r ? r.count : 0, firstAt: r ? r.firstAt : null }; });
+    const constellations = views.map((v) => { const c = constellationById(v.constId); return c ? { id: c.id, name: c.name, desc: c.desc, real: c.real, seenAt: v.seenAt } : null; }).filter(Boolean).sort((a, b) => b.seenAt - a.seenAt);
+    return { ok: true, fish, caughtSpecies: rows.length, catchesToday: today, catchLimit: CATCH_PER_DAY, constellations, constellationsTotal: CONSTELLATIONS.length };
   }
 
   /** 개인 펫 설정 형태 보정 */
@@ -1459,4 +1512,4 @@ class World extends EventEmitter {
   }
 }
 
-module.exports = { World, GRACE_MS, SIT_RANGE_PX, EMOJIS, STATUSES, MANUAL_STATUSES, LISTENING_MAX, GOAL_TEXT_MAX, GOAL_MIN, GOAL_MAX, GOAL_STEP, TODO_MAX, LOCK_MS, DESK_SLOTS, RESTING_SEATS, MAX_SHARED_PETS, PET_NAME_MAX, WEEKLY_BONUS, seatCenter };
+module.exports = { World, GRACE_MS, SIT_RANGE_PX, EMOJIS, STATUSES, MANUAL_STATUSES, LISTENING_MAX, GOAL_TEXT_MAX, GOAL_MIN, GOAL_MAX, GOAL_STEP, TODO_MAX, LOCK_MS, DESK_SLOTS, RESTING_SEATS, MAX_SHARED_PETS, PET_NAME_MAX, WEEKLY_BONUS, TANK_MAX, seatCenter };

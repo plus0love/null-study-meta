@@ -77,14 +77,16 @@
     };
   }
 
-  /** 12단계 야외: 밤은 실내보다 훨씬 어둡고 푸르게(darkness), 노을은 주황 틴트(sunsetTint), 가로등 글로우는 밤에만 */
+  /** 12단계 야외: 밤은 실내보다 훨씬 어둡고 푸르게(darkness), 노을은 주황 틴트(sunsetTint), 가로등 글로우는 밤에만. 14단계: 낮 창문 반사(dayLayer)·낮 톤(tone)·구름 그림자(clouds) */
   function outdoorAmbient(w) {
     return {
       darkness: 0.55 * w.night + 0.22 * w.sunset + 0.03 * w.day,
       glow: 1 * w.night + 0.6 * w.sunset + 0.15 * w.day,
-      dayLayer: 0,
+      dayLayer: w.day + 0.55 * w.sunset,
       stars: w.night,
       sunsetTint: 0.35 * w.sunset,
+      tone: 0.12 * w.day, // 낮 따뜻한 톤(비네팅과 함께)
+      clouds: 0.38 * w.day, // 구름 그림자 진하기
     };
   }
 

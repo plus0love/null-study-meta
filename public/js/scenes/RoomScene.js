@@ -120,6 +120,65 @@
       this.setPomodoro(p.pomodoro || null);
       this.setEditing(Boolean(p.editing));
       this.setVehicle(p.vehicle || null);
+      this.snackText = null; // 14단계: 손에 든 간식 { item, emoji, until }
+      this.snack = null;
+      this.setSnack(p.snack || null);
+      this.fishing = null; // 14단계: 낚시 { state: 'wait'|'bite', spot } | null
+      this.rod = null;
+      this.bang = null;
+      this.setFishing(p.fishing || null);
+    }
+
+    /** 14단계: 낚시 자세 — 낚싯대(선 + 찌) + 입질이면 머리 위 "!" */
+    setFishing(f) {
+      this.fishing = f && f.state ? f : null;
+      if (this.rod) { this.rod.destroy(); this.rod = null; }
+      if (this.bang) { this.bang.destroy(); this.bang = null; }
+      if (this.fishing) {
+        this.rod = this.scene.add.graphics().setDepth(DEPTH.avatar + 0.5);
+        if (this.fishing.state === 'bite') {
+          this.bang = this.scene.add.text(0, 0, '❗', { fontSize: '20px', resolution: ZOOM }).setOrigin(0.5, 1).setDepth(DEPTH.bubble);
+          this.scene.tweens.add({ targets: this.bang, scaleX: 1.3, scaleY: 1.3, duration: 160, yoyo: true, repeat: -1 });
+        }
+        this.setPosition(this.x, this.y);
+      }
+    }
+
+    drawRod() {
+      const g = this.rod;
+      if (!g) return;
+      const rx = Math.round(this.x);
+      const ry = Math.round(this.y);
+      const dir = this.facing === 'left' ? -1 : this.facing === 'right' ? 1 : this.facing === 'up' ? 0 : 0;
+      const down = this.facing !== 'up';
+      const hx = rx + (dir || 0.6) * 8;
+      const hy = ry - 26;
+      const tipX = hx + (dir || 1) * 30;
+      const tipY = hy - 22;
+      const floatX = tipX + (dir || 1) * 4;
+      const floatY = down ? ry + 22 + Math.round(Math.sin(performance.now() / 300) * 2) : ry - 44;
+      g.clear();
+      g.lineStyle(2, 0x5e4331, 1);
+      g.lineBetween(hx, hy, tipX, tipY);
+      g.lineStyle(1, 0xdfe6f5, 0.8);
+      g.lineBetween(tipX, tipY, floatX, floatY);
+      g.fillStyle(this.fishing && this.fishing.state === 'bite' ? 0xffd08a : 0xe2605e, 1);
+      g.fillCircle(floatX, floatY, 2.5);
+      if (this.bang) this.bang.setPosition(rx, ry - 70 - (this.studyText ? 10 : 0));
+    }
+
+    /** 14단계: 매점 간식 — 손 위치에 이모지, until(서버 ms)이 지나면 사라진다 */
+    setSnack(snack) {
+      this.snack = snack && snack.until > this.scene.hooks.serverNow() ? snack : null;
+      if (this.snackText) { this.snackText.destroy(); this.snackText = null; }
+      if (this.snack) {
+        this.snackText = this.scene.add.text(0, 0, this.snack.emoji || '🍦', { fontSize: '12px', resolution: ZOOM }).setOrigin(0.5, 1).setDepth(DEPTH.label);
+        this.setPosition(this.x, this.y);
+      }
+    }
+
+    tickSnack(now) {
+      if (this.snack && this.snack.until <= now) this.setSnack(null);
     }
 
     // ── 12단계: 탈것 ────────────────────────────────────────────────
@@ -409,6 +468,8 @@
       if (this.emojiText) this.emojiText.setPosition(rx, ry - 74 - lift - (this.emojiText.rise || 0));
       if (this.coinText) this.coinText.setPosition(rx - 14, ry - 70 - (this.coinText.rise || 0));
       if (this.editMark) this.editMark.setPosition(rx - 16, ry - 70);
+      if (this.snackText) this.snackText.setPosition(rx + (this.facing === 'left' ? -11 : 11), ry - 24).setDepth(depth + (this.facing === 'up' ? -0.00001 : 0.00003));
+      if (this.rod) this.drawRod();
     }
 
     setFacing(f) {
@@ -511,6 +572,9 @@
       this.clearLying();
       this.setWobble(false);
       if (this.editMark) this.editMark.destroy();
+      if (this.snackText) this.snackText.destroy();
+      if (this.rod) this.rod.destroy();
+      if (this.bang) this.bang.destroy();
       if (this.sign) this.sign.destroy();
       if (this.studyText) this.studyText.destroy();
       this.vehicle.destroy();
@@ -543,14 +607,35 @@
       this.buffer = [];
       this.animKey = null;
       this.bounceT = 0;
+      // 14단계: 동물 시트(sheet 'animals') · 반딧불이(glow) · 쓰다듬기 가능 여부
+      this.sheet = snap.sheet === 'animals' && scene.animalsMeta && scene.textures.exists('animals') ? 'animals' : 'pets';
+      this.glow = Boolean(snap.glow);
+      this.pettable = snap.pettable !== false;
+      this.fly = Boolean(snap.fly);
+      this.flyT = Math.random() * 6;
       const meta = scene.petsMeta;
       this.spIndex = (meta.species[this.species] || meta.species.dog).index;
-      this.sprite = scene.add.sprite(snap.x, snap.y, 'pets', this.frameIndex('sit', 0)).setOrigin(0.5, 1);
-      this.shadow = scene.add.ellipse(snap.x, snap.y - 2, 18, 6, 0x000000, 0.25).setDepth(DEPTH.shadow);
+      if (this.glow) {
+        // 반딧불이: 작은 점 + 가산 글로우, 밤에만 보인다
+        this.sprite = scene.add.image(snap.x, snap.y, 'glow').setScale(0.09).setBlendMode(Phaser.BlendModes.ADD).setTint(0xfff0a0).setOrigin(0.5, 0.5);
+        this.dot = scene.add.rectangle(snap.x, snap.y, 2, 2, 0xfff6c0, 1).setOrigin(0.5, 0.5);
+        this.sprite.anims = { play() {}, stop() {}, currentAnim: null };
+        this.sprite.setFrame = () => this.sprite;
+        this.nightAlpha = 0;
+      } else if (this.sheet === 'animals') {
+        const am = scene.animalsMeta;
+        this.animalBase = (am.species[this.species] || am.species.panda).index * am.framesPerSpecies;
+        this.sprite = scene.add.sprite(snap.x, snap.y, 'animals', this.animalBase + am.frames.idle).setOrigin(0.5, 1);
+      } else this.sprite = scene.add.sprite(snap.x, snap.y, 'pets', this.frameIndex('sit', 0)).setOrigin(0.5, 1);
+      const small = this.glow || this.fly;
+      this.shadow = scene.add.ellipse(snap.x, snap.y - 2, this.sheet === 'animals' && !small ? 24 : 18, small ? 4 : 6, 0x000000, small ? 0.12 : 0.25).setDepth(DEPTH.shadow);
+      if (this.glow) this.shadow.setVisible(false);
       this.nameText = scene.add.text(snap.x, snap.y + 2, snap.name, {
         fontFamily: FONTS.sans, fontSize: this.ownerId ? '9px' : '10px', fontStyle: 'bold', color: this.ownerId ? '#d9eeff' : '#ffd9a8',
         stroke: '#14111a', strokeThickness: 3, resolution: ZOOM,
       }).setOrigin(0.5, 0).setDepth(DEPTH.label);
+      // 우리 안 동물·새·나비·반딧불이는 이름표를 숨긴다 (쓰다듬을 수 있는 자유 동물만 표시)
+      if ((this.sheet === 'animals' || this.glow || snap.kind === 'animal') && !this.pettable) this.nameText.setVisible(false);
       this.deco = { head: null, neck: null, back: null }; // 슬롯 → { key, sprite }
       this.cosmetics = {};
       this.heart = null;
@@ -558,6 +643,7 @@
       this.setCosmetics(snap.cosmetics || {});
       this.setPosition(snap.x, snap.y);
       this.applyState();
+      if (this.glow) this.setNight(scene.weights ? scene.weights.night : 0);
     }
 
     frameIndex(row, f) {
@@ -631,7 +717,7 @@
       this.y = y;
       const rx = Math.round(x);
       const ry = Math.round(y);
-      const hop = this.bounce && this.state === 'walk' ? Math.round(Math.abs(Math.sin(this.bounceT)) * 6) : 0;
+      const hop = this.bounce && this.state === 'walk' ? Math.round(Math.abs(Math.sin(this.bounceT)) * 6) : this.fly || this.glow ? Math.round(10 + Math.sin(this.flyT) * 4) : this.state === 'swim' ? Math.round(Math.sin(this.flyT) * 1.5) : 0;
       // 어깨 위 앵무새는 주인보다 앞에 그린다
       let depth = DEPTH.avatar + y / this.scene.mapH;
       if (this.shoulder && this.ownerId) {
@@ -639,10 +725,12 @@
         if (o) depth = DEPTH.avatar + o.y / this.scene.mapH + 0.00005;
       }
       this.sprite.setPosition(rx, ry - hop).setDepth(depth);
-      this.shadow.setPosition(rx, ry - 2).setVisible(!this.shoulder);
+      if (this.dot) this.dot.setPosition(rx, ry - hop).setDepth(depth + 0.00001);
+      this.shadow.setPosition(rx, ry - 2).setVisible(!this.shoulder && !this.glow);
       this.nameText.setPosition(rx, ry + (this.shoulder ? -46 : 2));
       if (this.heart) this.heart.setPosition(rx, ry - 52 - (this.heart.rise || 0));
       this.syncDeco();
+      this.syncTank();
     }
 
     setName(name) {
@@ -655,6 +743,8 @@
       this.buffer.push({ x: snap.x, y: snap.y, t: performance.now() });
       if (this.buffer.length > 30) this.buffer.splice(0, this.buffer.length - 30);
       if (snap.name !== this.name) this.setName(snap.name);
+      if (snap.pettable !== undefined) this.pettable = snap.pettable !== false;
+      if (Array.isArray(snap.tank)) this.setTank(snap.tank);
       if (snap.cosmetics) {
         const a = JSON.stringify(snap.cosmetics);
         if (a !== JSON.stringify(this.cosmetics)) this.setCosmetics(snap.cosmetics);
@@ -678,6 +768,23 @@
         this.sprite.setFrame(frame);
       };
       const sp = this.species;
+      if (this.glow) { this.animKey = null; return; }
+      if (this.sheet === 'animals') {
+        // 동물 시트: 옆모습 하나로 방향은 flipX (왼쪽이 기본)
+        const am = this.scene.animalsMeta;
+        const base = this.animalBase;
+        if (this.facing === 'left' || this.facing === 'right') this.sprite.setFlipX(this.facing === 'right');
+        switch (this.state) {
+          case 'walk': play(`animal-${sp}-walk`); break;
+          case 'swim': play(`animal-${sp}-swim`); break;
+          case 'fly': play(`animal-${sp}-fly`); break;
+          case 'eat': play(`animal-${sp}-eat`); break;
+          case 'sleep': still(base + am.frames.sleep); break;
+          case 'sit': case 'look': still(base + am.frames.sit); break;
+          default: still(base + am.frames.idle);
+        }
+        return;
+      }
       switch (this.state) {
         case 'walk': play(`pet-${sp}-walk-${this.facing}`); break;
         case 'look': play(`pet-${sp}-wag`); break; // 앉아서 꼬리 흔들기
@@ -691,6 +798,8 @@
     /** INTERP_DELAY 만큼 과거 시각을 두 스냅샷 사이에서 선형 보간 */
     update(delta = 16) {
       if (this.bounce) this.bounceT += delta / 90;
+      if (this.fly || this.glow || this.state === 'swim') { this.flyT += delta / (this.glow ? 700 : 260); if (!this.buffer.length) this.setPosition(this.x, this.y); if (this.glow) this.setNight(this.nightAlpha); }
+      if (this.tankFish && this.tankFish.length) this.syncTank();
       const buf = this.buffer;
       if (!buf.length) return;
       const rt = performance.now() - INTERP_DELAY;
@@ -701,6 +810,45 @@
         const k = Phaser.Math.Clamp((rt - s0.t) / (s1.t - s0.t), 0, 1);
         this.setPosition(s0.x + (s1.x - s0.x) * k, s0.y + (s1.y - s0.y) * k);
       } else this.setPosition(s0.x, s0.y);
+    }
+
+    /** 14단계: 어항 물고기 (FishNpc 스냅샷 tank: [fishId]) — 어항 안에서 작은 물고기가 헤엄친다 */
+    setTank(ids) {
+      const key = ids.join(',');
+      if (key === this.tankKey) return;
+      this.tankKey = key;
+      for (const t of this.tankFish || []) t.sprite.destroy();
+      this.tankFish = [];
+      const meta = this.scene.fishMeta;
+      if (!meta || !this.scene.textures.exists('fish')) return;
+      ids.slice(0, 3).forEach((id, i) => {
+        const sp = meta.species[id];
+        if (!sp) return;
+        const sprite = this.scene.add.sprite(this.x, this.y, 'fish', sp.index * meta.framesPerSpecies).setOrigin(0.5, 0.5).setScale(0.5);
+        this.tankFish.push({ sprite, base: sp.index * meta.framesPerSpecies, phase: i * 2.1, speed: 0.7 + i * 0.2 });
+      });
+      this.setPosition(this.x, this.y);
+    }
+
+    syncTank() {
+      if (!this.tankFish || !this.tankFish.length) return;
+      const t = performance.now() / 1000;
+      for (const f of this.tankFish) {
+        const dx = Math.sin(t * f.speed + f.phase) * 7;
+        const dy = Math.cos(t * f.speed * 0.8 + f.phase) * 3;
+        f.sprite.setPosition(Math.round(this.x + dx), Math.round(this.y - 15 + dy)).setDepth(this.sprite.depth + 0.00003);
+        f.sprite.setFlipX(Math.cos(t * f.speed + f.phase) > 0);
+        f.sprite.setFrame(f.base + (Math.floor(t * 4 + f.phase) % 2));
+      }
+    }
+
+    /** 반딧불이: 밤 가중치만큼 보인다 (깜빡임은 flyT) */
+    setNight(night) {
+      this.nightAlpha = night;
+      if (!this.glow) return;
+      const a = night * (0.55 + 0.45 * Math.abs(Math.sin(this.flyT * 1.7)));
+      this.sprite.setAlpha(a);
+      if (this.dot) this.dot.setAlpha(a);
     }
 
     /** 쓰다듬기 반응: 종별 이모지 (+ 하이파이브 🖐) */
@@ -726,6 +874,8 @@
       this.clearHeart();
       for (const slot of DECO_ORDER) if (this.deco[slot]) this.deco[slot].sprite.destroy();
       this.sprite.destroy();
+      if (this.dot) this.dot.destroy();
+      for (const t of this.tankFish || []) t.sprite.destroy();
       this.shadow.destroy();
       this.nameText.destroy();
     }
@@ -744,6 +894,8 @@
       this.playerMeta = { frameWidth: this.avatarKit.frame.width, frameHeight: this.avatarKit.frame.height, framesPerRow: this.avatarKit.frame.framesPerRow, rows: this.avatarKit.frame.rows };
       this.petsMeta = data.pets; // 10단계: 펫 스프라이트시트 메타 (종별 인덱스·앵커)
       this.vehiclesMeta = data.vehicles || { seat: {}, decal: {} }; // 12단계: 탈것 아틀라스 메타 (앉는 위치·데칼 앵커)
+      this.animalsMeta = data.animals || null; // 14단계: 동물 시트 메타 (종별 인덱스·프레임 이름)
+      this.fishMeta = data.fish || null; // 14단계: 물고기 시트 메타 (어항 물고기)
       this.catalog = data.catalog || { items: [] }; // 9단계: 상점 카탈로그 (가구 스프라이트 메타)
       this.onReady = data.onReady || (() => {});
       // 맵 전환(restart)에도 main.js 가 채운 hooks 는 유지한다
@@ -801,6 +953,8 @@
       if (!this.textures.exists('petdeco')) this.load.atlas('petdeco', `/assets/petdeco.png${v}`, `/assets/petdeco.json${v}`);
       if (!this.textures.exists('furn')) this.load.atlas('furn', `/assets/furniture.png${v}`, `/assets/furniture.json${v}`);
       if (!this.textures.exists('vehicles')) this.load.atlas('vehicles', `/assets/vehicles.png${v}`, `/assets/vehicles.json${v}`);
+      if (this.animalsMeta && !this.textures.exists('animals')) this.load.spritesheet('animals', `/assets/animals.png${v}`, { frameWidth: this.animalsMeta.frameWidth, frameHeight: this.animalsMeta.frameHeight });
+      if (this.fishMeta && !this.textures.exists('fish')) this.load.spritesheet('fish', `/assets/fish.png${v}`, { frameWidth: this.fishMeta.frameWidth, frameHeight: this.fishMeta.frameHeight });
     }
 
     create() {
@@ -816,6 +970,7 @@
       this.buildLabels();
       this.buildLightTextures();
       this.buildPetAnims();
+      this.buildAnimalAnims();
       this.buildLighting();
       this.buildScreens();
       this.furniture = new FurnitureLayer(this, this.catalog);
@@ -979,10 +1134,100 @@
       this.refreshBoard(null);
     }
 
-    /** 야외 연출: 노을 틴트 레이어 + 전광판 */
+    /** 야외 연출: 노을 틴트 · 낮 톤 · 구름 그림자 · 분수 물보라 · 별똥별 + 전광판 (14단계) */
     buildOutdoorFx() {
       this.sunsetTint = this.add.rectangle(0, 0, this.mapW, this.mapH, 0xf0a45c, 1).setOrigin(0, 0).setDepth(DEPTH.darkness - 0.5).setAlpha(0).setBlendMode(Phaser.BlendModes.MULTIPLY);
+      this.toneTint = this.add.rectangle(0, 0, this.mapW, this.mapH, 0xffe9c4, 1).setOrigin(0, 0).setDepth(DEPTH.darkness - 0.6).setAlpha(0).setBlendMode(Phaser.BlendModes.MULTIPLY);
       this.buildBoard();
+      this.buildClouds();
+      this.buildFountainSpray();
+      this.shootAcc = 0;
+      this.shootingStars = 0; // 지금까지 떨어진 별똥별 수 (테스트용)
+    }
+
+    /** 낮에 천천히 지나가는 구름 그림자 (MULTIPLY 타원 5개, 맵을 돌며 순환) */
+    buildClouds() {
+      this.clouds = [];
+      let seed = 99;
+      const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+      for (let i = 0; i < 5; i++) {
+        const w = 260 + rnd() * 260;
+        const h = w * (0.45 + rnd() * 0.2);
+        const g = this.add.graphics().setDepth(DEPTH.darkness - 0.7).setBlendMode(Phaser.BlendModes.MULTIPLY).setAlpha(0);
+        g.fillStyle(0x9aa6bf, 1);
+        g.fillEllipse(w / 2, h / 2, w, h);
+        g.fillEllipse(w * 0.3, h * 0.42, w * 0.6, h * 0.7);
+        g.fillEllipse(w * 0.72, h * 0.55, w * 0.55, h * 0.66);
+        const c = { g, w, h, x: rnd() * this.mapW, y: 2 * this.T + rnd() * (this.mapH - 6 * this.T), vx: 5 + rnd() * 6, vy: 0.8 + rnd() * 1.6 };
+        g.setPosition(c.x, c.y);
+        this.clouds.push(c);
+      }
+    }
+
+    tickClouds(dt) {
+      for (const c of this.clouds) {
+        c.x += c.vx * dt;
+        c.y += c.vy * dt;
+        if (c.x > this.mapW + 20) c.x = -c.w - 20;
+        if (c.y > this.mapH + 20) c.y = -c.h;
+        c.g.setPosition(Math.round(c.x), Math.round(c.y));
+      }
+    }
+
+    /** 분수 물보라: 가운데 물기둥 끝에서 물방울이 튀어 떨어진다 */
+    buildFountainSpray() {
+      const prop = (this.room.props || []).find((p) => p.name === 'fountain_f0');
+      if (!prop) return;
+      if (!this.textures.exists('drop')) {
+        const tex = this.textures.createCanvas('drop', 4, 4);
+        const ctx = tex.getContext();
+        ctx.fillStyle = 'rgba(255,255,255,1)';
+        ctx.beginPath();
+        ctx.arc(2, 2, 2, 0, Math.PI * 2);
+        ctx.fill();
+        tex.refresh();
+      }
+      const T = this.T;
+      const cx = (prop.x + 1.5) * T;
+      const cy = (prop.y + 1.0) * T;
+      this.spray = this.add.particles(cx, cy - 6, 'drop', {
+        speedX: { min: -30, max: 30 }, speedY: { min: -80, max: -45 }, gravityY: 150,
+        lifespan: { min: 520, max: 820 }, frequency: 40, quantity: 2,
+        scale: { start: 0.9, end: 0.25 }, alpha: { start: 0.85, end: 0 },
+        tint: [0xdff4ff, 0xffffff, 0xbfe4ff],
+      }).setDepth(6);
+    }
+
+    /** 밤에 가끔 별똥별: 하늘 띠 안에서 대각선으로 스쳐 사라진다 (카메라가 보는 범위에 맞춰 위치를 고른다) */
+    tickShootingStars(delta) {
+      if (!this.room.outdoor || !this.weights || this.weights.night < 0.6) return;
+      this.shootAcc += delta;
+      if (this.shootAcc < 900) return;
+      this.shootAcc = 0;
+      if (Math.random() < 0.16) this.spawnShootingStar();
+    }
+
+    spawnShootingStar() {
+      const win = this.skies[0];
+      if (!win) return null;
+      if (!this.textures.exists('streak')) {
+        const tex = this.textures.createCanvas('streak', 32, 2);
+        const ctx = tex.getContext();
+        const g = ctx.createLinearGradient(0, 0, 32, 0);
+        g.addColorStop(0, 'rgba(255,255,255,0)');
+        g.addColorStop(1, 'rgba(255,255,255,1)');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, 32, 2);
+        tex.refresh();
+      }
+      const view = this.cameras.main.worldView;
+      const x0 = Phaser.Math.Clamp(view.x + Math.random() * Math.max(1, view.width), 0, this.mapW);
+      const y0 = win.def.y + 4 + Math.random() * (win.def.h * 0.5);
+      const len = 60 + Math.random() * 50;
+      const img = this.add.image(x0, y0, 'streak').setOrigin(1, 0.5).setDepth(DEPTH.stars + 0.1).setRotation(Math.PI / 7).setScale(len / 32, 1).setAlpha(0.9);
+      this.tweens.add({ targets: img, x: x0 + len * 1.5, y: y0 + len * 0.68, alpha: 0, duration: 650, ease: 'Sine.easeIn', onComplete: () => img.destroy() });
+      this.shootingStars++;
+      return img;
     }
 
     /** 물·분수 타일: cycleTiles(인덱스 → 다음) 를 일정 속도로 돌린다 (floor + furniture 레이어) */
@@ -1278,8 +1523,8 @@
     /** 머리 위 타이머 글자 (1초마다) */
     tickPomodoros() {
       const now = this.hooks.serverNow();
-      if (this.me) this.me.tickPomo(now);
-      for (const r of this.remotes.values()) r.avatar.tickPomo(now);
+      if (this.me) { this.me.tickPomo(now); this.me.tickSnack(now); }
+      for (const r of this.remotes.values()) { r.avatar.tickPomo(now); r.avatar.tickSnack(now); }
     }
 
     onAvatar(d) {
@@ -1336,6 +1581,7 @@
       let best = null;
       let bestD = SIT_RANGE;
       for (const n of this.npcs.values()) {
+        if (!n.pettable) continue; // 14단계: 우리 안 동물·새·나비는 쓰다듬기 대상이 아니다
         const d = Math.hypot(n.x - this.me.x, n.y - this.me.y);
         if (d < bestD) {
           bestD = d;
@@ -1371,6 +1617,7 @@
     pickTarget() {
       const me = this.me;
       if (!me) return null;
+      if (me.fishing) return { kind: me.fishing.state === 'bite' ? 'reel' : 'reel', target: { id: 'reel' }, d: 0 }; // 14단계: 낚시 중엔 E = 낚아채기
       const T = this.T;
       const cands = [];
       if (this.nearSeat) cands.push({ kind: HINT_KIND[this.nearSeat.kind] || 'sit', target: this.nearSeat, d: Math.hypot((this.nearSeat.x + 0.5) * T - me.x, (this.nearSeat.y + 1) * T - me.y) });
@@ -1379,6 +1626,54 @@
       if (!cands.length) return null;
       cands.sort((a, b) => a.d - b.d);
       return cands[0];
+    }
+
+    /** 14단계: 동물 시트 애니 — 걷기(walk_a/b) · 먹기(eat/idle) · 날기(sit(fly)/idle). 프레임 = species.index*6 + f */
+    buildAnimalAnims() {
+      const meta = this.animalsMeta;
+      if (!meta || !this.textures.exists('animals')) return;
+      const F = meta.frames;
+      for (const [name, sp] of Object.entries(meta.species)) {
+        const base = sp.index * meta.framesPerSpecies;
+        const mk = (key, list, frameRate) => {
+          if (this.anims.exists(key)) return;
+          this.anims.create({ key, frames: list.map((f) => ({ key: 'animals', frame: base + F[f] })), frameRate, repeat: -1 });
+        };
+        mk(`animal-${name}-walk`, ['walk_a', 'walk_b'], name === 'squirrel' ? 8 : 4);
+        mk(`animal-${name}-eat`, ['eat', 'idle'], 2);
+        mk(`animal-${name}-fly`, ['sit', 'idle'], name === 'butterfly' ? 5 : 9);
+        mk(`animal-${name}-swim`, ['sit', 'sit'], 1);
+      }
+    }
+
+    /** 14단계: 낚시 자세/입질/종료 (playerFishing) */
+    onFishing(d) {
+      const a = this.avatarOf(d.id);
+      if (!a) return;
+      a.setFishing(d.fishing || null);
+      if (a === this.me) { this.lastSent = null; this.hooks.onInteract(this.pickTarget() ? this.pickTarget().kind : null); }
+    }
+
+    /** 14단계: 누가 물고기를 잡았다 → 머리 위 물고기 아이콘 */
+    onFishCaught(d) {
+      const a = this.avatarOf(d.id);
+      if (a) a.showEmoji(d.fish && d.fish.emoji ? d.fish.emoji : '🐟', 3000);
+    }
+
+    /** 14단계: 손에 든 간식 (playerSnack) */
+    onSnack(d) {
+      const a = this.avatarOf(d.id);
+      if (a) a.setSnack(d.snack || null);
+    }
+
+    /** 14단계: 포토존 플래시 — 화면이 하얗게 번쩍 + 두 사람 머리 위 📸 */
+    onPhoto(d) {
+      for (const id of d.ids || []) {
+        const a = this.avatarOf(id);
+        if (a) a.showEmoji('📸', 2500);
+      }
+      this.cameras.main.flash(420, 255, 255, 255);
+      this.photos = (this.photos || 0) + 1;
     }
 
     /** 종마다 걷기 4방향·꼬리 흔들기·자기 애니메이션 (pets 시트: row*framesPerRow + species*2 + f) */
@@ -1468,6 +1763,7 @@
       const dt = delta / 1000;
       if (this.me) {
         this.updateLocal(dt, delta);
+        if (this.me.rod) this.me.drawRod();
         this.seatAcc += delta;
         if (this.seatAcc >= 150) {
           this.seatAcc = 0;
@@ -1486,6 +1782,8 @@
       this.updateRemotes();
       for (const n of this.npcs.values()) n.update(delta);
       this.tickCycles(delta);
+      if (this.clouds) this.tickClouds(dt);
+      if (this.room.outdoor) this.tickShootingStars(delta);
       this.pomoAcc += delta;
       if (this.pomoAcc >= POMO_TICK) {
         this.pomoAcc = 0;
@@ -1513,7 +1811,7 @@
       const kb = this.input.keyboard;
       let dx = 0;
       let dy = 0;
-      if (kb.enabled && !me.seated && !this.transferring) {
+      if (kb.enabled && !me.seated && !this.transferring && !me.fishing) {
         if (this.cursors.left.isDown || this.wasd.left.isDown) dx -= 1;
         if (this.cursors.right.isDown || this.wasd.right.isDown) dx += 1;
         if (this.cursors.up.isDown || this.wasd.up.isDown) dy -= 1;
@@ -1676,11 +1974,14 @@
         const stars = this.add.graphics().setDepth(DEPTH.stars);
         let seed = 17 + i * 31;
         const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
-        for (let k = 0; k < Math.max(26, Math.round(w.w / 24)); k++) {
+        const outdoor = Boolean(this.room.outdoor);
+        const count = outdoor ? Math.round(w.w / 5) : Math.max(26, Math.round(w.w / 24));
+        for (let k = 0; k < count; k++) {
           const sx = w.x + 4 + rnd() * (w.w - 8);
-          const sy = w.y + 4 + rnd() * (w.h * 0.45);
-          stars.fillStyle(rnd() < 0.3 ? 0xdfe6f5 : 0xb9c4dd, 0.6 + rnd() * 0.4);
-          stars.fillRect(Math.round(sx), Math.round(sy), 2, 2);
+          const sy = w.y + 4 + rnd() * (w.h * (outdoor ? 0.7 : 0.45));
+          stars.fillStyle(rnd() < 0.3 ? 0xdfe6f5 : 0xb9c4dd, 0.5 + rnd() * 0.5);
+          const size = outdoor && rnd() < 0.6 ? 1 : 2;
+          stars.fillRect(Math.round(sx), Math.round(sy), size, size);
         }
         this.skies.push({ def: w, tex, img, stars });
       });
@@ -1776,6 +2077,10 @@
       const amb = this.room.outdoor ? Daylight.outdoorAmbient(w) : Daylight.ambient(w);
       this.ambient = amb;
       if (this.sunsetTint) this.sunsetTint.setAlpha(amb.sunsetTint || 0);
+      if (this.toneTint) this.toneTint.setAlpha(amb.tone || 0);
+      if (this.clouds) for (const c of this.clouds) c.g.setAlpha(amb.clouds || 0);
+      if (this.spray) this.spray.setAlpha(0.55 + 0.45 * (w.day + w.sunset));
+      for (const n of this.npcs.values()) if (n.glow) n.setNight(w.night);
       if (this.layers.windowDay) this.layers.windowDay.setAlpha(amb.dayLayer);
       if (this.darkness) this.renderDarkness(amb.darkness);
       this.glowScale = amb.glow;

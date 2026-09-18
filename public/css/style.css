@@ -83,6 +83,32 @@ body.wide #btn-wide { color: var(--amber-2); border-color: var(--line-strong); b
 }
 
 /* 화면 고정 따뜻한 비네팅 (캔버스 영역에 맞춰 JS 가 위치/크기 조정) */
+/* 14단계: 밤하늘 오버레이 (별자리) */
+.sky-modal { position: fixed; inset: 0; z-index: 60; background: radial-gradient(ellipse at 50% 70%, #1b2442 0%, #0d1128 55%, #070912 100%); display: flex; align-items: center; justify-content: center; }
+.sky-modal[hidden] { display: none; }
+.sky-modal canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.sky-text { position: absolute; left: 0; right: 0; bottom: 8%; text-align: center; color: #f1e6d2; pointer-events: none; text-shadow: 0 2px 12px rgba(0,0,0,0.6); }
+.sky-text h1 { font-size: 34px; font-weight: 700; color: #ffe6b3; margin: 4px 0 8px; letter-spacing: 1px; }
+.sky-text p { margin: 0; font-size: 15px; }
+.sky-kicker { color: #9fd0ff; font-size: 13px; letter-spacing: 3px; }
+.sky-text .hint { margin-top: 14px; color: rgba(241,230,210,0.55); font-size: 12px; }
+.sky-close { position: absolute; top: 16px; right: 16px; }
+/* 도감 탭 */
+.codex-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+.codex-card { background: var(--panel-2, rgba(255,255,255,0.04)); border: 1px solid var(--line, rgba(255,255,255,0.08)); border-radius: 10px; padding: 8px 6px; text-align: center; display: flex; flex-direction: column; gap: 4px; align-items: center; }
+.codex-card canvas { image-rendering: pixelated; width: 64px; height: 32px; }
+.codex-card .name { font-weight: 700; font-size: 13px; }
+.codex-card .meta { font-size: 11px; color: var(--muted, #b9b0a3); }
+.codex-card.locked .name { color: var(--muted, #8a8378); }
+.codex-card .rarity { font-size: 10px; padding: 1px 6px; border-radius: 8px; background: rgba(255,255,255,0.08); }
+.codex-card .rarity.rare { background: rgba(255,200,80,0.25); color: #ffd98a; }
+.codex-card .rarity.uncommon { background: rgba(120,180,255,0.18); color: #bfe0ff; }
+.codex-const { display: flex; flex-direction: column; gap: 6px; }
+.codex-const li { display: flex; gap: 8px; align-items: baseline; font-size: 13px; }
+.codex-const li .date { margin-left: auto; font-size: 11px; color: var(--muted, #b9b0a3); }
+.codex-const li .real { font-size: 10px; color: #9fd0ff; }
+.codex-section h3 { margin: 10px 0 6px; font-size: 14px; }
+
 #vignette {
   position: absolute;
   pointer-events: none;

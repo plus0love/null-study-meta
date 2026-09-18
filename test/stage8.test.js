@@ -577,7 +577,7 @@ test('브라우저: 잔액 배지 · 코인 획득 연출 · 지갑 모달(탭 �
   await page.click('#wallet-close');
   await page.click('#btn-wallet');
   await page.waitForFunction(() => /다음 코인까지 2분 00초/.test(document.querySelector('#wallet-carry').textContent), { timeout: 5000 });
-  assert.deepEqual(await page.$$eval('#wallet-tabs button', (els) => els.map((b) => b.textContent)), ['가구', '펫', '펫 꾸미기', '탈것']);
+  assert.deepEqual(await page.$$eval('#wallet-tabs button', (els) => els.map((b) => b.textContent)), ['가구', '펫', '펫 꾸미기', '탈것', '도감']);
   assert.match(await page.$eval('#wallet-items', (el) => el.textContent), /머그컵/);
   await page.click('#wallet-tabs button[data-tab="mount"]');
   assert.match(await page.$eval('#wallet-items', (el) => el.textContent), /자전거.*스포츠 카트/, '12단계: 탈것 탭에 카드');

@@ -23,6 +23,7 @@
     'npc:remove',
     'studyGoal', 'study:update', 'kicked', 'study:deleted',
     'playerVehicle', 'playerHorn', 'lap:progress', 'lap', 'track:board',
+    'playerSnack', 'photo', 'playerFishing', 'fish:caught',
   ];
 
   class Net {
@@ -285,6 +286,15 @@
     horn() { return this.ask('horn', {}); }
     trackBoard() { return this.ask('track:board', {}); }
     profile(id) { return this.ask('profile', { id }); }
+    // 14단계 동물원
+    zooFeed(id) { return this.ask('zoo:feed', { id }); }
+    zooSnack(item) { return this.ask('zoo:snack', { item }); }
+    // 14단계 낚시 · 별자리 · 도감
+    fishCast(id) { return this.ask('fish:cast', { id }); }
+    fishReel() { return this.ask('fish:reel', {}); }
+    skyView() { return this.ask('sky:view', {}); }
+    codex() { return this.ask('codex', {}); }
+    fishTank(fishId, on = true) { return this.ask('fish:tank', { fishId, on }); }
     setStatsPublic(on) { return this.ask('profile:visibility', { public: Boolean(on) }); }
     /** 내 기록 초기화: 서버가 세션 토큰 + 닉네임을 확인한다 */
     resetProfile(nickname) { return this.ask('profile:reset', { nickname, token: Net.saved().token }); }

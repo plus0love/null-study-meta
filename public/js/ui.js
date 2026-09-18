@@ -30,7 +30,8 @@
   const $ = (id) => document.getElementById(id);
   const STATUS_LABEL = { study: '공부 중', rest: '휴식 중', coffee: '☕ 휴식 중' };
   const STATUS_ICON = { study: 'i-book', rest: 'i-leaf', coffee: 'i-coffee' };
-  const HINT_LABEL = { sit: '앉기', stand: '일어나기', pet: '쓰다듬기', coffee: '커피 마시기', music: '음악 듣기', lie: '눕기', massage: '안마의자에 앉기', board: '기록 보기', shop: '탈것 상점' };
+  const HINT_LABEL = { sit: '앉기', stand: '일어나기', pet: '쓰다듬기', coffee: '커피 마시기', music: '음악 듣기', lie: '눕기', massage: '안마의자에 앉기', board: '기록 보기', shop: '탈것 상점', sign: '안내판 보기', feed: '먹이 주기', snack_icecream: '아이스크림 사기 (1🪙)', snack_churros: '츄러스 사기 (1🪙)', fish: '낚시하기', reel: '지금! 낚아채기', telescope: '망원경 보기' };
+  const ANIMAL_LABEL = { panda: '판다', lion: '사자', giraffe: '기린', penguin: '펭귄', guinea_pig: '기니피그', flamingo: '플라밍고', monkey: '원숭이', elephant: '코끼리', duck: '오리', squirrel: '다람쥐', pigeon: '비둘기', butterfly: '나비', rabbit: '토끼', cat: '고양이' };
   const VEHICLE_LABEL = { rickshaw: '🛒 낡은 인력거', bicycle: '🚲 자전거', kickboard: '🛴 킥보드', kart: '🏎 기본 카트', sport: '🏎 스포츠 카트' };
   // 9단계: 편집 거부 사유 → 안내
   const EDIT_ERR = {
@@ -50,7 +51,7 @@
   const POMO = { focus: { min: 20, max: 90, def: 25 }, break: { min: 5, max: 20, def: 5 } };
   const LS_RECENT = 'nsm.music.recent';
   const MINIMAP_W = 322; // 미니맵 폭(px) — 타일당 px 는 맵 폭에 맞춰 정한다 (46타일 → 7, 80타일 → 4)
-  const PET_COLORS = { dog: '#c48c52', hamster: '#d9a066', chick: '#f4d35e', turtle: '#6f8567', rabbit: '#efe6d6', cat: '#e0964f', maltese: '#ffffff', poodle_black: '#524b58', shiba: '#e0964f', parrot: '#5f9e5c', slime: '#7fd0b8', fish: '#f2a04a' };
+  const PET_COLORS = { dog: '#c48c52', hamster: '#d9a066', chick: '#f4d35e', turtle: '#6f8567', rabbit: '#efe6d6', cat: '#e0964f', maltese: '#ffffff', poodle_black: '#524b58', shiba: '#e0964f', parrot: '#5f9e5c', slime: '#7fd0b8', fish: '#f2a04a', panda: '#f2eee6', lion: '#d9a35e', giraffe: '#e8c27a', penguin: '#2b2d3a', guinea_pig: '#c98a55', flamingo: '#f08aa0', monkey: '#8a5a3a', elephant: '#9a9fb0', duck: '#f4d35e', squirrel: '#b8743a', pigeon: '#8c8f9c', butterfly: '#f08aa0', firefly: '#fff0a0' };
   const PET_SLOT_LABEL = { head: '머리', neck: '목', back: '등' };
   const SKILL_ICON = { skill_come: '📣', skill_sleep: '💤', skill_high_five: '🖐' };
   const YT_API = 'https://www.youtube.com/iframe_api';
@@ -95,7 +96,10 @@
   }
 
   class UI {
-    constructor({ room, serverNow, avatarKit, catalog = { tabs: [], categories: [], items: [] }, furn = { img: null, frames: {} }, pets = { meta: null, img: null }, petdeco = { img: null, frames: {}, slots: {} }, vehicles = { img: null, frames: {}, meta: {} }, tiles = null }) {
+    constructor({ room, serverNow, avatarKit, catalog = { tabs: [], categories: [], items: [] }, furn = { img: null, frames: {} }, pets = { meta: null, img: null }, petdeco = { img: null, frames: {}, slots: {} }, vehicles = { img: null, frames: {}, meta: {} }, tiles = null, fish = { meta: null, img: null } }) {
+      this.fish = fish; // 14단계: 물고기 시트 (도감 아이콘)
+      this.onCodex = async () => ({ ok: false });
+      this.onFishTank = async () => ({ ok: false });
       this.room = room;
       this.tilesMeta = tiles; // tiles.json (미니맵 색 판정용)
       this.vehicles = vehicles; // 12단계: { img, frames, meta } (DOM 아이콘)
@@ -216,8 +220,12 @@
       $('board-close').addEventListener('click', () => { $('board-modal').hidden = true; });
       $('board-modal').addEventListener('click', (e) => { if (e.target === $('board-modal')) $('board-modal').hidden = true; });
       $('profile-close').addEventListener('click', () => { $('profile-modal').hidden = true; });
+      $('sign-close').addEventListener('click', () => { $('sign-modal').hidden = true; });
+      $('sky-close').addEventListener('click', () => this.closeSky());
+      $('sky-modal').addEventListener('click', (e) => { if (e.target !== $('sky-close') && !$('sky-close').contains(e.target)) this.closeSky(); });
+      $('sign-modal').addEventListener('click', (e) => { if (e.target === $('sign-modal')) $('sign-modal').hidden = true; });
       $('profile-modal').addEventListener('click', (e) => { if (e.target === $('profile-modal')) $('profile-modal').hidden = true; });
-      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { $('board-modal').hidden = true; $('profile-modal').hidden = true; } });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { $('board-modal').hidden = true; $('profile-modal').hidden = true; $('sign-modal').hidden = true; this.closeSky(); } });
     }
 
     /** 맵이 바뀌면 미니맵을 다시 만든다 (studyroom ↔ outdoor) */
@@ -299,6 +307,20 @@
       $('profile-week').textContent = d.weekSeconds === null || d.weekSeconds === undefined ? '이번 주 공부 시간: 비공개' : `이번 주 공부 ${fmtDuration(d.weekSeconds)}`;
       $('profile-vehicle').textContent = d.vehicle ? `${VEHICLE_LABEL[d.vehicle.type] || d.vehicle.type} 탑승 중` : '';
       $('profile-modal').hidden = false;
+    }
+
+    /** 14단계: 동물원 안내판 (room.zoo.enclosures 항목) */
+    showSign(e) {
+      if (!e) return;
+      const kinds = [[e.species, e.count], ...(e.extra || [])].map(([sp, n]) => `${ANIMAL_LABEL[sp] || sp} ${n}마리`).join(' · ');
+      $('sign-name').textContent = `${e.name}`;
+      $('sign-desc').textContent = e.desc || '';
+      $('sign-hint').textContent = e.enterable ? `${kinds} · 문으로 들어가 E 로 쓰다듬을 수 있어요` : `${kinds} · 울타리 앞에서 E → 먹이 주기 (하루 3번)`;
+      $('sign-modal').hidden = false;
+    }
+
+    isSignOpen() {
+      return !$('sign-modal').hidden;
     }
 
     /** 전광판 모달 (track:board ack) */
@@ -1152,7 +1174,8 @@
 
     renderWalletTabs() {
       const box = $('wallet-tabs');
-      const tabs = (this.wallet && this.wallet.tabs) || [{ id: 'furniture', label: '가구' }, { id: 'pet', label: '펫' }, { id: 'petDeco', label: '펫 꾸미기' }, { id: 'mount', label: '탈것' }];
+      const base = (this.wallet && this.wallet.tabs) || [{ id: 'furniture', label: '가구' }, { id: 'pet', label: '펫' }, { id: 'petDeco', label: '펫 꾸미기' }, { id: 'mount', label: '탈것' }];
+      const tabs = base.some((t) => t.id === 'codex') ? base : [...base, { id: 'codex', label: '도감' }]; // 14단계: 도감(낚시·별자리)은 클라이언트 탭
       if (!tabs.some((t) => t.id === this.walletTab)) this.walletTab = tabs[0].id;
       box.innerHTML = '';
       for (const t of tabs) {
@@ -1169,7 +1192,134 @@
     }
 
     /** 탭의 아이템. 가구 탭은 카테고리(책상/공용) 서브탭 + 카드, 다른 탭은 "준비 중" */
+    // ── 14단계: 도감 탭 (물고기 10종 · 어항 · 별자리 관측 기록) ──────────────
+    async renderCodex() {
+      const box = $('wallet-items');
+      box.innerHTML = '';
+      $('wallet-cats').innerHTML = '';
+      $('wallet-cat-hint').textContent = '연못가 낚시 자리에서 E → 5~10초 뒤 "!" 가 뜨면 바로 E · 하루 5마리 · 밤에 전망대 망원경 앞 E → 오늘의 별자리';
+      $('wallet-best').hidden = true;
+      box.appendChild(el('p', { class: 'hint', text: '불러오는 중…' }));
+      const r = await this.onCodex().catch(() => null);
+      if (!r || !r.ok || this.walletTab !== 'codex') return;
+      this.codex = r;
+      box.innerHTML = '';
+      const sec = (title, sub) => { const s = el('section', { class: 'codex-section' }); s.appendChild(el('h3', { text: title })); if (sub) s.appendChild(el('p', { class: 'hint', text: sub })); box.appendChild(s); return s; };
+      const fishSec = sec(`🎣 물고기 도감 ${r.caughtSpecies}/${r.fish.length}`, `오늘 ${r.catchesToday}/${r.catchLimit}마리${r.tank.available ? ` · 내 스터디 어항 ${r.tank.fish.length}/${r.tank.max}마리` : ' · 스터디에 어항 물고기(공용 펫)가 있으면 넣을 수 있어요'}`);
+      const grid = el('div', { class: 'codex-grid' });
+      const RAR = { common: '흔함', uncommon: '보통', rare: '희귀' };
+      for (const f of r.fish) {
+        const caught = f.count > 0;
+        const card = el('div', { class: `codex-card ${caught ? '' : 'locked'}` });
+        card.appendChild(this.fishIcon(f.id, !caught));
+        card.appendChild(el('div', { class: 'name', text: caught ? f.name : '???' }));
+        card.appendChild(el('span', { class: `rarity ${f.rarity}`, text: RAR[f.rarity] || f.rarity }));
+        card.appendChild(el('div', { class: 'meta', text: caught ? `${f.count}마리 · 첫 포획 ${fmtDate(f.firstAt)}` : '아직 못 잡았어요' }));
+        if (caught) card.title = f.desc;
+        if (caught && r.tank.available) {
+          const inTank = r.tank.fish.find((t) => t.fishId === f.id);
+          const mine = inTank && inTank.by === this.selfNickname;
+          if (inTank && !mine) card.appendChild(el('div', { class: 'meta', text: `어항에 (${inTank.by})` }));
+          else card.appendChild(el('button', { class: 'btn small ghost', type: 'button', text: inTank ? '어항에서 빼기' : '어항에 넣기', ...(!inTank && r.tank.fish.length >= r.tank.max ? { disabled: 'disabled' } : {}), onclick: async () => {
+            const res = await this.onFishTank(f.id, !inTank).catch(() => null);
+            if (res && res.ok) { this.toast(inTank ? '어항에서 뺐어요' : '어항에 넣었어요 🐟'); await this.renderCodex(); }
+            else this.notify({ tank_full: '어항이 가득 찼어요 (3마리).', no_tank: '스터디에 어항 물고기가 없어요.', already: '이미 어항에 있어요.', forbidden: '넣은 사람만 뺄 수 있어요.', not_caught: '아직 잡지 않은 물고기예요.' }[res && res.error] || '어항을 바꾸지 못했어요.');
+          } }));
+        }
+        grid.appendChild(card);
+      }
+      fishSec.appendChild(grid);
+      const cs = sec(`🔭 별자리 ${r.constellations.length}/${r.constellationsTotal}`, '밤(19~06시)에 전망대 망원경 앞에서 E — 날마다 다른 별자리');
+      const ul = el('ul', { class: 'list codex-const' });
+      if (!r.constellations.length) ul.appendChild(el('li', { class: 'empty', text: '아직 본 별자리가 없어요' }));
+      for (const c of r.constellations) ul.appendChild(el('li', {}, [el('span', { class: 'name', text: c.name }), c.real ? el('span', { class: 'real', text: '실제 별자리' }) : null, el('span', { class: 'date', text: fmtDate(c.seenAt) })]));
+      cs.appendChild(ul);
+    }
+
+    /** 물고기 아이콘 (fish.png 프레임 → 캔버스). silhouette 면 어둡게 */
+    fishIcon(id, silhouette = false) {
+      const cv = document.createElement('canvas');
+      cv.width = 32; cv.height = 16;
+      const meta = this.fish && this.fish.meta;
+      const img = this.fish && this.fish.img;
+      const ctx = cv.getContext('2d');
+      if (meta && img && meta.species[id]) {
+        const i = meta.species[id].index;
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(img, 0, i * meta.frameHeight, meta.frameWidth, meta.frameHeight, 0, 0, 32, 16);
+        if (silhouette) { ctx.globalCompositeOperation = 'source-in'; ctx.fillStyle = '#2f2a38'; ctx.fillRect(0, 0, 32, 16); }
+      } else {
+        ctx.font = '14px sans-serif';
+        ctx.fillText(silhouette ? '?' : '🐟', 8, 13);
+      }
+      return cv;
+    }
+
+    /** 14단계: 밤하늘 오버레이 — 배경 별 + 오늘의 별자리(별이 차례로 켜지고 선이 이어진다) */
+    openSky(c, { first = false, index = 0 } = {}) {
+      const modal = $('sky-modal');
+      const cv = $('sky-canvas');
+      modal.hidden = false;
+      $('sky-kicker').textContent = `오늘의 별자리 · ${index + 1}/365${first ? ' · 처음 봤어요 ✨' : ''}`;
+      $('sky-name').textContent = c.name;
+      $('sky-desc').textContent = c.desc || '';
+      const W = cv.width = modal.clientWidth || window.innerWidth;
+      const H = cv.height = modal.clientHeight || window.innerHeight;
+      const ctx = cv.getContext('2d');
+      let seed = 4242;
+      const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+      const bg = [];
+      for (let i = 0; i < Math.round((W * H) / 3200); i++) bg.push({ x: rnd() * W, y: rnd() * H, r: rnd() < 0.15 ? 1.6 : 1, a: 0.3 + rnd() * 0.6, p: rnd() * 6 });
+      const box = { w: Math.min(W, H) * 0.62, h: Math.min(W, H) * 0.5 };
+      const ox = (W - box.w) / 2;
+      const oy = H * 0.10;
+      const pts = c.stars.map(([x, y]) => ({ x: ox + x * box.w, y: oy + y * box.h }));
+      const start = performance.now();
+      const total = 600 + c.lines.length * 320;
+      this.skyDone = false;
+      const draw = (now) => {
+        if (modal.hidden) return;
+        const t = now - start;
+        ctx.clearRect(0, 0, W, H);
+        for (const s of bg) { ctx.globalAlpha = s.a * (0.7 + 0.3 * Math.sin(now / 900 + s.p)); ctx.fillStyle = '#dfe6f5'; ctx.fillRect(s.x, s.y, s.r, s.r); }
+        ctx.globalAlpha = 1;
+        // 연결선: 하나씩 320ms 마다
+        ctx.lineWidth = 1.5;
+        c.lines.forEach(([a, b], i) => {
+          const k = Math.min(1, Math.max(0, (t - 600 - i * 320) / 320));
+          if (k <= 0) return;
+          const A = pts[a]; const B = pts[b];
+          ctx.strokeStyle = 'rgba(159,208,255,0.85)';
+          ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(A.x + (B.x - A.x) * k, A.y + (B.y - A.y) * k); ctx.stroke();
+        });
+        pts.forEach((p, i) => {
+          const k = Math.min(1, Math.max(0, (t - i * 120) / 400));
+          if (k <= 0) return;
+          const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 14);
+          g.addColorStop(0, `rgba(255,240,200,${0.9 * k})`); g.addColorStop(0.3, `rgba(255,220,140,${0.35 * k})`); g.addColorStop(1, 'rgba(255,220,140,0)');
+          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(p.x, p.y, 14, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = `rgba(255,255,255,${k})`; ctx.beginPath(); ctx.arc(p.x, p.y, 2.4, 0, Math.PI * 2); ctx.fill();
+        });
+        if (t >= total) this.skyDone = true;
+        this.skyRaf = requestAnimationFrame(draw);
+      };
+      cancelAnimationFrame(this.skyRaf);
+      this.skyRaf = requestAnimationFrame(draw);
+    }
+
+    closeSky() {
+      const modal = $('sky-modal');
+      if (modal.hidden) return;
+      modal.hidden = true;
+      cancelAnimationFrame(this.skyRaf);
+    }
+
+    isSkyOpen() {
+      return !$('sky-modal').hidden;
+    }
+
     renderWalletItems() {
+      if (this.walletTab === 'codex') return this.renderCodex();
       const box = $('wallet-items');
       const cats = $('wallet-cats');
       const hint = $('wallet-cat-hint');
@@ -1859,8 +2009,8 @@
           if (room.outdoor) {
             // 12단계 야외: 바닥 종류별 색 (잔디·언덕·흙길·돌길·광장·물·데크·하늘)
             const name = objects[floor] || '';
-            c = /^grass/.test(name) ? '#4f6b45' : /^hill/.test(name) ? '#45603d' : /^(dirt|start)/.test(name) ? '#8c7458' : /^stone/.test(name) ? '#7d766c' : /^plaza/.test(name) ? '#8f8471' : /^(water|shore)/.test(name) ? '#4f7ea6' : /^deck/.test(name) ? '#7a5c44' : /^(paver|kerb)/.test(name) ? '#5a5560' : name === 'facade' ? '#3a3741' : name === 'sky' ? '#1b2442' : '#4f6b45';
-            if (furn !== -1 && room.collision[y][x]) c = /^(tree|hedge|plant)/.test(objects[furn] || '') ? '#2f4a2d' : '#5a4638';
+            c = /^grass/.test(name) ? '#4f6b45' : /^hill/.test(name) ? '#45603d' : /^(dirt|start)/.test(name) ? '#8c7458' : /^(stone|gravel|zoo_path)/.test(name) ? '#7d766c' : /^plaza/.test(name) ? '#8f8471' : /^(water|shore|ice)/.test(name) ? '#4f7ea6' : /^(deck|blanket)/.test(name) ? '#7a5c44' : /^(paver|kerb)/.test(name) ? '#5a5560' : /^(facade|brick)/.test(name) ? '#3a3741' : /^(sand|pen_)/.test(name) ? '#a08c62' : name === 'sky' ? '#1b2442' : '#4f6b45';
+            if (furn !== -1 && room.collision[y][x]) c = /^(tree|hedge|plant|bush|flowerbed|planter|bamboo)/.test(objects[furn] || '') ? '#2f4a2d' : /^(fence|glass_fence|pen_fence)/.test(objects[furn] || '') ? '#8a7a5a' : '#5a4638';
           } else {
             if (floor !== -1) c = y >= 26 ? '#2a2630' : '#3a2c26';
             if (room.collision[y][x]) c = floor !== -1 && y >= 26 ? '#1e1b24' : '#241b1e';
@@ -2382,6 +2532,13 @@
   }
 
   /** 초 → "1시간 05분" / "23분" / "0분" */
+  /** 14단계: 날짜 짧게 (도감) */
+  function fmtDate(ms) {
+    if (!ms) return '';
+    const d = new Date(Number(ms));
+    return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
+  }
+
   function fmtDuration(sec) {
     const m = Math.floor((Number(sec) || 0) / 60);
     const h = Math.floor(m / 60);

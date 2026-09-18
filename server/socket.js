@@ -82,6 +82,20 @@
  *   profile { id }                           → ack { ok, nickname, studyName, weekSeconds|null(비공개), statsPublic, vehicle }
  *   profile:visibility { public }            → ack { ok, statsPublic } (users.stats_public)
  *   서버 → lap:progress { event: 'start'|'checkpoint'|'reset'|'lap', next, total, ms?, startedAt } (본인), lap { id, nickname, ms, best, isBest, reward, vehicle } (모두, 완주 시)
+ *   ── 14단계 동물원 (야외) ──
+ *   zoo:feed  { id: 우리 id }                 → ack { ok, left, animal, enclosure } | error no_enclosure | too_far | riding | seated | limit(하루 3번) | busy
+ *             동물이 먹이 지점으로 와 먹으면 모두에게 npc:pet { id, reaction, by: null } (❤️ 대신 종별 먹이 이모지) + 시스템 chat
+ *   zoo:snack { item: 'icecream'|'churros' }  → ack { ok, snack{ item, emoji, until }, balance } | error no_item | too_far | insufficient. 모두에게 playerSnack { id, snack } (5분 뒤 클라이언트가 지운다)
+ *   서버 → photo { ids, nicknames } (포토존 발자국 두 칸에 둘이 서면 · 같은 쌍 20초에 한 번) + 시스템 chat "OO님과 OO님이 사진을 찍었어요"
+ *   npc:update 스냅샷에 sheet: 'animals'(동물 시트) · pettable · eating · fly · glow(반딧불이). 동물은 npc:pet 로 쓰다듬기(토끼·기니피그·다람쥐·고양이만)
+ *   ── 14단계 낚시·별자리·도감 ──
+ *   fish:cast { id: 자리 번호 }               → ack { ok, state: 'wait', spot, left, biteIn } | error no_spot | too_far | seated | riding | already | limit(하루 5마리)
+ *             모두에게 playerFishing { id, fishing: { state: 'wait'|'bite', spot } | null, state, result }. 5~10초 뒤 state 'bite'("!"), 1.2초 안에 fish:reel
+ *   fish:reel                                → ack { ok, fish{ id, name, rarity, emoji }, rare, left } | error not_fishing | early | late. 성공하면 모두에게 fish:caught { id, nickname, fish, rare } + 시스템 chat
+ *             (희귀는 서버 전체 chat). 움직이면 낚시가 취소된다 (playerFishing result.reason 'moved')
+ *   sky:view                                 → ack { ok, constellation{ id, name, desc, real, stars, lines }, index, first } | error too_far | daytime{ hour } (망원경 앞, 밤 19~06시 tz)
+ *   codex                                    → ack { ok, fish[10]{ count, firstAt, ... }, caughtSpecies, catchesToday, catchLimit, constellations[{ id, name, desc, real, seenAt }], constellationsTotal, tank{ available, fish[], max } }
+ *   fish:tank { fishId, on }                 → ack { ok, tank } | error no_study | no_tank | no_fish | not_caught | already | tank_full | not_in_tank | forbidden. 어항 물고기(FishNpc) 스냅샷에 tank: [fishId]
  */
 const { Server } = require('socket.io');
 const { Hub } = require('./game/hub');
@@ -166,6 +180,21 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, hub: hubOpts = 
       chat(world, `${player.nickname}님이 트랙 한 바퀴 완주 🏁 ${(ms / 1000).toFixed(1)}초${isBest ? ' (개인 최고!)' : ''}`);
     });
     world.on('board', () => to(world).emit('track:board', {}));
+    // 14단계 동물원: 동물 반응(먹이) · 먹이 준 사람 채팅 · 손에 든 간식 · 포토존 플래시
+    world.on('npcReact', ({ npc, reaction }) => to(world).emit('npc:pet', { id: npc, by: null, playerId: null, reaction, highFive: false }));
+    world.on('zooFeed', ({ player, enclosure }) => chat(world, `${player.nickname}님이 ${enclosure.name}에게 먹이를 줬어요 ❤️`));
+    world.on('snack', ({ player }) => to(world).emit('playerSnack', { id: player.id, snack: world.publicSnack(player) }));
+    world.on('photo', ({ players }) => {
+      to(world).emit('photo', { ids: players.map((p) => p.id), nicknames: players.map((p) => p.nickname) });
+      chat(world, `${players[0].nickname}님과 ${players[1].nickname}님이 사진을 찍었어요 📸`);
+    });
+    // 14단계 낚시: 자세/입질/종료 방송 · 잡으면 시스템 채팅 (희귀는 서버 전체)
+    world.on('fishing', ({ player, state, result }) => to(world).emit('playerFishing', { id: player.id, fishing: world.publicFishing(player), state, result: result || null }));
+    world.on('fishCaught', ({ player, fish, rare }) => {
+      to(world).emit('fish:caught', { id: player.id, nickname: player.nickname, fish, rare });
+      chat(world, `${player.nickname}님이 ${fish.name}을(를) 낚았어요 🎣`);
+      if (rare) io.emit('chat', { system: true, notify: true, text: `✨ ${player.nickname}님이 희귀한 ${fish.name}을(를) 낚았어요! 🎣`, ts: world.now() });
+    });
     world.on('weeklyGoal', (e) => {
       const info = world.studyInfo();
       to(world).emit('studyGoal', { weekStart: e.weekStart, totalSeconds: e.totalSeconds, targetSeconds: e.targetSeconds, bonus: e.bonus, name: info ? info.name : '' });
@@ -320,6 +349,29 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, hub: hubOpts = 
     socket.on('track:board', requirePlayer(safe(async (_p, player) => hub.ensureOutdoor().board(player))));
     socket.on('profile', requirePlayer(safe((payload, player, world) => (world.outdoor ? world.profile(player, payload && payload.id) : { ok: false, error: 'not_outdoor' }))));
     socket.on('profile:visibility', requirePlayer(safe((payload, player, world) => world.setStatsPublic(player, payload && payload.public))));
+    // ── 동물원 (14단계 B) ────────────────────────────────────────────────
+    socket.on('zoo:feed', requirePlayer((payload, ack, player, world) => ack(world.outdoor ? world.feed(player, payload && payload.id) : { ok: false, error: 'not_outdoor' })));
+    socket.on('zoo:snack', requirePlayer(safe(async (payload, player, world) => (world.outdoor ? world.snack(player, payload && payload.item) : { ok: false, error: 'not_outdoor' }))));
+    // ── 낚시 · 별자리 · 도감 (14단계 C) ─────────────────────────────────
+    socket.on('fish:cast', requirePlayer(safe(async (payload, player, world) => (world.outdoor ? world.cast(player, payload && payload.id) : { ok: false, error: 'not_outdoor' }))));
+    socket.on('fish:reel', requirePlayer(safe(async (_p, player, world) => (world.outdoor ? world.reel(player) : { ok: false, error: 'not_outdoor' }))));
+    socket.on('sky:view', requirePlayer(safe(async (_p, player, world) => (world.outdoor ? world.viewSky(player) : { ok: false, error: 'not_outdoor' }))));
+    // 어항은 내 스터디 방의 공용 펫 물고기 (야외에서도 소속 스터디 월드를 찾는다)
+    const tankWorld = async (player, world) => {
+      if (!world.outdoor) return world;
+      const sid = hub.studyIdOf(world, player);
+      return sid !== null && sid !== undefined ? hub.ensureWorld(sid) : null;
+    };
+    socket.on('codex', requirePlayer(safe(async (_p, player, world) => {
+      const base = await world.codex(player);
+      const tw = await tankWorld(player, world);
+      return { ...base, tank: tw ? tw.tankInfo() : { available: false, fish: [], max: 3 } };
+    })));
+    socket.on('fish:tank', requirePlayer(safe(async (payload, player, world) => {
+      const tw = await tankWorld(player, world);
+      if (!tw) return { ok: false, error: 'no_study' };
+      return tw.setTank(player, payload && payload.fishId, !(payload && payload.on === false));
+    })));
 
     // ── 스터디 정보/설정 (11단계) ─────────────────────────────────────
     socket.on('study:info', requirePlayer(safe((_p, player, world) => hub.info(hub.studyIdOf(world, player), player.nickname))));

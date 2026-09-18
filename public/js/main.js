@@ -29,12 +29,14 @@
   let pets; // 10단계: 펫 시트 메타 + 이미지 { meta, img }
   let petdeco; // 10단계: 꾸미기 아틀라스 { img, frames, slots }
   let vehicles; // 12단계: 탈것 아틀라스 { img, frames, meta }
+  let animals; // 14단계: 동물 시트 메타 { meta, img }
+  let fish; // 14단계: 물고기 시트 { meta, img } (도감 아이콘 · 어항)
   let config = { passwordRequired: false };
   try {
     room = await fetch('/api/rooms/studyroom').then((r) => r.json());
     const v = room.assetVersion ? `?v=${room.assetVersion}` : '';
     const loadImg = (src) => new Promise((resolve) => { const img = new Image(); img.onload = () => resolve(img); img.onerror = () => resolve(null); img.src = src; });
-    [tiles, dog, avatarKit, config, catalog, furn, pets, petdeco, vehicles] = await Promise.all([
+    [tiles, dog, avatarKit, config, catalog, furn, pets, petdeco, vehicles, animals, fish] = await Promise.all([
       fetch('/assets/tiles.json').then((r) => r.json()),
       fetch('/assets/dog.json').then((r) => r.json()),
       AvatarKit.load(room.assetVersion),
@@ -49,6 +51,8 @@
       fetch(`/assets/pets.json${v}`).then((r) => r.json()).then(async (meta) => ({ meta, img: await loadImg(`/assets/pets.png${v}`) })),
       fetch(`/assets/petdeco.json${v}`).then((r) => r.json()).then(async (json) => ({ img: await loadImg(`/assets/petdeco.png${v}`), frames: json.frames, slots: json.meta.slots })).catch(() => ({ img: null, frames: {}, slots: {} })),
       fetch(`/assets/vehicles.json${v}`).then((r) => r.json()).then(async (json) => ({ img: await loadImg(`/assets/vehicles.png${v}`), frames: json.frames, meta: json.meta })).catch(() => ({ img: null, frames: {}, meta: { seat: {}, decal: {} } })),
+      fetch(`/assets/animals.json${v}`).then((r) => r.json()).then(async (meta) => ({ meta, img: await loadImg(`/assets/animals.png${v}`) })).catch(() => ({ meta: null, img: null })),
+      fetch(`/assets/fish.json${v}`).then((r) => r.json()).then(async (meta) => ({ meta, img: await loadImg(`/assets/fish.png${v}`) })).catch(() => ({ meta: null, img: null })),
     ]);
   } catch (err) {
     fail(`방 데이터를 불러오지 못했습니다: ${err.message}`);
@@ -64,7 +68,7 @@
   } catch (_) { /* 폰트 없이 진행 */ }
 
   const net = new Net();
-  const ui = new UI({ room, serverNow: () => net.serverNow(), avatarKit, catalog, furn, pets, petdeco, vehicles, tiles });
+  const ui = new UI({ room, serverNow: () => net.serverNow(), avatarKit, catalog, furn, pets, petdeco, vehicles, tiles, fish });
   const sound = new FX.Sound();
 
   const game = new Phaser.Game({
@@ -81,7 +85,7 @@
   });
   // 부팅 중에는 add() 가 인스턴스를 돌려주지 않으므로 직접 만들어 넘긴다
   const scene = new RoomScene();
-  const sceneData = (r, onReady) => ({ room: r, tiles, avatarKit, dog, pets: pets.meta, vehicles: vehicles.meta, catalog, onReady });
+  const sceneData = (r, onReady) => ({ room: r, tiles, avatarKit, dog, pets: pets.meta, vehicles: vehicles.meta, animals: animals.meta, fish: fish.meta, catalog, onReady });
   await new Promise((onReady) => game.scene.add('room', scene, true, sceneData(room, onReady)));
   ui.hideLoading();
 
@@ -115,6 +119,39 @@
     if (kind === 'music') return ui.openMusic(); // 소리는 본인에게만 → 서버는 모른다
     if (kind === 'board') return ui.openBoard(); // 12단계: 전광판
     if (kind === 'shop') return ui.openWallet('mount'); // 12단계: 카트 정류장 → 탈것 상점
+    // 14단계 동물원: 안내판(클라이언트 데이터) · 먹이 주기 · 매점
+    if (kind === 'sign') return ui.showSign(((scene.room.zoo && scene.room.zoo.enclosures) || []).find((e) => e.id === String(id).slice(5)));
+    if (kind === 'feed') {
+      return net.zooFeed(String(id).slice(5)).then((r) => {
+        if (r.ok) ui.toast(`${r.enclosure.name}에게 먹이를 줬어요 ❤️ (오늘 ${r.left}번 남음)`);
+        else ui.notify({ limit: '오늘은 먹이를 다 줬어요. 내일 다시 와요!', busy: '지금은 다들 먹는 중이에요. 잠시 뒤에 다시!', too_far: '울타리 앞으로 조금 더 가까이.', riding: '탈것에서 내린 뒤 주세요.', seated: '일어나서 주세요.' }[r.error] || '먹이를 주지 못했어요.');
+      }).catch(() => {});
+    }
+    // 14단계 낚시 · 별자리
+    if (kind === 'fish') {
+      return net.fishCast(String(id).slice(5)).then((r) => {
+        if (r.ok) ui.toast(`🎣 낚싯대를 던졌어요. "!" 가 뜨면 바로 E! (오늘 ${r.left}마리 남음)`);
+        else ui.notify({ limit: '오늘은 5마리를 다 잡았어요. 내일 다시 와요!', too_far: '물가 낚시 자리로 조금 더 가까이.', already: '이미 낚시 중이에요.', seated: '일어나서 던져요.', riding: '탈것에서 내린 뒤에요.' }[r.error] || '낚싯대를 던지지 못했어요.');
+      }).catch(() => {});
+    }
+    if (kind === 'reel') {
+      return net.fishReel().then((r) => {
+        if (r.ok) { ui.toast(`${r.fish.emoji} ${r.fish.name}을(를) 낚았어요!${r.rare ? ' ✨ 희귀!' : ''} (오늘 ${r.left}마리 남음)`, 4000); sound.chime('lap'); }
+        else ui.notify({ early: '너무 빨랐어요. "!" 가 뜰 때까지 기다려요.', late: '놓쳤어요… 다음엔 더 빨리!', not_fishing: '낚시 중이 아니에요.' }[r.error] || '놓쳤어요.');
+      }).catch(() => {});
+    }
+    if (kind === 'telescope') {
+      return net.skyView().then((r) => {
+        if (r.ok) ui.openSky(r.constellation, { first: r.first, index: r.index });
+        else ui.notify({ daytime: '낮에는 별이 안 보여요. 밤(19시~6시)에 다시 와요 🌙', too_far: '망원경 앞으로 조금 더 가까이.' }[r.error] || '하늘을 볼 수 없어요.');
+      }).catch(() => {});
+    }
+    if (kind === 'snack_icecream' || kind === 'snack_churros') {
+      return net.zooSnack(kind.slice(6)).then((r) => {
+        if (r.ok) { ui.toast(`${r.snack.emoji} 맛있게 드세요! (5분 동안 손에 들어요)`); sound.coin(-1); }
+        else ui.notify({ insufficient: '코인이 모자라요. 1코인이 필요해요.', too_far: '매점 앞으로 조금 더 가까이.' }[r.error] || '사지 못했어요.');
+      }).catch(() => {});
+    }
     net.interact(id).then((r) => { if (!r.ok && r.error === 'too_far') ui.notify('조금 더 가까이 가 주세요.'); }).catch(() => {});
   };
   scene.hooks.onEmojiKey = (i) => net.emoji(i).catch(() => {});
@@ -149,6 +186,17 @@
     if (scene.me && d.id === scene.me.id) { ui.toast(d.vehicle ? '탑승! 방향키로 달려요 (키를 떼면 미끄러져요) · H 경적 · V 내리기' : '내렸어요'); ui.setLap(null); }
   });
   net.on('playerHorn', (d) => { scene.onHorn(d); sound.horn(d.horn); });
+  // 14단계 동물원: 손에 든 간식 · 포토존 플래시
+  net.on('playerSnack', (d) => scene.onSnack(d));
+  net.on('playerFishing', (d) => {
+    scene.onFishing(d);
+    if (scene.me && d.id === scene.me.id && d.result && !d.result.ok && d.result.reason === 'miss') ui.notify('놓쳤어요… "!" 가 뜨면 바로 E!');
+    if (scene.me && d.id === scene.me.id && d.state === 'bite') sound.coin(1);
+  });
+  net.on('fish:caught', (d) => scene.onFishCaught(d));
+  ui.onCodex = () => net.codex();
+  ui.onFishTank = (fishId, on) => net.fishTank(fishId, on);
+  net.on('photo', (d) => { scene.onPhoto(d); if (scene.me && d.ids.includes(scene.me.id)) sound.chime('lap'); });
   net.on('lap:progress', (d) => ui.setLap(d));
   net.on('lap', (d) => {
     scene.onLap(d);

@@ -183,8 +183,30 @@ create table if not exists public.track_records (
 create index if not exists track_records_ms on public.track_records (ms);
 create index if not exists track_records_nickname_created_at on public.track_records (nickname, created_at);
 
+-- 14단계: 낚시 기록 (잡을 때마다 1행 — 도감은 종별 집계, 하루 5마리 제한은 caught_at 의 tz 날짜로 센다). fish_id: server/game/fishing.js 의 id
+create table if not exists public.fish_catches (
+  id          bigint generated always as identity primary key,
+  nickname    text not null references public.users(nickname) on delete cascade,
+  fish_id     text not null,
+  caught_at   timestamptz not null default now()
+);
+create index if not exists fish_catches_nickname_caught_at on public.fish_catches (nickname, caught_at);
+
+-- 14단계: 별자리 관측 (닉네임 + 별자리마다 첫 관측 1행). const_id: server/game/constellations.js 의 id (실제 별자리는 IAU 약자, 상상 별자리는 xNNN)
+create table if not exists public.constellation_views (
+  nickname    text not null references public.users(nickname) on delete cascade,
+  const_id    text not null,
+  seen_at     timestamptz not null default now(),
+  primary key (nickname, const_id)
+);
+
+-- 14단계: 공용 펫 어항에 넣은 물고기 [{ fishId, by, at }] (최대 3, 서버가 검증)
+alter table public.room_pets add column if not exists tank jsonb not null default '[]'::jsonb;
+
 alter table public.users          enable row level security;
 alter table public.track_records  enable row level security;
+alter table public.fish_catches   enable row level security;
+alter table public.constellation_views enable row level security;
 alter table public.study_sessions enable row level security;
 alter table public.todos          enable row level security;
 alter table public.daily_goals    enable row level security;

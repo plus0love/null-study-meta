@@ -28,7 +28,7 @@ function createSupabaseStore({ url, key }) {
   const memberRow = (r) => ({ studyId: r.study_id, nickname: r.nickname, joinedAt: ms(r.joined_at), lastSeenAt: ms(r.last_seen_at) });
   const accessRow = (r) => ({ id: r.id, studyId: r.study_id, tokenHash: r.token_hash, nickname: r.nickname, createdAt: ms(r.created_at), lastUsedAt: ms(r.last_used_at) });
   const rewardRow = (r) => ({ id: r.id, studyId: r.study_id, weekStart: r.week_start, nickname: r.nickname, createdAt: ms(r.created_at), awardedAt: ms(r.awarded_at) });
-  const petRow = (r) => ({ id: r.id, studyId: r.study_id, roomId: r.room_id, itemId: r.item_id, inventoryId: r.inventory_id, name: r.name, releasedBy: r.released_by, releasedAt: ms(r.released_at), cosmetics: r.cosmetics || {}, skills: Array.isArray(r.skills) ? r.skills : [] });
+  const petRow = (r) => ({ id: r.id, studyId: r.study_id, roomId: r.room_id, itemId: r.item_id, inventoryId: r.inventory_id, name: r.name, releasedBy: r.released_by, releasedAt: ms(r.released_at), cosmetics: r.cosmetics || {}, skills: Array.isArray(r.skills) ? r.skills : [], tank: Array.isArray(r.tank) ? r.tank : [] });
   const layoutRow = (r) => ({ id: r.id, studyId: r.study_id, roomId: r.room_id, itemId: r.item_id, inventoryId: r.inventory_id, x: r.x, y: r.y, rotation: r.rotation, meta: r.meta || {}, placedBy: r.placed_by, placedAt: ms(r.placed_at) });
   const ledgerRow = (r) => ({ id: r.id, nickname: r.nickname, delta: Number(r.delta), reason: r.reason, createdAt: ms(r.created_at) });
   const invRow = (r) => ({ id: r.id, nickname: r.nickname, itemId: r.item_id, acquiredAt: ms(r.acquired_at), meta: r.meta || {} });
@@ -339,6 +339,47 @@ function createSupabaseStore({ url, key }) {
     async hasLapToday(nickname, { tz = DEFAULT_TZ } = {}) {
       const rows = check(await client.rpc('track_top', { tz, today_only: true, lim: 1000, only_nickname: nickname })) || [];
       return rows.length > 0;
+    },
+
+    // ── 낚시 · 별자리 · 어항 (14단계) ─────────────────────────────────
+    async addFishCatch({ nickname, fishId }, now = Date.now()) {
+      await ensureUser(nickname);
+      const r = check(await client.from('fish_catches').insert({ nickname, fish_id: String(fishId), caught_at: iso(now) }).select().single());
+      return { id: r.id, nickname: r.nickname, fishId: r.fish_id, caughtAt: ms(r.caught_at) };
+    },
+    async fishCodex(nickname) {
+      const rows = check(await client.from('fish_catches').select('fish_id, caught_at').eq('nickname', nickname)) || [];
+      const m = new Map();
+      for (const r of rows) {
+        const at = ms(r.caught_at);
+        const e = m.get(r.fish_id) || { fishId: r.fish_id, count: 0, firstAt: at, lastAt: at };
+        e.count++;
+        e.firstAt = Math.min(e.firstAt, at);
+        e.lastAt = Math.max(e.lastAt, at);
+        m.set(r.fish_id, e);
+      }
+      return [...m.values()];
+    },
+    async fishCatchesToday(nickname, { tz = DEFAULT_TZ, now = Date.now() } = {}) {
+      const { dateKey } = require('./stats');
+      const today = dateKey(now, tz);
+      const rows = check(await client.from('fish_catches').select('caught_at').eq('nickname', nickname).gte('caught_at', iso(now - 48 * 3600 * 1000))) || [];
+      return rows.filter((r) => dateKey(ms(r.caught_at), tz) === today).length;
+    },
+    async addConstellationView(nickname, constId, now = Date.now()) {
+      await ensureUser(nickname);
+      const prev = check(await client.from('constellation_views').select('seen_at').eq('nickname', nickname).eq('const_id', String(constId)).limit(1)) || [];
+      if (prev[0]) return { inserted: false, seenAt: ms(prev[0].seen_at) };
+      check(await client.from('constellation_views').upsert({ nickname, const_id: String(constId), seen_at: iso(now) }, { onConflict: 'nickname,const_id', ignoreDuplicates: true }));
+      return { inserted: true, seenAt: now };
+    },
+    async constellationViews(nickname) {
+      const rows = check(await client.from('constellation_views').select('const_id, seen_at').eq('nickname', nickname)) || [];
+      return rows.map((r) => ({ constId: r.const_id, seenAt: ms(r.seen_at) }));
+    },
+    async setPetTank(roomPetId, tank) {
+      const rows = check(await client.from('room_pets').update({ tank: Array.isArray(tank) ? tank : [] }).eq('id', roomPetId).select('tank')) || [];
+      return rows[0] ? rows[0].tank : null;
     },
 
     // ── 기록 초기화 (7단계) ───────────────────────────────────────────

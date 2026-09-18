@@ -14,9 +14,18 @@
 const { World } = require('./world');
 const { typeOf, colorOf } = require('./vehicles');
 const { newLapState, advance } = require('./track');
+const { createOutdoorAnimals } = require('./animals');
+const { interactableById } = require('../rooms/build');
+const { dateKey } = require('../store/stats');
+const Fishing = require('./fishing');
+const Sky = require('./constellations');
 
 const LAP_REWARD = 1; // 하루 첫 완주 코인
 const LAP_MIN_MS = 3000; // 이보다 빠른 랩은 이상(순간이동 등)으로 보고 기록하지 않는다
+const FEED_PER_DAY = 3; // 14단계: 먹이 주기 하루 횟수 (사람마다, STATS_TZ 기준)
+const SNACK_MS = 5 * 60 * 1000; // 매점 간식을 손에 들고 있는 시간
+const PHOTO_COOLDOWN_MS = 20 * 1000; // 같은 두 사람의 포토존 플래시 간격
+const FISHING_TICK_MS = 100; // 낚시 세션 진행 주기
 
 class OutdoorWorld extends World {
   /** opts.studyNameOf(studyId) → 이름 | null (전광판·프로필) */
@@ -25,17 +34,210 @@ class OutdoorWorld extends World {
     this.studyNameOf = studyNameOf;
     this.laps = new Map(); // playerId → LapState
     this.track = room.track || null;
+    // 14단계 B: 동물원 우리 동물 + 자유 동물 (room.zoo / room.animals). 먹이 횟수는 메모리(서버 재시작 시 초기화)
+    this.zoo = room.zoo || null;
+    this.feeds = new Map(); // `${nickname}|${date}` → 오늘 준 횟수
+    this.photoAt = new Map(); // 두 사람 id 쌍 → 마지막 플래시 시각
+    for (const n of createOutdoorAnimals(this.room, { now: this.now, random: this.npcOpts.random, tickMs: this.npcOpts.tickMs })) this.addAnimal(n);
+    // 14단계 C: 낚시 세션 (playerId → session). npc.autoStart === false 면 테스트가 tickFishing(now) 를 직접 부른다
+    this.fishing = new Map();
+    this.random = this.npcOpts.random || Math.random;
+    this.fishingTimer = null;
+    if (this.npcOpts.autoStart !== false) {
+      this.fishingTimer = setInterval(() => this.tickFishing(this.now()), FISHING_TICK_MS);
+      this.fishingTimer.unref?.();
+    }
+  }
+
+  // ── 낚시 (14단계 C) ──────────────────────────────────────────────────
+  /** 공개용 낚시 상태 { state: 'wait'|'bite', spot } | null */
+  publicFishing(p) {
+    const s = this.fishing.get(p.id);
+    return s && s.state !== 'done' ? { state: s.state, spot: s.spot } : null;
+  }
+
+  /**
+   * 낚싯대 던지기 (자리 앞에서 E). 하루 CATCH_PER_DAY 마리까지.
+   * @returns {{ ok: true, state: 'wait', spot, left } | { ok: false, error: 'no_spot' | 'too_far' | 'seated' | 'riding' | 'already' | 'limit' }}
+   */
+  async cast(player, spotId) {
+    const it = interactableById(this.room, `fish:${String(spotId ?? '')}`);
+    if (!it || it.kind !== 'fish') return { ok: false, error: 'no_spot' };
+    if (Math.hypot(it.x - player.x, it.y - player.y) > it.range) return { ok: false, error: 'too_far' };
+    if (player.seatId) return { ok: false, error: 'seated' };
+    if (player.vehicle) return { ok: false, error: 'riding' };
+    if (this.fishing.has(player.id)) return { ok: false, error: 'already' };
+    const today = await this.store.fishCatchesToday(player.nickname, { tz: this.tz, now: this.now() });
+    if (today >= Fishing.CATCH_PER_DAY) return { ok: false, error: 'limit', left: 0 };
+    if (this.fishing.has(player.id) || player.removed) return { ok: false, error: 'already' };
+    const s = Fishing.newSession(String(spotId), this.now(), this.random);
+    this.fishing.set(player.id, s);
+    player.fishing = this.publicFishing(player);
+    this.emit('fishing', { player, state: 'wait' });
+    return { ok: true, state: 'wait', spot: s.spot, left: Fishing.CATCH_PER_DAY - today, biteIn: s.biteAt - this.now() };
+  }
+
+  /** 세션 진행: 입질 시작 → 'fishing' { state: 'bite' } · 창이 지나면 실패 */
+  tickFishing(now = this.now()) {
+    for (const [id, s] of this.fishing) {
+      const player = this.players.get(id);
+      if (!player) { this.fishing.delete(id); continue; }
+      const r = Fishing.tickSession(s, now);
+      if (r === 'bite') { player.fishing = this.publicFishing(player); this.emit('fishing', { player, state: 'bite' }); }
+      else if (r === 'miss') this.endFishing(player, { ok: false, reason: 'miss' });
+    }
+  }
+
+  endFishing(player, result = null) {
+    if (!this.fishing.has(player.id)) return;
+    this.fishing.delete(player.id);
+    player.fishing = null;
+    this.emit('fishing', { player, state: null, result });
+  }
+
+  /**
+   * 낚아채기 (입질 순간 E). 창 안이면 종을 뽑아 저장.
+   * @returns {{ ok: true, fish, rare, left } | { ok: false, error: 'not_fishing' | 'early' | 'late' }}
+   */
+  async reel(player) {
+    const s = this.fishing.get(player.id);
+    if (!s) return { ok: false, error: 'not_fishing' };
+    const now = this.now();
+    if (!Fishing.reelOk(s, now)) {
+      const error = s.state === 'wait' ? 'early' : 'late';
+      this.endFishing(player, { ok: false, reason: error });
+      return { ok: false, error };
+    }
+    const fish = Fishing.roll(this.random);
+    this.endFishing(player, { ok: true, fish: fish.id });
+    let rec = null;
+    try { rec = await this.store.addFishCatch({ nickname: player.nickname, fishId: fish.id }, now); } catch (err) { this.log.warn(`[outdoor] 낚시 저장 실패 (${player.nickname}): ${err.message}`); }
+    const today = await this.store.fishCatchesToday(player.nickname, { tz: this.tz, now }).catch(() => 0);
+    const pub = { id: fish.id, name: fish.name, rarity: fish.rarity, emoji: fish.emoji };
+    this.emit('fishCaught', { player, fish: pub, rare: fish.rarity === 'rare', record: rec });
+    return { ok: true, fish: pub, rare: fish.rarity === 'rare', left: Math.max(0, Fishing.CATCH_PER_DAY - today) };
+  }
+
+  // ── 별자리 (14단계 C) ───────────────────────────────────────────────
+  /**
+   * 전망대 망원경 앞 E: 밤(19~06시, tz)이면 오늘의 별자리를 돌려주고 관측 기록.
+   * @returns {{ ok: true, constellation, index, first } | { ok: false, error: 'too_far' | 'daytime', hour }}
+   */
+  async viewSky(player) {
+    const it = interactableById(this.room, 'telescope');
+    if (!it || Math.hypot(it.x - player.x, it.y - player.y) > it.range) return { ok: false, error: 'too_far' };
+    const now = this.now();
+    if (!Sky.isNight(now, this.tz)) return { ok: false, error: 'daytime', hour: Math.round(Sky.hourOf(now, this.tz) * 10) / 10 };
+    const c = Sky.todays(now, this.tz);
+    let first = false;
+    try { first = (await this.store.addConstellationView(player.nickname, c.id, now)).inserted; } catch (err) { this.log.warn(`[outdoor] 별자리 저장 실패 (${player.nickname}): ${err.message}`); }
+    return { ok: true, constellation: Sky.publicOf(c), index: Sky.indexFor(now, this.tz), first };
+  }
+
+  publicPlayer(p) {
+    return { ...super.publicPlayer(p), snack: this.publicSnack(p), fishing: this.publicFishing(p) };
+  }
+
+  detach(player, reason) {
+    this.endFishing(player);
+    this.laps.delete(player.id);
+    return super.detach(player, reason);
+  }
+
+  async dispose() {
+    clearInterval(this.fishingTimer);
+    this.fishingTimer = null;
+    return super.dispose();
+  }
+
+  // ── 동물원 (14단계 B) ────────────────────────────────────────────────
+  addAnimal(n) {
+    this.addNpc(n);
+    n.on('react', ({ reaction }) => this.emit('npcReact', { npc: n.id, reaction }));
+    return n;
+  }
+
+  animalsOf(enclosureId) {
+    return this.npcs.filter((n) => n.enclosure === enclosureId);
+  }
+
+  enclosureOf(id) {
+    return this.zoo ? this.zoo.enclosures.find((e) => e.id === id) || null : null;
+  }
+
+  feedsLeft(player) {
+    return Math.max(0, FEED_PER_DAY - (this.feeds.get(`${player.nickname}|${this.today()}`) || 0));
+  }
+
+  /**
+   * 먹이 주기: 우리 앞 지점에서, 하루 FEED_PER_DAY 번. 먹고 있지 않은 동물 하나가 다가와 먹는다.
+   * @returns {{ ok: true, left, animal, enclosure } | { ok: false, error: 'no_enclosure' | 'too_far' | 'riding' | 'seated' | 'limit' | 'busy', left? }}
+   */
+  feed(player, id) {
+    const enclosure = this.enclosureOf(String(id || ''));
+    const it = enclosure && interactableById(this.room, `feed:${enclosure.id}`);
+    if (!enclosure || !it) return { ok: false, error: 'no_enclosure' };
+    if (Math.hypot(it.x - player.x, it.y - player.y) > it.range) return { ok: false, error: 'too_far' };
+    if (player.vehicle) return { ok: false, error: 'riding' };
+    if (player.seatId) return { ok: false, error: 'seated' };
+    const key = `${player.nickname}|${this.today()}`;
+    const used = this.feeds.get(key) || 0;
+    if (used >= FEED_PER_DAY) return { ok: false, error: 'limit', left: 0 };
+    const free = this.animalsOf(enclosure.id).filter((n) => !n.feeding);
+    if (!free.length) return { ok: false, error: 'busy', left: FEED_PER_DAY - used };
+    const fx = (enclosure.feedTile.x + 0.5) * this.room.tileSize;
+    const fy = (enclosure.feedTile.y + 1) * this.room.tileSize;
+    free.sort((a, b) => Math.hypot(a.x - fx, a.y - fy) - Math.hypot(b.x - fx, b.y - fy));
+    const animal = free[0];
+    animal.feed();
+    this.feeds.set(key, used + 1);
+    this.emit('zooFeed', { player, enclosure, animal });
+    return { ok: true, left: FEED_PER_DAY - used - 1, animal: animal.id, enclosure: { id: enclosure.id, name: enclosure.name } };
+  }
+
+  /** 손에 든 간식 (만료되면 null) */
+  publicSnack(p) {
+    if (!p.snack || p.snack.until <= this.now()) return null;
+    return { item: p.snack.item, emoji: p.snack.emoji, until: p.snack.until };
+  }
+
+  /**
+   * 매점: 1코인에 아이스크림/츄러스 → 5분 동안 손에 든 아이콘.
+   * @returns {{ ok: true, snack, balance } | { ok: false, error: 'no_item' | 'too_far' | 'insufficient' }}
+   */
+  async snack(player, item) {
+    const def = this.zoo && this.zoo.snacks.find((s) => s.id === item);
+    const it = def && interactableById(this.room, `snack:${def.id}`);
+    if (!def || !it) return { ok: false, error: 'no_item' };
+    if (Math.hypot(it.x - player.x, it.y - player.y) > it.range) return { ok: false, error: 'too_far' };
+    const r = await this.award(player.nickname, player.id, -def.price, `purchase:snack_${def.id}`);
+    if (!r) return { ok: false, error: 'insufficient' };
+    player.snack = { item: def.id, emoji: def.emoji, until: this.now() + SNACK_MS };
+    this.emit('snack', { player });
+    return { ok: true, snack: this.publicSnack(player), balance: r.balance };
+  }
+
+  /** 포토존: 두 사람이 발자국 두 칸에 같이 서면 플래시 (같은 쌍은 PHOTO_COOLDOWN_MS 에 한 번) */
+  checkPhoto(player) {
+    const z = this.zoo && this.zoo.photo;
+    if (!z) return;
+    const T = this.room.tileSize;
+    const inZone = (p) => { const tx = Math.floor(p.x / T); const ty = Math.floor((p.y - 1) / T); return tx >= z.x0 && tx <= z.x1 && ty >= z.y0 && ty <= z.y1; };
+    if (!inZone(player)) return;
+    const now = this.now();
+    for (const other of this.players.values()) {
+      if (other === player || !other.connected || !inZone(other)) continue;
+      const key = [player.id, other.id].sort().join('|');
+      if (now - (this.photoAt.get(key) || -Infinity) < PHOTO_COOLDOWN_MS) continue;
+      this.photoAt.set(key, now);
+      this.emit('photo', { players: [player, other] });
+    }
   }
 
   lapOf(player) {
     let s = this.laps.get(player.id);
     if (!s) { s = newLapState(); this.laps.set(player.id, s); }
     return s;
-  }
-
-  detach(player, reason) {
-    this.laps.delete(player.id);
-    return super.detach(player, reason);
   }
 
   // ── 탈것 ──────────────────────────────────────────────────────────
@@ -94,6 +296,8 @@ class OutdoorWorld extends World {
 
   // ── 랩 ────────────────────────────────────────────────────────────
   afterMove(player, from) {
+    if (this.fishing.has(player.id) && Math.hypot(player.x - from.x, player.y - from.y) > 2) this.endFishing(player, { ok: false, reason: 'moved' });
+    this.checkPhoto(player);
     if (!this.track || !player.vehicle) return;
     const state = this.lapOf(player);
     const r = advance(this.track, state, from, { x: player.x, y: player.y }, this.now());
@@ -149,4 +353,4 @@ class OutdoorWorld extends World {
   }
 }
 
-module.exports = { OutdoorWorld, LAP_REWARD, LAP_MIN_MS };
+module.exports = { OutdoorWorld, LAP_REWARD, LAP_MIN_MS, FEED_PER_DAY, SNACK_MS, PHOTO_COOLDOWN_MS, FISHING_TICK_MS };
