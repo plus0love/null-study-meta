@@ -350,11 +350,13 @@
   net.on('coins', (d) => {
     scene.onCoins(d); // 머리 위 "+N 🪙" (남의 것도)
     if (!scene.me || d.id !== scene.me.id) return;
-    if (d.balance !== undefined) ui.setCoins(d.balance, { bump: true });
+    if (d.balance !== undefined) ui.setCoins(d.balance, { bump: true }); // 잔액은 서버가 준 balance 만 (더하기 계산 없음)
+    if (d.nextCoinAt !== undefined) ui.setCoinProgress({ carrySeconds: d.carrySeconds, nextCoinAt: d.nextCoinAt, studying: d.nextCoinAt !== null });
     sound.coin(d.delta);
     if (d.delta > 0) ui.toast(d.reason === 'focus' ? `집중 완주 보너스 +${d.delta} 🪙` : d.reason === 'weekly_goal' ? `그룹 목표 보너스 +${d.delta} 🪙` : `+${d.delta} 🪙`);
     if (ui.isWalletOpen()) ui.refreshWallet();
   });
+  net.on('coinProgress', (d) => ui.setCoinProgress(d)); // 세션 시작·종료: 지갑 "다음 코인까지" 카운트다운 시작/정지
   net.on('playerPomodoro', (d) => scene.onPlayerPomodoro(d));
   ui.setNotifyPermission(FX.Notify.permission());
   ui.onNotifyPerm = () => FX.Notify.request().then((st) => ui.setNotifyPermission(st));
@@ -379,7 +381,9 @@
     ui.setNpcs(ack.npcs || []);
     const profile = ack.profile || {};
     ui.setGoal(profile.goal || null);
-    ui.setCoins(profile.coins || 0);
+    // 잔액은 서버가 준 값만. 문 이동 ack 처럼 profile 에 coins 가 없으면 지금 표시를 유지한다 (0 으로 튀지 않게)
+    if (profile.coins !== undefined) ui.setCoins(profile.coins);
+    if (profile.coinProgress) ui.setCoinProgress(profile.coinProgress);
     ui.setDeskItems(ack.self.deskItems || [null, null, null]);
     ui.setEditMode(false);
     scene.setEditMode(false);

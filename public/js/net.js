@@ -18,7 +18,7 @@
     'avatar:update', 'playerEmoji', 'chat', 'pomodoro', 'roomCount', 'playerDisconnected', 'playerReconnected',
     'npc:update', 'npc:pet', 'npc:name', 'playerListening',
     'playerGoal', 'leaderboard:refresh', 'attendance', 'goalReached',
-    'coins', 'playerPomodoro',
+    'coins', 'coinProgress', 'playerPomodoro',
     'layout:update', 'playerDesk', 'playerEdit',
     'npc:remove',
     'studyGoal', 'study:update', 'kicked', 'study:deleted',

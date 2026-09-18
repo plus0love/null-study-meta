@@ -34,7 +34,8 @@
  *   pomodoro:start { focusMinutes?, breakMinutes? } / pomodoro:stop → ack { ok, ...snapshot | error }. 7단계: **개인 타이머** —
  *             본인에게만 pomodoro { ...snapshot } (자동 전환 때도). 집중 20~90분 · 휴식 5~20분, 진행 중엔 설정 변경 불가.
  *             8단계: 시작·정지·전환 때 모두에게 playerPomodoro { id, pomodoro: { phase, endsAt } | null } (머리 위 남은 시간 — 각자 서버 시각으로 계산)
- *   wallet                                   → ack { ok, coins, ledger[≤10], inventory(placed/slot), tabs, categories, items, layoutLock } (8·9단계 지갑·상점)
+ *   wallet                                   → ack { ok, coins, carrySeconds, nextCoinAt|null, studying, ledger[≤10], inventory(placed/slot), tabs, categories, items, layoutLock } (8·9단계 지갑·상점.
+ *             coins 는 입장 ack 의 profile.coins 와 같은 저장소 값. 공부 중이면 nextCoinAt(서버 ms) 로 "다음 코인까지" 카운트다운)
  *   shop:buy  { itemId, variant? }           → ack { ok, balance, item, inventory } | { ok:false, error: no_item | no_variant | insufficient, balance? }
  *   ── 9단계 가구 ──
  *   desk:equip { slots: [inventoryId|null x3] } → ack { ok, deskItems } | error invalid|no_item|not_desk|duplicate. 모두에게 playerDesk { id, deskItems }
@@ -62,7 +63,10 @@
  * 서버 → npc:update { id, kind, name, x, y, facing, state } (10Hz, 바뀔 때)
  * 서버 → leaderboard:refresh { nickname, seconds } (세션 저장 시), attendance { streak, weekDays } (본인에게, 출석 기록 시),
  *        goalReached { id, nickname } + 시스템 chat (오늘 목표 달성)
- * 서버 → coins { id, delta, reason, balance? } (8단계: 코인 증감 — 모두에게 보내되 balance 는 본인에게만)
+ * 서버 → coins { id, delta, reason, balance?, carrySeconds?, nextCoinAt? } (8단계: 코인 증감 — 모두에게 보내되 balance 는 본인에게만. 시간 코인은 앉아서 공부 중
+ *        10분이 찰 때마다 즉시 오고, 본인에게는 다음 코인까지 정보가 함께 실린다. 클라이언트는 잔액을 스스로 계산하지 않고 balance 만 반영한다)
+ *        coinProgress { studying, carrySeconds, nextCoinAt|null } (본인에게만: 세션 시작·종료 — 지갑 카운트다운 시작/정지)
+ *        playerStatus { id, status, auto: true } (뽀모도로를 따라 상태가 자동 전환됨 — 집중 → study, 휴식 → rest)
  * 입장 ack 에 profile { goal, streak, coins, rewards }, store('memory'|'supabase'), tz 가 포함된다.
  * 서버 → 클라이언트 알림: playerJoined { player }, playerLeft { id, nickname, reason }, playerReconnected { id }, playerDisconnected { id }
  * 모든 방 안 이벤트는 Socket.io room `study:<id>` 안에서만 오간다 (다른 스터디 사람·가구·펫은 보이지 않는다).
@@ -118,13 +122,20 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, hub: hubOpts = 
       socketOf(player)?.emit('pomodoro', snap);
       if (reason !== 'config') to(world).emit('playerPomodoro', { id: player.id, pomodoro: world.publicPomodoro(player) });
     });
-    world.on('coins', ({ playerId, delta, reason, balance }) => {
-      const p = world.players.get(playerId);
+    // 문을 지나는 순간 정산된 코인은 옛 월드에서 나오므로, 이 월드에 없으면 다른 월드(야외 등)에서 찾아 본인에게 보낸다
+    const playerAnywhere = (id) => world.players.get(id) || hub.allPlayers().find((x) => x.id === id) || null;
+    world.on('coins', ({ playerId, delta, reason, balance, carrySeconds, nextCoinAt }) => {
+      const p = playerAnywhere(playerId);
       const self = socketOf(p);
-      if (self) self.emit('coins', { id: playerId, delta, reason, balance });
+      // 본인에게만 balance (+ 시간 코인이면 다음 코인까지) — 클라이언트는 잔액을 스스로 더하지 않고 이 값만 반영한다
+      if (self) self.emit('coins', { id: playerId, delta, reason, balance, ...(nextCoinAt !== undefined ? { carrySeconds, nextCoinAt } : {}) });
       (self ? self.to(roomOf(world)) : to(world)).emit('coins', { id: playerId, delta, reason });
       if (delta > 0) to(world).emit('leaderboard:refresh', { nickname: p ? p.nickname : null, seconds: 0 });
     });
+    // 세션 시작·종료: 지갑 "다음 코인까지" 카운트다운 (본인에게만)
+    world.on('coinProgress', ({ playerId, studying, carrySeconds, nextCoinAt }) => socketOf(playerAnywhere(playerId))?.emit('coinProgress', { studying, carrySeconds, nextCoinAt }));
+    // 뽀모도로를 따라 상태가 자동으로 바뀜 (본인 포함 모두에게)
+    world.on('status', ({ player }) => to(world).emit('playerStatus', { id: player.id, status: player.status, auto: true }));
     world.on('npcUpdate', (snap) => to(world).emit('npc:update', snap));
     world.on('npcPet', ({ npc, by, playerId, name, reaction, highFive }) => {
       to(world).emit('npc:pet', { id: npc, by, playerId, reaction, highFive });
@@ -293,7 +304,11 @@ function attachSocket(httpServer, { room, world: worldOpts = {}, hub: hubOpts = 
       socket.data.world = next;
       socket.join(roomOf(next));
       roomCount(world);
-      ack(sessionAck(next, player, res.study, { resumed: false, profile: { vehicleConfig: next.vehicleConfigOf(player), statsPublic: Boolean(player.statsPublic) } }));
+      // 잔액은 항상 서버 값 (문을 지나도 배지가 0 으로 튀지 않게 coins 를 실어 보낸다)
+      let coins;
+      let coinProgress;
+      try { [coins, coinProgress] = await Promise.all([next.store.getCoins(player.nickname), next.coinProgressOf(player)]); } catch (err) { log.warn(`[socket] 잔액 조회 실패: ${err.message}`); }
+      ack(sessionAck(next, player, res.study, { resumed: false, profile: { vehicleConfig: next.vehicleConfigOf(player), statsPublic: Boolean(player.statsPublic), ...(coins !== undefined ? { coins, coinProgress } : {}) } }));
       socket.to(roomOf(next)).emit('playerJoined', { player: next.publicPlayer(player) });
       roomCount(next);
       log.log(`[socket] ${player.nickname} → ${next.outdoor ? '야외' : res.study.name}`);

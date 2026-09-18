@@ -198,7 +198,7 @@
       this.bindOutdoor();
       this.buildMinimapBase();
       this.renderTodos();
-      setInterval(() => { this.tickPomodoro(); this.tickLap(); }, 250);
+      setInterval(() => { this.tickPomodoro(); this.tickLap(); this.tickCoinProgress(); }, 250);
     }
 
     // ── 야외 (12단계): 배지 · 탈것 설정 · 프로필 · 전광판 · 랩 HUD ─────────
@@ -1115,8 +1115,8 @@
         const r = await this.onWallet();
         if (!r || !r.ok) return;
         this.wallet = r;
-        this.setCoins(r.coins);
-        this.renderCarry(r.carrySeconds);
+        this.setCoins(r.coins); // 잔액은 서버 값만 (스스로 더하지 않는다)
+        this.setCoinProgress(r);
         this.renderWalletTabs();
         this.renderWalletItems();
         this.renderLedger();
@@ -1128,11 +1128,26 @@
       } catch (_) { /* 오프라인 */ } finally { this.walletBusy--; }
     }
 
-    /** 이월 초 → "다음 코인까지 N분 N초" (모달 안내 줄 뒤에) */
-    renderCarry(carrySeconds) {
+    /**
+     * "다음 코인까지" (wallet 응답 · coinProgress 이벤트 · 시간 코인 coins 이벤트). 서버가 준 값만 쓴다:
+     * 공부 중이면 nextCoinAt(서버 시각 ms) 으로 실시간 카운트다운, 아니면 이월 초로 고정 표시.
+     */
+    setCoinProgress({ carrySeconds = 0, nextCoinAt = null, studying = false } = {}) {
+      this.coinProgress = { carrySeconds: Number(carrySeconds) || 0, nextCoinAt: nextCoinAt === null || nextCoinAt === undefined ? null : Number(nextCoinAt), studying: Boolean(studying) };
+      this.tickCoinProgress(true);
+    }
+
+    /** 250ms 마다 (지갑이 열려 있을 때만 DOM 갱신) */
+    tickCoinProgress(force = false) {
+      const p = this.coinProgress;
+      if (!p) return;
+      if (!force && !this.isWalletOpen()) return;
       const el2 = $('wallet-carry');
-      const left = Math.max(0, 600 - (Number(carrySeconds) || 0));
-      el2.textContent = ` · 다음 코인까지 ${Math.floor(left / 60)}분 ${String(left % 60).padStart(2, '0')}초`;
+      let left;
+      if (p.nextCoinAt !== null) left = Math.max(0, Math.ceil((p.nextCoinAt - this.serverNow()) / 1000));
+      else left = Math.max(0, 600 - p.carrySeconds);
+      const text = `${Math.floor(left / 60)}분 ${String(left % 60).padStart(2, '0')}초`;
+      el2.textContent = p.nextCoinAt !== null ? ` · 다음 코인까지 ${text} ⏳` : ` · 다음 코인까지 ${text} (앉아서 공부 중일 때 줄어요)`;
     }
 
     renderWalletTabs() {

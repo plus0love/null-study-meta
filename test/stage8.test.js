@@ -13,7 +13,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const { coinsForSession, settleStudy, focusBonusFor, FOCUS_BONUS, FOCUS_BONUS_MIN_MS } = require('../server/game/coins');
+const { coinsForSession, settleStudy, focusBonusFor, FOCUS_BONUS, FOCUS_BONUS_MIN_MS, FOCUS_START_SLACK_MS } = require('../server/game/coins');
 const { createShop, TABS } = require('../server/game/shop');
 const { Pomodoro } = require('../server/game/pomodoro');
 const { World } = require('../server/game/world');
@@ -74,7 +74,9 @@ test('focusBonusFor: 집중 20분 이상 + 사이클 시작 이전부터 이어�
   assert.equal(FOCUS_BONUS_MIN_MS, 20 * MIN);
   assert.equal(focusBonusFor(cycle, { startedAt: 1000 }), 5, '동시에 시작해도 인정');
   assert.equal(focusBonusFor(cycle, { startedAt: 500 }), 5);
-  assert.equal(focusBonusFor(cycle, { startedAt: 1001 }), 0, '사이클 도중에 앉음');
+  assert.equal(focusBonusFor(cycle, { startedAt: 1001 }), 5, '자동 전환 직후(여유 2초 안)에 열린 세션은 인정');
+  assert.equal(focusBonusFor(cycle, { startedAt: 1000 + FOCUS_START_SLACK_MS }), 5, '여유 경계');
+  assert.equal(focusBonusFor(cycle, { startedAt: 1000 + FOCUS_START_SLACK_MS + 1 }), 0, '사이클 도중에 앉음');
   assert.equal(focusBonusFor(cycle, null), 0, '공부 중 아님');
   assert.equal(focusBonusFor({ ...cycle, phase: 'break' }, { startedAt: 0 }), 0, '휴식 종료는 아님');
   assert.equal(focusBonusFor({ ...cycle, durationMs: 20 * MIN }, { startedAt: 0 }), 5, '정확히 20분은 인정');
@@ -168,7 +170,7 @@ test('월드: 세션 저장 시 10분당 1코인 — 25분 → 2 (+300초 이월
   advance(25 * MIN);
   world.stand(a);
   await settle(world);
-  assert.deepEqual(coins, [{ nickname: '민수', playerId: a.id, delta: 2, reason: 'study', balance: 2 }]);
+  assert.deepEqual(coins, [{ nickname: '민수', playerId: a.id, delta: 2, reason: 'study', balance: 2, carrySeconds: 300, nextCoinAt: null }], 'tick 없이 끝나면 종료 시 한 번에 (실시간 판정은 stage13)');
   assert.equal(await store.getCoins('민수'), 2);
   assert.equal(await store.getCoinCarry('민수'), 300, '25분 중 5분이 이월');
 
@@ -273,22 +275,29 @@ test('월드: 집중 사이클 완주 보너스 5코인 — 시작 전부터 끝
   pomo.advance(); // 실제 setTimeout 대신 직접 전환 (dispose 가 타이머를 지운다)
   await settle(world);
   assert.equal(pomo.phase, 'break');
-  assert.deepEqual(coins, [{ nickname: '민수', playerId: a.id, delta: 5, reason: 'focus', balance: 5 }]);
+  const focus = () => coins.filter((c) => c.reason === 'focus');
+  // 보너스 판정(phaseEnd)이 상태 전환(switch → 휴식 중, 세션 종료)보다 먼저 → 보너스 balance 5, 그 뒤 26분 세션의 시간 코인 2
+  assert.deepEqual(focus(), [{ nickname: '민수', playerId: a.id, delta: 5, reason: 'focus', balance: 5 }]);
+  assert.deepEqual(coins.map((c) => [c.reason, c.delta, c.balance]), [['focus', 5, 5], ['study', 2, 7]], '보너스와 시간 코인이 같이 와도 balance 순서가 지켜진다');
   assert.equal(a.focusBonusAt, pomo.startedAt - 25 * MIN);
+  assert.equal(a.status, 'rest', '휴식 구간 → 자동 휴식 중');
+  assert.equal(world.study.live.has('민수'), false, '세션 일시 정지');
 
-  // 휴식이 끝나도 보너스 없음
+  // 휴식이 끝나도 보너스 없음. 다시 집중 → 자동 공부 중 (새 세션)
   advance(5 * MIN);
   pomo.advance();
   await settle(world);
-  assert.equal(coins.length, 1);
+  assert.equal(focus().length, 1);
   assert.equal(pomo.phase, 'focus');
+  assert.equal(a.status, 'study');
+  assert.equal(world.study.live.get('민수').startedAt, pomo.startedAt, '세션이 사이클 시작과 같은 시각에 열림');
 
-  // 두 번째 집중 사이클: 계속 앉아 있었으므로 또 5
+  // 두 번째 집중 사이클: 자동 전환으로 열린 세션도 "시작 전부터" 로 인정 → 또 5
   advance(25 * MIN);
   pomo.advance();
   await settle(world);
-  assert.equal(coins.length, 2);
-  assert.equal(coins[1].balance, 10);
+  assert.equal(focus().length, 2);
+  assert.equal(focus()[1].balance, 12, '5 + 2(시간) + 5');
   await world.dispose();
 });
 
@@ -304,7 +313,7 @@ test('월드: 사이클 도중 일어나면(다시 앉아도) 보너스 없음, 
   advance(15 * MIN);
   pomo.advance();
   await settle(world);
-  assert.deepEqual(coins.map((c) => c.reason), ['study'], '중간에 일어났으면 focus 보너스 없음');
+  assert.deepEqual(coins.map((c) => c.reason), ['study', 'study'], '중간에 일어났으면 focus 보너스 없음 (10분 세션 1 + 휴식 전환으로 끝난 15분 세션 1)');
 
   // 앉지 않은 채 사이클 완주
   world.stand(a);
@@ -335,7 +344,7 @@ test('월드: 집중 20분 미만 사이클은 보너스 없음, 같은 사이�
   short.advance(15 * MIN);
   short.world.pomodoroOf(a).advance();
   await settle(short.world);
-  assert.deepEqual(short.coins, []);
+  assert.deepEqual(short.coins.filter((c) => c.reason === 'focus'), [], '20분 미만 사이클은 보너스 없음 (15분 세션의 시간 코인 1 은 따로)');
   await short.world.dispose();
 
   const { world, store, coins, advance, sitDown } = makeWorld({ pomodoro: { focusMs: 25 * MIN, breakMs: 5 * MIN } });
@@ -349,8 +358,8 @@ test('월드: 집중 20분 미만 사이클은 보너스 없음, 같은 사이�
   assert.equal(world.settleFocusCycle(p, cycle), null, '같은 사이클 두 번째는 무시');
   assert.equal(world.settleFocusCycle(p, { ...cycle }), null, '복사본이어도 startedAt 이 같으면 무시');
   await settle(world);
-  assert.equal(coins.length, 1);
-  assert.equal(await store.getCoins('민수'), 5);
+  assert.equal(coins.filter((c) => c.reason === 'focus').length, 1);
+  assert.equal(await store.getCoins('민수'), 5 + 2, '보너스 5 + (첫 판정 시점까지 25분) 시간 코인 2');
   assert.equal(await store.getCoins('영희'), 0);
   assert.equal(world.settleFocusCycle(q, cycle), null, '영희는 앉지 않았음');
   // 세션 end 이중 호출도 한 번만 저장·정산
@@ -360,7 +369,8 @@ test('월드: 집중 20분 미만 사이클은 보너스 없음, 같은 사이�
   await Promise.all([e1, e2]);
   await settle(world);
   assert.equal((await store.listSessions('민수')).length, 1);
-  assert.equal(coins.filter((c) => c.reason === 'study').length, 1);
+  assert.equal(coins.filter((c) => c.reason === 'study').reduce((n, c) => n + c.delta, 0), 4, '45분 → 시간 코인 4 (이중 정산 없음)');
+  assert.equal(await store.getCoins('민수'), 9);
   await world.dispose();
 });
 
@@ -475,7 +485,7 @@ test('소켓 E2E: coins 이벤트(본인 balance · 남은 없음) · wallet · 
   const seenA = once(a, 'coins');
   const seenB = once(b, 'coins');
   await ask(a, 'stand');
-  assert.deepEqual(await seenA, { id: ja.self.id, delta: 2, reason: 'study', balance: 2 });
+  assert.deepEqual(await seenA, { id: ja.self.id, delta: 2, reason: 'study', balance: 2, carrySeconds: 300, nextCoinAt: null }, '본인에게는 잔액 + 다음 코인까지');
   assert.deepEqual(await seenB, { id: ja.self.id, delta: 2, reason: 'study' }, '남에게는 잔액 없이');
   await sleep(30);
   assert.equal(coinsA.length, 1);

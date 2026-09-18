@@ -6,8 +6,10 @@
  *  - 상호작용 지점(커피머신 앞 E → 'coffee' 상태), 듣는 중(유튜브 제목) 표시
  *  - 4단계: 영구 데이터는 store(메모리/Supabase) — 공부 세션·출석·오늘 목표·할 일·강아지 이름. 실시간 상태는 계속 메모리.
  *  - 5단계: 아바타는 파츠 객체(avatar.js 카탈로그 검증) — users.avatar 에 저장하고 재입장 시 복원.
- *  - 8단계: 코인 — 세션 저장 시 10분당 1코인(남은 초는 users.coin_carry_seconds 로 이월), 집중 사이클 완주(앉아서 공부 중 유지) 시 5코인 (coins.js).
- *    잔액·원장·이월 초·인벤토리는 store.
+ *  - 8단계: 코인 — 앉아서 공부 중 10분이 찰 때마다 **즉시** 1코인 (StudyTracker 가 tick 으로 판정해 'coinDue' → award. 남은 초는 users.coin_carry_seconds 로 이월),
+ *    집중 사이클 완주(앉아서 공부 중 유지) 시 5코인 (coins.js). 잔액·원장·이월 초·인벤토리는 store.
+ *    같은 사람의 코인 증감은 순서대로(coinQueue) 처리해 'coins' 이벤트의 balance 가 항상 커지는 순서로 나간다 (보너스와 시간 코인이 동시에 와도 꼬이지 않는다).
+ *    상태는 개인 뽀모도로를 따라간다 (followPomodoro): 시작·집중 → 공부 중, 휴식 → 휴식 중(세션 일시 정지), 정지 → 마지막 상태 유지. 야외·침대/안마의자는 예외.
  *    상점(shop.js) — purchase 는 잔액 확인·차감·원장·인벤토리까지 한다 (색/종류 variant 선택).
  *  - 9단계: 가구. 공용 가구 배치(layout: room_layout, 규칙은 layout.js)·편집 모드·가구 잠금(먼저 잡은 사람 우선)·
  *    권한(놓은 사람의 "내가 놓은 것만" 설정)·충돌 맵 반영(this.room.collision 을 다시 만든다)·동적 좌석(빈백/안마의자/침대 = f:<id>).
@@ -27,7 +29,9 @@
  *         'npcUpdate' (NPC 스냅샷, 10Hz), 'npcPet' ({ npc, by, playerId, name, reaction, highFive }), 'npcName' ({ npc, name }), 'npcRemoved' ({ id }),
  *         'sessionSaved' { nickname, playerId, seconds }, 'attendance' { nickname, playerId, streak, weekDays, inserted },
  *         'goalReached' { nickname, playerId, todaySeconds, targetMinutes },
- *         'coins' { nickname, playerId, delta, reason, balance } (코인 증감이 저장된 뒤)
+ *         'coins' { nickname, playerId, delta, reason, balance, carrySeconds?, nextCoinAt? } (코인 증감이 저장된 뒤. 시간 코인이면 다음 코인까지 정보 포함)
+ *         'coinProgress' { nickname, playerId, studying, carrySeconds, nextCoinAt|null } (세션 시작·종료 — 지갑 "다음 코인까지" 카운트다운용)
+ *         'status' { player, reason } (뽀모도로를 따라 상태가 자동으로 바뀜 — 소켓이 playerStatus 로 방송)
  *         'layout' { op: 'add'|'move'|'remove'|'grab'|'release', entry?, id?, by } (배치 변경 — 소켓이 layout:update 로 방송)
  *         'desk' { player } (책상 소품 변경), 'editing' { player } (편집 모드 on/off)
  *         'vehicle' { player } (12단계: 탑승·해제·데칼 변경 — 소켓이 playerVehicle 로 방송)
@@ -46,7 +50,7 @@ const { createMemoryStore } = require('../store/memory');
 const { DEFAULT_TZ, dateKey, weekStart, isValidTz } = require('../store/stats');
 const { FACING_DELTA, interactableById } = require('../rooms/build');
 const { normalizeAvatar } = require('./avatar');
-const { settleStudy, focusBonusFor } = require('./coins');
+const { focusBonusFor } = require('./coins');
 const { createShop, pickVariant, PET_SLOTS } = require('./shop');
 const { validatePlacement, buildCollision, seatOf, cellsOf } = require('./layout');
 const { validateVehiclePayload, typeOf: vehicleType } = require('./vehicles');
@@ -109,9 +113,12 @@ class World extends EventEmitter {
     // 공유 트래커면 내 스터디의 이벤트만 (세션에 실린 studyId 로 구분)
     const mine = (fn) => (e) => { if (e.studyId === this.studyId) fn(e); };
     this.studyListeners = {
-      saved: mine((e) => { this.emit('sessionSaved', e); this.settleSession(e); this.checkWeeklyGoal().catch(() => {}); }),
+      saved: mine((e) => { this.emit('sessionSaved', e); this.checkWeeklyGoal().catch(() => {}); }),
       attendance: mine((e) => this.emit('attendance', e)),
       goalReached: mine((e) => this.emit('goalReached', e)),
+      // 실시간 시간 코인: 트래커가 10분이 찼다고 알리면 바로 지급 (다음 코인까지 정보를 coins 이벤트에 실어 보낸다)
+      coinDue: mine((e) => this.award(e.nickname, e.playerId, e.coins, 'study', { carrySeconds: e.carrySeconds, nextCoinAt: e.nextCoinAt })),
+      coinProgress: mine((e) => this.emit('coinProgress', e)),
     };
     for (const [ev, fn] of Object.entries(this.studyListeners)) this.study.on(ev, fn);
     this.weeklyReached = null; // 이번 주 그룹 목표를 이미 달성했으면 그 주의 월요일 키
@@ -125,6 +132,7 @@ class World extends EventEmitter {
     this.pomodoros = new Map(); // playerId → Pomodoro (7단계: 개인별, 퇴장하면 정리)
     this.shop = createShop(shop); // 8단계: 카탈로그 (테스트는 임시 아이템을 넣는다)
     this.pendingAwards = new Set(); // 진행 중인 코인 저장 Promise (dispose 가 기다림)
+    this.coinQueue = new Map(); // nickname → 마지막 코인 증감 Promise (같은 사람은 순서대로 → balance 순서 보장)
     this.layout = new Map(); // 9단계: layoutId → 배치 항목 { id, itemId, inventoryId, x, y, rotation, meta, placedBy, placedAt }
     this.locks = new Map(); // layoutId → { by: playerId, at } (편집 잠금)
 
@@ -309,6 +317,7 @@ class World extends EventEmitter {
       out.streak = await this.store.attendanceOf(player.nickname, { tz: this.tz, now: this.now() });
       out.rewards = await this.claimRewards(player);
       out.coins = await this.store.getCoins(player.nickname);
+      out.coinProgress = await this.coinProgressOf(player); // 재접속 이어받기면 진행 중 세션의 다음 코인 시각
       await this.loadDesk(player);
       out.vehicleConfig = this.vehicleConfigOf(player);
       out.statsPublic = Boolean(player.statsPublic);
@@ -403,11 +412,7 @@ class World extends EventEmitter {
     player.disconnectedAt = null;
     this.players.set(player.id, player);
     this.sessions.set(player.token, player);
-    if (pomodoro) {
-      pomodoro.on('change', (snap, reason) => this.emit('pomodoro', snap, reason, player));
-      pomodoro.on('phaseEnd', (cycle) => this.settleFocusCycle(player, cycle));
-      this.pomodoros.set(player.id, pomodoro);
-    }
+    if (pomodoro) this.bindPomodoro(player, pomodoro);
     await this.syncFollower(player);
     return player;
   }
@@ -478,8 +483,8 @@ class World extends EventEmitter {
     player.moving = false;
     // 커피(☕ 휴식) 중에 앉으면 공부 중 → 일어날 때는 커피가 아니라 휴식으로
     player.prevStatus = player.status === 'coffee' ? 'rest' : player.status;
-    // 침대·안마의자는 자동 휴식 (세션이 쌓이지 않는다). 일어나면 앉기 전 상태로
-    player.status = this.outdoor || RESTING_SEATS.has(seat.kind) ? 'rest' : 'study'; // 야외 벤치는 휴식만
+    // 침대·안마의자는 자동 휴식 (세션이 쌓이지 않는다). 일어나면 앉기 전 상태로. 뽀모도로 휴식 구간에 앉으면 타이머를 따라 휴식 중
+    player.status = this.outdoor || RESTING_SEATS.has(seat.kind) || this.inPomodoroBreak(player) ? 'rest' : 'study'; // 야외 벤치는 휴식만
     this.study.sync(player);
     return { ok: true, seat };
   }
@@ -577,11 +582,43 @@ class World extends EventEmitter {
     let p = this.pomodoros.get(player.id);
     if (!p) {
       p = new Pomodoro(this.pomodoroOpts);
-      p.on('change', (snap, reason) => this.emit('pomodoro', snap, reason, player));
-      p.on('phaseEnd', (cycle) => this.settleFocusCycle(player, cycle));
-      this.pomodoros.set(player.id, p);
+      this.bindPomodoro(player, p);
     }
     return p;
+  }
+
+  /** 타이머 이벤트를 이 월드의 플레이어에 묶는다: phaseEnd(보너스 판정) → 상태 자동 전환 → 'pomodoro' 스냅샷 방송 */
+  bindPomodoro(player, pomo) {
+    pomo.on('phaseEnd', (cycle) => this.settleFocusCycle(player, cycle));
+    pomo.on('change', (snap, reason) => {
+      this.followPomodoro(player, snap, reason);
+      this.emit('pomodoro', snap, reason, player);
+    });
+    this.pomodoros.set(player.id, pomo);
+  }
+
+  /** 내 타이머가 돌고 있고 지금 휴식 구간인가 (앉을 때 자동 휴식) */
+  inPomodoroBreak(player) {
+    const pomo = this.pomodoros.get(player.id);
+    return Boolean(pomo && pomo.running && pomo.phase === 'break');
+  }
+
+  /**
+   * 상태가 타이머를 따라간다: 시작·집중 전환 → 공부 중, 휴식 전환 → 휴식 중(세션 일시 정지). 정지(stop)·설정(config)은 건드리지 않는다(마지막 상태 유지).
+   * 야외에서는 공부 상태가 없고, 침대/안마의자는 휴식만이므로 예외. 서 있는 채 '공부 중' 이 돼도 세션은 앉아야 쌓인다 (isStudying).
+   * 반환: 상태가 바뀌었는지 (바뀌면 'status' 이벤트 → 소켓이 playerStatus 방송)
+   */
+  followPomodoro(player, snap, reason) {
+    if (reason !== 'start' && reason !== 'switch') return false;
+    if (player.removed || this.outdoor) return false;
+    const target = snap.phase === 'focus' ? 'study' : 'rest';
+    if (target === 'study' && RESTING_SEATS.has(this.seatKindOf(player))) return false;
+    if (player.status === target) return false;
+    player.status = target;
+    player.prevStatus = target;
+    this.study.sync(player);
+    this.emit('status', { player, reason: 'pomodoro' });
+    return true;
   }
 
   /**
@@ -606,42 +643,41 @@ class World extends EventEmitter {
   }
 
   // ── 코인 / 상점 (8단계) ────────────────────────────────────────────
-  /** 코인 증감을 저장소에 기록하고 'coins' 이벤트. 실패(잔액 부족·저장소 오류)는 null. 저장이 끝날 때까지 dispose 가 기다린다 */
-  award(nickname, playerId, delta, reason) {
-    const p = (async () => {
-      const r = await this.store.adjustCoins(nickname, delta, reason, this.now());
-      if (!r.ok) return null;
-      const e = { nickname, playerId, delta, reason, balance: r.balance };
-      this.emit('coins', e);
-      return e;
-    })().catch((err) => {
-      this.log.warn(`[world] 코인 저장 실패 (${nickname}, ${delta}, ${reason}): ${err.message}`);
+  /**
+   * 같은 사람의 코인 증감(지급·구매)을 순서대로 실행한다. 저장소가 느려 응답 순서가 뒤바뀌어도 'coins' 이벤트의 balance 는 실제 순서대로 나간다.
+   * 실패(저장소 오류)는 경고 후 null. 저장이 끝날 때까지 dispose 가 기다린다
+   */
+  coinTask(nickname, task, label = '') {
+    const prev = this.coinQueue.get(nickname) || Promise.resolve();
+    const p = prev.then(task).catch((err) => {
+      this.log.warn(`[world] 코인 저장 실패 (${nickname}${label ? `, ${label}` : ''}): ${err.message}`);
       return null;
     });
+    this.coinQueue.set(nickname, p);
     this.pendingAwards.add(p);
-    p.finally(() => this.pendingAwards.delete(p));
+    p.finally(() => { this.pendingAwards.delete(p); if (this.coinQueue.get(nickname) === p) this.coinQueue.delete(nickname); });
     return p;
   }
 
+  /** 코인 증감을 저장소에 기록하고 'coins' 이벤트 (extra: 시간 코인의 carrySeconds·nextCoinAt). 실패(잔액 부족·저장소 오류)는 null */
+  award(nickname, playerId, delta, reason, extra = {}) {
+    return this.coinTask(nickname, async () => {
+      const r = await this.store.adjustCoins(nickname, delta, reason, this.now());
+      if (!r.ok) return null;
+      const e = { nickname, playerId, delta, reason, balance: r.balance, ...extra };
+      this.emit('coins', e);
+      return e;
+    }, `${delta}, ${reason}`);
+  }
+
   /**
-   * 세션이 저장됐다 → 이월 초 + 이번 세션 초를 10분 단위로 정산 (coins.js settleStudy). 남은 초는 다시 이월.
-   * 지급을 먼저 하고 이월을 갱신한다 (이월 저장이 실패하면 다음에 다시 세는 쪽이 코인을 잃는 쪽보다 낫다).
-   * 반환: Promise<{ coins, carry } | null(저장소 오류)>
+   * 지갑·입장 ack 용 "다음 코인까지": 공부 중이면 트래커의 실시간 값(nextCoinAt 은 서버 시각 ms), 아니면 저장된 이월 초.
+   * @returns {Promise<{ carrySeconds, nextCoinAt: number|null, studying: boolean }>}
    */
-  settleSession({ nickname, playerId, seconds }) {
-    const p = (async () => {
-      const prev = await this.store.getCoinCarry(nickname);
-      const { coins, carry } = settleStudy(prev, seconds);
-      if (coins > 0) await this.award(nickname, playerId, coins, 'study');
-      if (carry !== prev) await this.store.setCoinCarry(nickname, carry, this.now());
-      return { coins, carry };
-    })().catch((err) => {
-      this.log.warn(`[world] 코인 정산 실패 (${nickname}, ${seconds}s): ${err.message}`);
-      return null;
-    });
-    this.pendingAwards.add(p);
-    p.finally(() => this.pendingAwards.delete(p));
-    return p;
+  async coinProgressOf(player) {
+    const live = this.study.coinProgress(player.nickname);
+    if (live) return live;
+    return { carrySeconds: await this.store.getCoinCarry(player.nickname), nextCoinAt: null, studying: false };
   }
 
   /**
@@ -657,14 +693,15 @@ class World extends EventEmitter {
     return this.award(player.nickname, player.id, bonus, 'focus');
   }
 
-  /** 지갑: 잔액 · 이월 초(다음 코인까지 계산용) · 최근 거래 10건 · 인벤토리(placed/slot 표시) · 카탈로그(탭 + 카테고리 + 아이템) */
+  /** 지갑: 잔액 · 다음 코인까지(carrySeconds + 공부 중이면 nextCoinAt) · 최근 거래 10건 · 인벤토리(placed/slot 표시) · 카탈로그(탭 + 카테고리 + 아이템) */
   async wallet(player) {
-    const [coins, carrySeconds, ledger, inventory] = await Promise.all([
+    const [coins, progress, ledger, inventory] = await Promise.all([
       this.store.getCoins(player.nickname),
-      this.store.getCoinCarry(player.nickname),
+      this.coinProgressOf(player),
       this.store.coinLedger(player.nickname, 10),
       this.store.listInventory(player.nickname),
     ]);
+    const { carrySeconds, nextCoinAt, studying } = progress;
     const placed = new Set([...this.layout.values()].map((e) => e.inventoryId));
     const equipped = new Map((player.deskItems || []).map((d, i) => [d && d.inventoryId, i]).filter(([k]) => k !== null && k !== undefined));
     const released = new Map([...this.roomPets.values()].map(({ row }) => [row.inventoryId, row.id]));
@@ -678,7 +715,7 @@ class World extends EventEmitter {
     const inv = inventory.map((i) => ({ ...i, placed: placed.has(i.id), slot: equipped.has(i.id) ? equipped.get(i.id) : null, active: cfg.active === i.id, released: released.get(i.id) ?? null, equippedOn: decoUsed.get(i.id) || null, vehicleActive: vc.active === i.id, decalActive: vc.decal === i.id, hornActive: vc.horn === i.id }));
     let trackBest = null;
     try { trackBest = await this.store.trackBest(player.nickname); } catch (err) { this.log.warn(`[world] 기록 조회 실패: ${err.message}`); }
-    return { ok: true, coins, carrySeconds, ledger, inventory: inv, tabs: this.shop.tabs, categories: this.shop.categories, items: this.shop.items, layoutLock: Boolean(player.layoutLock), pets: this.petSummary(player), vehicleConfig: vc, trackBest, outdoor: this.outdoor };
+    return { ok: true, coins, carrySeconds, nextCoinAt, studying, ledger, inventory: inv, tabs: this.shop.tabs, categories: this.shop.categories, items: this.shop.items, layoutLock: Boolean(player.layoutLock), pets: this.petSummary(player), vehicleConfig: vc, trackBest, outdoor: this.outdoor };
   }
 
   // ── 탈것 설정 (12단계) — 탑승·랩은 OutdoorWorld ────────────────────────
@@ -981,11 +1018,16 @@ class World extends EventEmitter {
       skill = await this.skillTarget(player, item, target);
       if (!skill.ok) return skill;
     }
-    const r = await this.store.adjustCoins(player.nickname, -item.price, `purchase:${item.id}`, this.now());
+    // 차감도 같은 사람의 코인 큐에서 (동시에 들어오는 시간 코인과 balance 순서가 어긋나지 않게). 'coins' 는 차감 직후에 낸다
+    const r = await this.coinTask(player.nickname, async () => {
+      const res = await this.store.adjustCoins(player.nickname, -item.price, `purchase:${item.id}`, this.now());
+      if (res.ok) this.emit('coins', { nickname: player.nickname, playerId: player.id, delta: -item.price, reason: `purchase:${item.id}`, balance: res.balance });
+      return res;
+    }, `-${item.price}, purchase:${item.id}`);
+    if (!r) return { ok: false, error: 'store_error' };
     if (!r.ok) return { ok: false, error: r.error, balance: r.balance };
     const inv = await this.store.addInventory(player.nickname, item.id, { name: item.name, price: item.price, tab: item.tab, category: item.category, variant: v.variant, ...(skill ? { target: String(target) } : {}), ...item.meta }, this.now());
     if (skill) await skill.apply();
-    this.emit('coins', { nickname: player.nickname, playerId: player.id, delta: -item.price, reason: `purchase:${item.id}`, balance: r.balance });
     return { ok: true, balance: r.balance, item, inventory: inv };
   }
 

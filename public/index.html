@@ -186,7 +186,7 @@
     <div id="hud-bl">
       <div class="bar" id="emoji-bar"></div>
       <div class="bar" id="status-bar">
-        <button class="btn status" id="btn-status" title="상태 전환"><svg class="icon"><use href="#i-coffee"/></svg><span>휴식 중</span></button>
+        <button class="btn status" id="btn-status" title="상태 전환 · 앉아서 공부 중일 때 시간이 쌓여요 (뽀모도로가 돌면 집중/휴식을 따라 자동 전환)"><svg class="icon"><use href="#i-coffee"/></svg><span>휴식 중</span></button>
         <span class="hint-key" id="sit-hint" hidden><kbd>E</kbd><span>앉기</span></span>
         <span class="hint-key" id="vehicle-hint" hidden><kbd>V</kbd><span>탈것</span></span>
       </div>
@@ -259,6 +259,7 @@
             <label>휴식 <input id="pomo-break" type="number" min="5" max="20" step="1" value="5" /> 분</label>
           </div>
           <p class="hint" id="pomo-hint">나에게만 · 시작 전에 바꿀 수 있어요</p>
+          <p class="hint" id="pomo-rule" title="집중 구간은 공부 중, 휴식 구간은 휴식 중으로 자동 전환돼요. 서 있거나 야외에 있으면 타이머가 돌아도 시간이 쌓이지 않아요.">📖 앉아서 공부 중일 때 시간이 쌓여요</p>
           <button class="btn" id="btn-pomo"><svg class="icon"><use href="#i-play"/></svg><span>시작</span></button>
         </div>
       </div>
@@ -400,7 +401,7 @@
   <div id="wallet-modal" class="modal" hidden>
     <div class="modal-box wide wallet">
       <header class="row"><h1>🪙 지갑</h1><span class="wallet-balance">보유 <b id="wallet-balance">0</b> 코인</span><button class="icon-btn small ghost" id="wallet-close" type="button" title="닫기"><svg class="icon"><use href="#i-x"/></svg></button></header>
-      <p class="hint">앉아서 공부 10분마다 1코인 (남은 시간은 이월) · 뽀모도로 집중을 자리에서 끝까지 채우면 +5 (20분 이상)<span id="wallet-carry"></span></p>
+      <p class="hint">앉아서 공부 중 10분이 찰 때마다 바로 1코인 (남은 시간은 이월) · 뽀모도로 집중을 자리에서 끝까지 채우면 +5 (20분 이상)<span id="wallet-carry"></span></p>
       <div class="tabs wallet-tabs" id="wallet-tabs" role="tablist"></div>
       <div class="wallet-cats" id="wallet-cats"></div>
       <p class="hint" id="wallet-cat-hint"></p>

@@ -381,11 +381,15 @@ test('허브: 그룹 주간 목표 — 멤버 합(진행 중 포함)이 목표�
   assert.deepEqual(e.awarded.sort(), [jo.player.id, jm.player.id].sort(), '접속 중인 멤버에게 바로');
   assert.equal(goals.length, 1);
   await Promise.all([...w.pendingAwards]);
+  await Promise.all([...hub.study.pending, ...w.pendingAwards]);
   assert.equal(await store.getCoins('방장'), 10);
-  assert.equal(await store.getCoins('민수'), 10);
+  assert.equal(await store.getCoins('민수'), 10 + 12, '그룹 보너스 10 + 앉아서 공부 중 2시간의 시간 코인 12 (13단계 실시간 지급)');
   assert.equal(await store.getCoins('오프라인'), 0, '오프라인 멤버는 아직');
   assert.equal(await store.getCoins('남'), 0);
-  assert.ok(coins.every((c) => c.reason === 'weekly_goal' && c.delta === 10));
+  const weekly = coins.filter((c) => c.reason === 'weekly_goal');
+  assert.equal(weekly.length, 2);
+  assert.ok(weekly.every((c) => c.delta === 10));
+  assert.ok(coins.filter((c) => c.reason === 'study').every((c) => c.nickname === '민수'), '시간 코인은 앉아 있는 민수에게만');
   // 주 1회
   advance(3600 * 1000);
   hub.study.statsCache = null;
