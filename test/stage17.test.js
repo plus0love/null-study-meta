@@ -5,6 +5,8 @@
  *  - 스터디룸 배치: 러그는 책상 폭·4타일 깊이(격자) · 위를 보는 2인 소파가 아래 벽(문 오른쪽) · 낮은 테이블·램프·사이드 테이블 ·
  *    왼쪽 벽 화이트보드+2단 책장 · 오른쪽 벽 옷걸이·수납장·미니 냉장고 · 슬리퍼 2·쿠션 2(통과 가능) · 문/의자/모니터/코르크보드는 그대로 ·
  *    러그 밖 바닥이 보인다 · 문 → 의자·소파 앞은 1타일 이상 폭.
+ *  - 구역 간 동선: 커피 코너·푸프·라운지·회의·스터디룸·복도 사이 이웃 쌍마다 2타일 폭 통로(걸을 수 있는 2x2 블록의 연속)가 두 구역의 경계 상자 안에 하나 이상. 소품이 통로를 좁히면 실패.
+ *    커피 코너 동선 수정(원두 선반은 벽에·화분 제거·우유 상자/쓰레기통은 구석·프린터 수납장은 왼쪽 벽까지)과 사다리 선반·정수기 이동을 확인.
  *  - 상점 가구 통행 규칙(layout.js isolates): 놓으면/옮기면 스폰에서 닿던 칸이 못 가는 곳이 되는 배치는 'isolates' 로 거부. 월드(배치·이동·로드 회수)와 순수 함수 모두.
  */
 const test = require('node:test');
@@ -113,6 +115,78 @@ test('스터디룸 안: 문에서 두 의자·소파 좌석까지 이어지고, 
   for (const x of [25, 26, 27, 28]) assert.ok(free(x, 18), `소파 앞 (${x},18)`);
   for (let y = 12; y <= 20; y++) assert.ok(free(13, y), `커튼 옆 통로 (13,${y})`);
   for (let x = 13; x <= 31; x++) assert.ok(free(x, 15), `가로 통로 (${x},15)`);
+});
+
+// ── 구역 간 2타일 폭 통로 ─────────────────────────────────────────────
+/** 구역(타일 사각형, 포함 범위). 걸을 수 있는 2x2 블록(네 칸 모두 통과 가능·좌석 아님)이 이어져야 2타일 폭 통로다. */
+const ZONES = {
+  coffee: { x0: 3, y0: 10, x1: 11, y1: 17 },
+  pouf: { x0: 3, y0: 18, x1: 11, y1: 24 },
+  lounge: { x0: 14, y0: 5, x1: 28, y1: 9 },
+  meeting: { x0: 34, y0: 10, x1: 43, y1: 24 },
+  study: { x0: 13, y0: 12, x1: 32, y1: 20 },
+  corridor: { x0: 12, y0: 22, x1: 33, y1: 24 },
+};
+/** 이웃 구역 쌍 (직접 이어져야 하는 곳). 스터디룸은 아래 문으로만 복도와 만난다 */
+const ZONE_PAIRS = [['coffee', 'pouf'], ['coffee', 'lounge'], ['coffee', 'corridor'], ['pouf', 'corridor'], ['lounge', 'meeting'], ['meeting', 'corridor'], ['study', 'corridor']];
+const seatSet = new Set(room.seats.map((s) => `${s.x},${s.y}`));
+const walkable = (x, y) => x >= 0 && y >= 0 && x < room.width && y < room.height && !room.collision[y][x] && !seatSet.has(`${x},${y}`);
+const block = (x, y) => walkable(x, y) && walkable(x + 1, y) && walkable(x, y + 1) && walkable(x + 1, y + 1);
+const inRect = (x, y, r) => x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1;
+const blockIn = (x, y, r) => inRect(x, y, r) && inRect(x + 1, y + 1, r);
+
+/** a 구역 안 블록에서 두 구역의 경계 상자 안 블록만 밟아 b 구역 안 블록에 닿는가 (2타일 폭 통로) */
+function wideConnected(a, b) {
+  const A = ZONES[a];
+  const B = ZONES[b];
+  const bb = { x0: Math.min(A.x0, B.x0), y0: Math.min(A.y0, B.y0), x1: Math.max(A.x1, B.x1), y1: Math.max(A.y1, B.y1) };
+  const q = [];
+  for (let y = A.y0; y <= A.y1; y++) for (let x = A.x0; x <= A.x1; x++) if (blockIn(x, y, A) && block(x, y)) q.push([x, y]);
+  const seen = new Set(q.map(([x, y]) => `${x},${y}`));
+  while (q.length) {
+    const [x, y] = q.shift();
+    if (blockIn(x, y, B)) return true;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (!blockIn(nx, ny, bb) || !block(nx, ny) || seen.has(`${nx},${ny}`)) continue;
+      seen.add(`${nx},${ny}`);
+      q.push([nx, ny]);
+    }
+  }
+  return false;
+}
+
+test('구역 간 동선: 이웃 구역 쌍마다 2타일 폭 통로가 하나 이상 (2x2 블록 BFS) · 각 구역 안에 2x2 블록이 있다', () => {
+  for (const id of Object.keys(ZONES)) {
+    const z = ZONES[id];
+    let n = 0;
+    for (let y = z.y0; y <= z.y1; y++) for (let x = z.x0; x <= z.x1; x++) if (blockIn(x, y, z) && block(x, y)) n++;
+    assert.ok(n > 0, `${id} 구역 안에 걸을 수 있는 2x2 블록`);
+  }
+  const narrow = ZONE_PAIRS.filter(([a, b]) => !wideConnected(a, b)).map(([a, b]) => `${a}-${b}`);
+  assert.deepEqual(narrow, [], `2타일 폭 통로가 없는 구역 쌍: ${narrow.join(' ')}`);
+});
+
+test('커피 코너 동선: 카운터 오른쪽 x 9..11 이 y 10..17 전부 비어 위(라운지)·아래(복도)로 트인다 · 원두 선반은 스터디룸 벽에 · 화분 제거 · 우유 상자/쓰레기통은 구석 · 사다리 선반·정수기 이동', () => {
+  for (let y = 10; y <= 17; y++) for (const x of [9, 10, 11]) assert.ok(free(x, y), `통로 (${x},${y})`);
+  assert.equal(propNamed('bean_shelf').length, 0, '바닥의 원두 선반은 없다');
+  assert.deepEqual(propNamed('bean_shelf_wall'), [{ name: 'bean_shelf_wall', x: 12, y: 10, w: 2, h: 2 }]);
+  assert.equal(TILES.objects.bean_shelf_wall.solid, true);
+  assert.deepEqual(propNamed('wall_frames_a').map((p) => [p.x, p.y]), [[11, 1], [20, 10]], '액자는 벽의 빈 자리로 ((18,10) 은 빈 벽으로 남긴다)');
+  assert.equal(propNamed('plant_tall_2').length, 0, '통로의 화분 제거');
+  assert.deepEqual(propNamed('milk_crate').map((p) => [p.x, p.y]), [[4, 18]]);
+  assert.deepEqual(propNamed('trash_bin').map((p) => [p.x, p.y]).sort((a, b) => a[0] - b[0]), [[3, 18], [30, 24], [41, 23]]);
+  assert.deepEqual(propNamed('ladder_shelf').map((p) => [p.x, p.y]), [[36, 10]]);
+  // 프린터 수납장은 왼쪽 벽까지 (오른쪽 끝 x 8) → 커피 코너 통로가 위쪽 복도(y 8..9)와 2칸 폭으로 꺾인다. 그 자리의 작은 수납장은 뺐다
+  assert.deepEqual(propNamed('cabinet_printer').map((p) => [p.x, p.y, p.w]), [[2, 7, 7]]);
+  assert.ok(!propNamed('cabinet_small').some((p) => p.x === 2 && p.y === 7));
+  for (const x of [9, 10]) for (const y of [7, 8]) assert.ok(free(x, y), `수납장 오른쪽 (${x},${y})`);
+  assert.deepEqual(propNamed('water_dispenser').map((p) => [p.x, p.y]), [[42, 22]]);
+  // 라운지 ↔ 회의 · 회의 ↔ 복도: 스터디룸 벽 옆 x 34..35 가 y 10..24 내내 비어 있다
+  for (let y = 10; y <= 24; y++) for (const x of [34, 35]) assert.ok(free(x, y), `x 34..35 통로 (${x},${y})`);
+  // 아래쪽: 카운터 앞줄(y 15) 에서 x 8 로 나가 y 15..17 (3칸) 이 트인다
+  for (let y = 15; y <= 17; y++) assert.ok(free(8, y), `(8,${y})`);
 });
 
 // ── 배치 ────────────────────────────────────────────────────────────

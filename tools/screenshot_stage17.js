@@ -1,10 +1,11 @@
 'use strict';
 /**
  * 17단계(2인 스터디룸 안쪽 정리) 스크린샷 (puppeteer-core + 로컬 Chrome). 서버를 스스로 띄운다 (STORE=memory).
- *   node tools/screenshot_stage17.js [outDir]
+ *   node tools/screenshot_stage17.js [outDir] [--only=study,coffee]
  * 출력:
  *   s17_study.png — 2인 스터디룸 확대 (격자 러그 · 아래 벽 소파 코너 · 왼쪽 화이트보드/2단 책장 · 오른쪽 옷걸이/수납장/미니 냉장고 · 슬리퍼/쿠션)
  *                   영희는 책상 의자, 철수는 소파, 나는 문 앞 통로에 서 있다.
+ *   s17_coffee.png — 커피 코너 확대 (카운터 오른쪽 x 9..11 통로가 위·아래로 트임 · 원두 선반은 스터디룸 벽에 · 우유 상자·쓰레기통은 구석)
  */
 const path = require('node:path');
 const fs = require('node:fs');
@@ -15,7 +16,10 @@ const { startServer } = require('../server/index');
 process.env.STORE = 'memory';
 const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const ARGS = ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'];
-const out = process.argv[2] || path.join(__dirname, '..', 'screenshots');
+const args = process.argv.slice(2);
+const out = args.find((a) => !a.startsWith('--')) || path.join(__dirname, '..', 'screenshots');
+const only = (args.find((a) => a.startsWith('--only=')) || '').slice(7).split(',').filter(Boolean);
+const want = (k) => !only.length || only.includes(k);
 fs.mkdirSync(out, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const quiet = { log() {}, warn() {}, error() {} };
@@ -67,11 +71,24 @@ async function bot(base, world, nickname, code, tx, ty, facing = 'down') {
   await page.evaluate((x, y) => { const s = window.NSM.scene; s.me.setPosition(x, y); s.me.setFacing('up'); s.lastSent = null; s.correction = null; }, me.x, me.y);
   await page.evaluate(() => window.NSM.ui.setWide(true));
   await sleep(400);
-  await page.evaluate(() => { const s = window.NSM.scene; s.setClockOverride(20); s.cameras.main.stopFollow(); s.cameras.main.setZoom(2); s.cameras.main.centerOn(23 * 32, 16 * 32); });
-  await sleep(1000);
-  const file = path.join(out, 's17_study.png');
-  await page.screenshot({ path: file, clip: { x: 0, y: 0, width: 1500, height: 900 }, captureBeyondViewport: false });
-  console.log('saved', file);
+  const view = async (hour, zoom, cx, cy) => {
+    await page.evaluate((h, z, x, y) => { const s = window.NSM.scene; s.setClockOverride(h); s.cameras.main.stopFollow(); s.cameras.main.setZoom(z); s.cameras.main.centerOn(x, y); }, hour, zoom, cx, cy);
+    await sleep(1000);
+  };
+  const shot = async (name) => {
+    const file = path.join(out, name);
+    await page.screenshot({ path: file, clip: { x: 0, y: 0, width: 1500, height: 900 }, captureBeyondViewport: false });
+    console.log('saved', file);
+  };
+  if (want('study')) {
+    await view(20, 2, 23 * T, 16 * T);
+    await shot('s17_study.png');
+  }
+  if (want('coffee')) {
+    // 커피 코너: 메뉴 보드·카운터·진열장 + 오른쪽 통로(x 9..11)와 스터디룸 벽의 원두 선반까지
+    await view(15, 2.2, 8.5 * T, 14 * T);
+    await shot('s17_coffee.png');
+  }
 
   await browser.close();
   for (const b of bots) b.s.close();

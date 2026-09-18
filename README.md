@@ -214,7 +214,7 @@ null-study-meta/
 │   ├── screenshot_stage12.js # 12단계: 야외 전체 맵·트랙 확대·탑승 화면·전광판 (서버를 스스로 띄운다)
 │   ├── screenshot_stage14.js # 14단계: 야외 낮/밤·트랙·동물원·낚시·별자리 오버레이 (서버를 스스로 띄운다, --only=map,zoo,…)
 │   ├── screenshot_stage15.js # 15단계: 실내 전체·스터디룸/라운지 확대·쪽지·커피·D-day 화면 (--only=map,study,lounge,note,coffee,dday)
-│   ├── screenshot_stage17.js # 17단계: 2인 스터디룸 확대 1장 (s17_study.png)
+│   ├── screenshot_stage17.js # 17단계: 2인 스터디룸·커피 코너 확대 (--only=study,coffee)
 │   ├── props_v4.py           # 15단계: 2인 스터디룸 소품·무늬 러그 3종·라운지/회의/커피/푸프/복도/벽 소품·쪽지/머그 아이콘
 │   ├── props_v5.py           # 17단계: 스터디룸 정리 소품 — 격자 러그·위를 보는 2인 소파·낮은 테이블·작은 사이드 테이블·작은 화이트보드·2단 책장·미니 냉장고·바닥 쿠션
 │   ├── props_outdoor2.py     # 14단계 A: 잔디 v2·자갈길 16방향·연석 흙길·스키드·출발 아치·관중석·코너 표지판·피트·벽돌/창문/캐노피·나무 3종·갈대·수련·담요·화단·차고·언덕 경사 띠
@@ -606,7 +606,7 @@ python tools/animal_sprites.py && python tools/fish_sprites.py      # 14단계 �
 python tools/preview_stage14.py                                      # 14단계 새 타일 미리보기 (tools/out/s14_tiles_preview.png)
 node tools/screenshot_stage14.js                                     # 14단계: 야외 낮/밤·트랙·동물원·낚시·별자리 (--only=map,track,zoo,fishing,constellation)
 node tools/screenshot_stage15.js                                     # 15단계: 실내 전체·스터디룸/라운지 확대·쪽지·커피·D-day (--only=map,study,lounge,note,coffee,dday)
-node tools/screenshot_stage17.js                                     # 17단계: 2인 스터디룸 확대 (s17_study.png)
+node tools/screenshot_stage17.js                                     # 17단계: 2인 스터디룸·커피 코너 확대 (--only=study,coffee)
 python tools/compare_mockup.py                                        # screenshots/compare_mockup.png
 ```
 
@@ -648,7 +648,15 @@ python tools/compare_mockup.py                                        # screensh
   실내 전체에서 걸을 수 있는 모든 칸이 입장 스폰에서 닿습니다 — 가구 사이 어디서도 못 들어가는 틈 4곳은 `setSolid` 로 막았습니다.
 - **상점 가구 통행 규칙** (`server/game/layout.js` `isolates`, 서버·클라이언트 미리보기 공통): 통과 불가 가구를 놓거나 옮겨서 "놓기 전 스폰에서 닿던 칸" 이 못 가는 곳이 되면 `isolates` 로 거부합니다
   (새 가구의 좌석 칸도 닿아야 함, 원래부터 못 가던 틈은 기준이 아님). `layout:place` / `layout:move` ack 오류 `isolates`, 저장된 배치가 고립을 만들면 `loadLayout()` 이 회수합니다.
-- 테스트: `test/stage17.test.js` — 야외(`stage16`)와 같은 BFS 통행 검증(실내 고립 칸 0 · 좌석/문/상호작용 지점 · 문에서 방 안 모든 칸) · 배치 검증 · `isolates` 규칙(순수 함수·월드 배치/이동·로드 회수).
+- **구역 간 동선 규칙**: 커피 코너·푸프 구역·라운지·회의 구역·스터디룸·복도 사이에는 **2타일 폭 통로**가 하나 이상 있어야 하고 소품이 통로를 좁히면 안 됩니다. `test/stage17.test.js` 가 "걸을 수 있는 2x2 블록" 을 노드로 한 BFS 로
+  이웃 구역 쌍마다(두 구역의 경계 상자 안에서) 2타일 폭 연결을 검사합니다. 이 기준으로 옮긴 소품: 커피 코너 위쪽 통로의 **원두 선반**은 스터디룸 위쪽 벽(모서리)에 걸고(`bean_shelf_wall`) **화분은 제거**,
+  아래쪽 통로의 **우유 상자·쓰레기통**은 카운터 아래 벽 쪽 구석(수납장 밑)으로 → 카운터 오른쪽 x 9..11 이 위(라운지)·아래(복도)로 3칸 폭. 위쪽 복도로 꺾이는 곳은 **프린터 수납장**의 오른쪽 끝(x 10)과 스터디룸 벽 모서리(x 12)가
+  한 칸짜리 꺾임을 만들어서 프린터 수납장을 왼쪽 벽까지 2칸 옮기고(그 자리의 작은 수납장은 제거) 꺾임을 2칸 폭으로. 라운지 ↔ 회의 구역의 **사다리 선반**은 한 칸 오른쪽(x 36)으로,
+  회의 구역 ↔ 복도의 **정수기·쓰레기통**은 야자 옆 오른쪽 아래 구석으로 → 스터디룸 벽 옆 x 34..35 가 위아래 모두 2칸 폭.
+
+![커피 코너 (17단계)](screenshots/s17_coffee.png)
+
+- 테스트: `test/stage17.test.js` — 야외(`stage16`)와 같은 BFS 통행 검증(실내 고립 칸 0 · 좌석/문/상호작용 지점 · 문에서 방 안 모든 칸) · 구역 간 2타일 폭 통로 · 배치 검증 · `isolates` 규칙(순수 함수·월드 배치/이동·로드 회수).
 
 ## 다음 단계
 

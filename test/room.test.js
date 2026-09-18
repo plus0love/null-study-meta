@@ -132,7 +132,7 @@ test('보드/표지판 라벨은 웹폰트용 데이터로 내려간다 (타일�
   }
 });
 
-test('식물은 3단계 정리 후 8~12개 (창가 양끝·스터디룸·커피·입구·회의 구역), 벽 덩굴은 창문 좌우 2개뿐', () => {
+test('식물은 3단계 정리 후 7~12개 (창가 양끝·스터디룸·입구·회의 구역 — 17단계 동선 수정으로 커피 코너 통로의 화분은 뺐다), 벽 덩굴은 창문 좌우 2개뿐', () => {
   const { objects } = TILES;
   const plantTiles = new Set();
   const vineTiles = new Set();
@@ -148,7 +148,7 @@ test('식물은 3단계 정리 후 8~12개 (창가 양끝·스터디룸·커피�
       if (vineTiles.has(idx)) vines.push([x, y]);
     }));
   }
-  assert.ok(plants >= 8 && plants <= 12, `식물 ${plants}개`);
+  assert.ok(plants >= 7 && plants <= 12, `식물 ${plants}개`);
   assert.deepEqual(vines, [[13, 1], [28, 1]]);
 });
 

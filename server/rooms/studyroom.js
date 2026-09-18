@@ -14,6 +14,7 @@
  *         클라이언트가 동적으로 그리는 위치는 anchors (문 명패·코르크보드 목표 팻말·D-day 칠판·커피머신 김).
  * 17단계: 2인 스터디룸 안쪽 정리 — 러그는 책상 앞 4타일만(격자), 아래 벽에 위를 보는 2인 소파 코너, 왼쪽 벽 화이트보드·2단 책장, 오른쪽 벽 옷걸이·수납장·미니 냉장고.
  *         걸을 수 있는 모든 칸이 스폰에서 닿아야 하고(가구 사이 막힌 틈은 setSolid), 상점 가구도 고립 칸을 만들면 서버가 거부한다 (layout.js isolates).
+ *         동선 규칙: 구역(커피 코너·푸프·라운지·회의·스터디룸·복도) 사이에는 2타일 폭 통로가 하나 이상 있어야 하고 소품이 통로를 좁히면 안 된다 (test/stage17.test.js 가 2x2 블록 BFS 로 검증).
  */
 const { RoomBuilder } = require('./build');
 
@@ -43,13 +44,14 @@ function buildStudyRoom() {
   b.place('wall_frames_c', 2, 1); // 15단계: 액자 3개 묶음
   b.place('shelf_narrow_a', 2, 3);
   b.place('shelf_narrow_b', 2, 5);
-  b.place('cabinet_small', 2, 7);
   b.place('chalkboard_big', 4, 1);
   b.label(7.5, 4.0, 'Good\nStudy\nBetter\nTomorrow', { ...HAND, size: 24, color: '#e8dcc4', lineHeight: 0.98 });
   b.label(4.9, 6.1, '♡', { ...SANS, size: 12, color: '#d9a98f' }); // 15단계: 오른쪽 아래는 D-day 목록 자리라 왼쪽으로
   b.light(7.5, 1.2, 3.4, 0xffc46a, 0.6);
   b.anchor('dday', 10.1, 5.6, { w: 64, lines: 3 }); // 15단계: D-day 목록 (칠판 오른쪽 아래, 최대 3개)
-  b.place('cabinet_printer', 4, 7);
+  // 17단계 동선: 프린터 수납장을 왼쪽 벽까지 붙인다(작은 수납장 자리) → 오른쪽 끝이 x 8 이 되어 커피 코너 통로(x 9..11)가 위쪽 복도(y 8..9)와 2칸 폭으로 꺾인다
+  // (전에는 수납장 끝 x 10 과 스터디룸 벽 모서리 x 12 가 (11,9) 한 칸짜리 꺾임을 만들었다)
+  b.place('cabinet_printer', 2, 7);
   b.place('wall_frames_a', 11, 1);
   b.place('wall_clock', 12, 1);
   b.place('wall_vine', 13, 1); // 벽 덩굴은 창문 좌우에만
@@ -131,11 +133,11 @@ function buildStudyRoom() {
   b.light(6, 14.5, 2.8, 0xffd48a, 0.4);
   b.interactable('coffee', 'coffee', 6.5, 16, { hint: '커피' });
   b.anchor('steam', 6.5, 13.15); // 커피머신 김
-  b.place('plant_tall_2', 11, 11);
-  b.place('bean_shelf', 9, 12); // 15단계: 벽 선반 원두 봉지 (메뉴 보드 옆)
-  b.place('milk_crate', 9, 15);
-  b.place('trash_bin', 8, 16);
   b.place('rug_coffee', 4, 17);
+  // 17단계 동선: 카운터 오른쪽 끝(x 8) 옆 x 9..11 은 위(라운지)·아래(복도)로 이어지는 3칸 폭 통로 — 화분·원두 선반·우유 상자·쓰레기통을 치웠다.
+  // 우유 상자·쓰레기통은 카운터 아래 벽 쪽 구석(수납장 밑, x 3..4 y 18)으로.
+  b.place('trash_bin', 3, 18);
+  b.place('milk_crate', 4, 18);
 
   // ── 좌하단: 푸프 라운지 ────────────────────────────────────────────
   b.place('shelf_narrow_a', 2, 18);
@@ -158,7 +160,8 @@ function buildStudyRoom() {
   for (let x = 12; x <= 33; x++) b.place('wall_face', x, 10);
   b.fill(['floor_0_shadow', 'floor_1_shadow', 'floor_2_shadow'], 13, 12, 32, 12);
   // 위쪽 벽 장식: 액자·포스터·선반·스팟 조명 2·코르크보드(책상 위)·후크 가방·벽시계·스위치
-  b.place('wall_frames_a', 13, 10);
+  b.place('bean_shelf_wall', 12, 10); // 17단계 동선: 원두 선반은 스터디룸 위쪽 벽(모서리)에 건다 → 메뉴 보드 오른쪽 x 9..11 이 3칸 폭 통로
+  b.place('wall_frames_a', 20, 10); // (18,10) 은 상점 벽 포스터 테스트가 쓰는 빈 벽이라 비워 둔다
   b.place('wall_poster', 14, 10);
   b.place('wall_shelf', 15, 10);
   b.place('wall_shelf_b', 16, 10);
@@ -249,7 +252,7 @@ function buildStudyRoom() {
   b.light(27.5, 22.8, 2.6, 0xffc46a, 0.22);
 
   // ── 우측: 화이트보드 + 회의 테이블 8석 (노트북은 왼쪽 아래 의자 자리) ──
-  b.place('ladder_shelf', 35, 10);
+  b.place('ladder_shelf', 36, 10); // 17단계 동선: 스터디룸 벽 모서리(x 33) 옆 x 34..35 를 2칸 폭으로 (라운지 ↔ 회의 구역)
   b.place('whiteboard_big', 37, 11);
   b.label(39.2, 12.05, 'Small Steps\nBig Changes\n:)', { ...SANS, size: 10, weight: 500, color: '#4a5568', lineHeight: 1.3 });
   b.light(39.5, 12.2, 2.8, 0xffc46a, 0.35);
@@ -267,8 +270,8 @@ function buildStudyRoom() {
   b.place('cable_box', 37, 22);
   b.screen(36, 20, { x: 37 * 16 + 13, y: 16 * 16 + 63, w: 7, h: 4, kind: 'laptop' });
   b.place('plant_palm_0', 43, 22);
-  b.place('water_dispenser', 35, 22);
-  b.place('trash_bin', 35, 24);
+  b.place('water_dispenser', 42, 22); // 17단계 동선: 정수기·쓰레기통은 야자 옆 오른쪽 아래 구석으로 → x 34..35 y 22..24 가 2칸 폭 (회의 구역 ↔ 복도)
+  b.place('trash_bin', 41, 23);
   b.light(43.5, 13, 1.8, 0xffc46a, 0.45);
   b.light(43.5, 18, 1.8, 0xffc46a, 0.45);
   b.light(43.5, 20.5, 1.8, 0xffc46a, 0.4);

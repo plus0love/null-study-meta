@@ -427,6 +427,7 @@ def build_objects():
     add("mini_fridge", S2.mini_fridge(), top=1)
     add("cushion_floor_a", S2.cushion_floor(0), solid=False)
     add("cushion_floor_b", S2.cushion_floor(1), solid=False)
+    add("bean_shelf_wall", over(V.wall_block(2, 2), S.bean_shelf()))  # 커피 코너 동선: 원두 선반을 스터디룸 위쪽 벽에 건다 (벽 배경 포함)
 
 
 # ── 아틀라스 패킹 ──────────────────────────────────────────────────────
